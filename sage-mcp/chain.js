@@ -29,6 +29,23 @@ export const dexProvider = new ethers.providers.StaticJsonRpcProvider(
   config.dex.chainId
 );
 
+// Robinhood Chain gas is ~0.01 gwei, but ethers defaults to EIP-1559 with a
+// 1.5 gwei priority fee. That inflates maxFeePerGas ~150x, so for a heavy tx
+// (e.g. a pixel-claim mint, ~420k gas) on a lightly-funded wallet the UPFRONT
+// reservation (gasLimit * maxFeePerGas) exceeds the balance and the tx fails
+// with "insufficient funds" / "cannot estimate gas" — even though the real cost
+// is a few millionths of an ETH. Force legacy (type-0) pricing at the actual
+// network gas price so every write the MCP sends stays affordable.
+function useLegacyGasPricing(provider) {
+  const getGasPrice = provider.getGasPrice.bind(provider);
+  provider.getFeeData = async () => {
+    const gasPrice = await getGasPrice();
+    return { gasPrice, maxFeePerGas: null, maxPriorityFeePerGas: null, lastBaseFeePerGas: null };
+  };
+}
+useLegacyGasPricing(marketplaceProvider);
+useLegacyGasPricing(dexProvider);
+
 export function requireWallet(provider) {
   if (!config.agentPrivateKey) {
     throw new Error(

@@ -1,0 +1,43 @@
+name: Update SAGE pixels
+
+# Keeps EarnedPoints current so pixel balances accrue automatically. The updater
+# (Sage-UI-main/scripts/update_pixels.js) scans SAGE Transfer events on-chain and
+# recomputes every holder's pixels. Runs hourly; also runnable on demand.
+on:
+  schedule:
+    - cron: '17 * * * *' # hourly at :17
+  workflow_dispatch: {}
+
+# avoid overlapping runs (a scan can outlast an hour on the first run)
+concurrency:
+  group: pixels-update
+  cancel-in-progress: false
+
+jobs:
+  update-pixels:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Sage-UI-main
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # package-lock is gitignored, so `npm ci` can't run; --ignore-scripts skips
+      # the postinstall (typechain needs contract artifacts we don't build here) —
+      # we generate the Prisma client explicitly below.
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --ignore-scripts
+        env:
+          CYPRESS_INSTALL_BINARY: '0'
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+      - name: Update pixels
+        run: npm run points:update
+        env:
+          # add these two as repository secrets (Settings → Secrets → Actions):
+          #   DATABASE_CONNECTION_POOL_URL = production Supabase pooler URL
+          #   POINTS_ORACLE_PK             = pixel-oracle private key (signs balances)
+          DATABASE_CONNECTION_POOL_URL: ${{ secrets.DATABASE_CONNECTION_POOL_URL }}
+          POINTS_ORACLE_PK: ${{ secrets.POINTS_ORACLE_PK }}

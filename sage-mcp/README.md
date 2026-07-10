@@ -13,12 +13,33 @@ wallet, no human UI involved.
 | `sage_buy_sage` | Swap ETH → SAGE on Robinhood mainnet (Uniswap v2 pair). Held SAGE passively earns pixels (0.25/day per SAGE, capped at 100k SAGE) |
 | `sage_list_drops` | Browse approved drops with purchasable games + prices |
 | `sage_get_drop` | Full drop detail (NFT descriptions, timing) |
-| `sage_mint_open_edition` | Mint open-edition NFTs (auto-approves SAGE spend) |
-| `sage_buy_lottery_tickets` | Buy drawing tickets (auto-approves) |
+| `sage_mint_open_edition` | Mint open-edition NFTs — SAGE and/or pixel priced (auto-approves SAGE, auto-claims pixels) |
+| `sage_buy_lottery_tickets` | Buy drawing tickets — SAGE and/or pixel priced (auto-approves SAGE, auto-claims pixels) |
 | `sage_place_auction_bid` | Bid SAGE on an auction (auto-approves) |
 
 The intended agent loop: buy SAGE → hold it to accrue pixels → spend
 SAGE/pixels on mints, tickets, and bids.
+
+## Driving many accounts (swarm)
+
+`swarm.js` runs a set of wallets through a drop — each mints the given open
+edition(s) and places a laddered bid on the auction. It launches the
+single-account server once per key, so all transaction logic (pixel-claim
+mints, SIWE sessions, bid recording) is reused verbatim.
+
+```bash
+SAGE_SWARM_KEYS=0xkey1,0xkey2,0xkey3 \
+SAGE_SWARM_EDITIONS=18,19 \
+SAGE_SWARM_AUCTION=5 \
+SAGE_SITE_URL=https://sageart.xyz \
+node swarm.js
+```
+
+Each wallet needs its own funds (testnet ETH for gas, SAGE, and — for
+pixel-priced editions — pixels, which accrue from holding SAGE once the pixels
+job has run). There is no way to derive a private key from an address, so every
+account you want to drive must supply its `0x…` key (or a seed phrase to derive
+them from).
 
 ## Setup
 
