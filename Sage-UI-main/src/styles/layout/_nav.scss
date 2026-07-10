@@ -35,13 +35,19 @@
   gap: clamp(10px, 0.5vw, 19px);
   justify-self: center;
   text-align: center;
-  width: 33%;
+  // size to the (now 4) links; the equal-flex side columns center it
+  flex: 0 1 auto;
 }
 
 .nav__menu-link {
   @include m.theme() {
     @include m.noselect;
-    width: clamp(72px, 8.3vw, 102px);
+    // size to content (with a floor) + never wrap, so a longer label like
+    // "AGENT API" fits on one line instead of clipping a fixed-width slot
+    min-width: 56px;
+    width: auto;
+    white-space: nowrap;
+    padding: 0 clamp(4px, 0.6vw, 12px);
     font-size: 12px;
     text-transform: uppercase;
     cursor: pointer;
@@ -61,9 +67,10 @@
 }
 
 .nav__personal {
-  width: 33%;
-  // profile now sits on the RIGHT — hug the right edge, mirroring the search
-  // on the left (search uses justify-content: flex-start)
+  // equal-flex side column so search (left) and profile (right) mirror around
+  // the centered menu
+  flex: 1;
+  // profile sits on the RIGHT — hug the right edge, mirroring the left search
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -100,9 +107,9 @@
 }
 
 .nav__search {
-  width: 33%;
+  flex: 1;
   display: flex;
-  // search now sits on the LEFT — hug the left edge (was flex-end on the right)
+  // search sits on the LEFT — hug the left edge (mirrors profile on the right)
   justify-content: flex-start;
   align-items: center;
 }

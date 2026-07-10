@@ -16,6 +16,7 @@ export default function Nav() {
     pushToDrops,
     pushToHome,
     pushToSubmissions,
+    pushToAgentApi,
     isProfilePage,
     isSingleDropsPage,
     pushToProfile,
@@ -41,6 +42,10 @@ export default function Nav() {
     {
       name: 'Apply',
       routeFunction: pushToSubmissions,
+    },
+    {
+      name: 'Agent API',
+      routeFunction: pushToAgentApi,
     },
   ];
 

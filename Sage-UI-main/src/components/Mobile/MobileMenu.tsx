@@ -13,6 +13,7 @@ import {
   basePathDrops,
   basePathHome,
   basePathSubmissions,
+  basePathAgentApi,
 } from '@/constants/paths';
 import Motto from '../Layout/Motto';
 
@@ -37,6 +38,10 @@ const navLinks: NavLink[] = [
   {
     name: 'Apply',
     url: basePathSubmissions,
+  },
+  {
+    name: 'Agent API',
+    url: basePathAgentApi,
   },
 ];
 

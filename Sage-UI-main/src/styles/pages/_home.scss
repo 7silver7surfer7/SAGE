@@ -168,27 +168,6 @@
   @include m.standard-width;
 }
 
-.home-page__agent-api-link {
-  @include m.standard-width;
-  display: block;
-  width: max-content;
-  background: transparent;
-  cursor: pointer;
-  margin-top: clamp(-90px, -4vw, -40px); // pull up under the statement's bottom padding
-  margin-bottom: clamp(30px, 4vw, 70px);
-  font-size: clamp(12px, 1vw, 15px);
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  transition-duration: 200ms;
-  @include m.theme() {
-    color: m.t(accent);
-  }
-  @include m.interact() {
-    opacity: 0.7;
-  }
-}
-
 .home-page__upcoming-drops-header {
   display: flex;
   flex-wrap: wrap;
