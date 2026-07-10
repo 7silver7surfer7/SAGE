@@ -34,7 +34,7 @@ function home({
       const vibrates = navigator.vibrate(1000);
     }
   }
-  const { pushToCreators, pushToDrops } = useSageRoutes();
+  const { pushToCreators, pushToDrops, pushToHowToBuyAsh } = useSageRoutes();
 
   return (
     <div className='home-page' data-cy='home-page' data-on={coverOn}>
@@ -75,7 +75,10 @@ function home({
           <h1 className='home-page__upcoming-drops-header-left'>drops</h1>
           <div className='home-page__upcoming-drops-header-right'>
             <div className='home-page__upcoming-drops-header-right-dot'></div>
-            <h1 className='home-page__upcoming-drops-header-right-text'>
+            <h1
+              className='home-page__upcoming-drops-header-right-text home-page__upcoming-drops-header-right-text--link'
+              onClick={pushToHowToBuyAsh}
+            >
               We only accept SAGE as a medium of exchange. SAGE is the native token of the SAGE
               ecosystem on Robinhood Chain.
             </h1>

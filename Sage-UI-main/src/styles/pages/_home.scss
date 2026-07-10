@@ -211,6 +211,16 @@
   text-transform: uppercase;
 }
 
+.home-page__upcoming-drops-header-right-text--link {
+  cursor: pointer;
+  transition-duration: 200ms;
+  @include m.interact() {
+    @include m.theme() {
+      color: m.t(accent);
+    }
+  }
+}
+
 .home-page__upcoming-drops-grid {
   margin-top: 15 px;
   display: grid;
