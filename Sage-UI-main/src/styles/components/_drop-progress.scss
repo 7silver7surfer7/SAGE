@@ -1,0 +1,163 @@
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/colors' as c;
+
+$error: #e5484d;
+
+.drop-progress {
+  margin-top: 20px;
+  border-radius: 12px;
+  padding: 16px 18px;
+  font-family: 'Space Grotesk', monospace;
+  @include m.theme() {
+    background-color: m.t(base2);
+    color: m.t(contrast);
+    border: 1px solid rgba(m.t(contrast), 0.12);
+  }
+}
+
+.drop-progress__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  margin-bottom: 14px;
+}
+
+.drop-progress__spinner {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  @include m.theme() {
+    border: 2px solid rgba(m.t(contrast), 0.2);
+  }
+  // running: spin an accent arc; done: solid accent; error: solid red
+  &[data-running='true'] {
+    @include m.theme() {
+      border-top-color: m.t(accent);
+    }
+    animation: drop-progress-spin 0.7s linear infinite;
+  }
+  &[data-running='false'] {
+    @include m.theme() {
+      background-color: m.t(accent);
+      border-color: m.t(accent);
+    }
+  }
+  &[data-error='true'] {
+    background-color: $error;
+    border-color: $error;
+    animation: none;
+  }
+}
+
+.drop-progress__headline {
+  flex: 1;
+}
+
+.drop-progress__count {
+  opacity: 0.6;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.drop-progress__log {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.drop-progress__step {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.drop-progress__step-icon {
+  flex: none;
+  margin-top: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  line-height: 1;
+}
+
+// active — spinner ring
+.drop-progress__step[data-status='active'] {
+  .drop-progress__step-icon {
+    @include m.theme() {
+      border: 2px solid rgba(m.t(contrast), 0.2);
+      border-top-color: m.t(accent);
+    }
+    animation: drop-progress-spin 0.7s linear infinite;
+  }
+  .drop-progress__step-label {
+    font-weight: 600;
+  }
+}
+
+// done — filled accent circle with a check
+.drop-progress__step[data-status='done'] .drop-progress__step-icon {
+  @include m.theme() {
+    background-color: m.t(accent);
+    color: m.t(base);
+  }
+  &::after {
+    content: '✓';
+    font-weight: 700;
+  }
+}
+
+// error — filled red circle with an x
+.drop-progress__step[data-status='error'] {
+  .drop-progress__step-icon {
+    background-color: $error;
+    color: #fff;
+    &::after {
+      content: '✕';
+      font-weight: 700;
+    }
+  }
+  .drop-progress__step-detail {
+    color: $error;
+    opacity: 1;
+  }
+}
+
+// info — small muted dot, muted text
+.drop-progress__step[data-status='info'] {
+  .drop-progress__step-icon {
+    width: 6px;
+    height: 6px;
+    margin-top: 6px;
+    margin-left: 4px;
+    @include m.theme() {
+      background-color: rgba(m.t(contrast), 0.45);
+    }
+  }
+  .drop-progress__step-label {
+    opacity: 0.6;
+  }
+}
+
+.drop-progress__step-detail {
+  opacity: 0.7;
+}
+
+@keyframes drop-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

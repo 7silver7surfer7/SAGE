@@ -13,6 +13,7 @@ import { fetchOrCreateNftContract } from './nftsReducer';
 import { baseApi } from './baseReducer';
 import { Role } from '@prisma/client';
 import { createNftMetadataOnArweave, uploadFileToArweave } from '@/utilities/arweave-client';
+import { dropProgress } from '@/utilities/dropProgress';
 
 export type ArtworkSaleType = 'auction' | 'lottery' | 'openEdition';
 
@@ -97,27 +98,36 @@ export const dropsApi = baseApi.injectEndpoints({
         // deploy) must NOT read as "the drop failed" — the uploads are done
         // and the deploy can be retried from the New Drops tab.
         let createdDropId = 0;
+        dropProgress.reset();
+        dropProgress.note(`Creating drop "${req.name}" (${req.artworks.length} artwork${req.artworks.length === 1 ? '' : 's'})`);
         try {
-          const { url: bannerUrl } = await uploadFileToArweave(req.bannerFile);
+          const { url: bannerUrl } = await dropProgress.track('Uploading banner to Arweave', () =>
+            uploadFileToArweave(req.bannerFile)
+          );
           let artistProfilePicture: string | undefined;
           if (req.artistIconFile) {
-            const { url, optimizedUrl } = await uploadFileToArweave(req.artistIconFile);
+            const { url, optimizedUrl } = await dropProgress.track(
+              'Uploading artist icon to Arweave',
+              () => uploadFileToArweave(req.artistIconFile as File)
+            );
             artistProfilePicture = optimizedUrl || url;
           }
-          const { data: dropResult } = await fetchWithBQ({
-            url: 'endpoints/dropUpload?action=InsertDrop',
-            method: 'POST',
-            body: {
-              artistWallet: req.artistWallet,
-              artistDisplayName: req.artistDisplayName,
-              artistProfilePicture,
-              name: req.name,
-              description: req.description,
-              bannerImageS3Path: bannerUrl,
-              tileImageS3Path: bannerUrl,
-              goLiveAt: req.goLiveAt,
-            },
-          });
+          const { data: dropResult } = await dropProgress.track('Creating drop record', async () =>
+            fetchWithBQ({
+              url: 'endpoints/dropUpload?action=InsertDrop',
+              method: 'POST',
+              body: {
+                artistWallet: req.artistWallet,
+                artistDisplayName: req.artistDisplayName,
+                artistProfilePicture,
+                name: req.name,
+                description: req.description,
+                bannerImageS3Path: bannerUrl,
+                tileImageS3Path: bannerUrl,
+                goLiveAt: req.goLiveAt,
+              },
+            })
+          );
           if ((dropResult as any)?.error) throw new Error((dropResult as any).error);
           const dropId = (dropResult as any).dropId as number;
           createdDropId = dropId;
@@ -127,19 +137,22 @@ export const dropsApi = baseApi.injectEndpoints({
             req.saleStartAt ?? req.goLiveAt ?? Math.floor(Date.now() / 1000) + 300;
           const endDate = startDate + req.durationHours * 3600;
           const endpoint = '/api/endpoints/dropUpload/';
-          for (const artwork of req.artworks) {
-            const { url, optimizedUrl } = await uploadFileToArweave(artwork.file);
+          const total = req.artworks.length;
+          for (let i = 0; i < total; i++) {
+            const artwork = req.artworks[i];
+            const label = artwork.name || `artwork ${i + 1}`;
+            const { url, optimizedUrl } = await dropProgress.track(
+              `Uploading "${label}" to Arweave (${i + 1}/${total})`,
+              () => uploadFileToArweave(artwork.file)
+            );
             const { width, height } = await getMediaDimensions(artwork.file);
             // Build the ERC-721 metadata JSON and store it on Arweave; its URL
             // becomes the on-chain tokenURI when the drop is deployed. Without
             // this, minted NFTs would have a null/blank metadata pointer.
             const isVideo = artwork.file.type === 'video/mp4';
-            const metadataPath = await createNftMetadataOnArweave(
-              endpoint,
-              artwork.name,
-              artwork.description,
-              url,
-              isVideo
+            const metadataPath = await dropProgress.track(
+              `Writing metadata for "${label}" to Arweave`,
+              () => createNftMetadataOnArweave(endpoint, artwork.name, artwork.description, url, isVideo)
             );
             const media = {
               name: artwork.name,
@@ -151,68 +164,83 @@ export const dropsApi = baseApi.injectEndpoints({
               width,
               height,
             };
-            if (artwork.saleType === 'auction') {
-              const { data: result } = await fetchWithBQ({
-                url: 'endpoints/dropUpload?action=InsertAuction',
-                method: 'POST',
-                body: { dropId, minPrice: String(artwork.minPrice), startDate, endDate, ...media },
-              });
-              if ((result as any)?.error) throw new Error((result as any).error);
-            } else if (artwork.saleType === 'lottery') {
-              const { data: drawingResult } = await fetchWithBQ({
-                url: 'endpoints/dropUpload?action=InsertDrawing',
-                method: 'POST',
-                body: {
-                  dropId,
-                  ticketCostTokens: artwork.ticketCostTokens,
-                  ticketCostPoints: artwork.ticketCostPoints,
-                  maxTickets: artwork.maxTickets,
-                  maxTicketsPerUser: artwork.maxTicketsPerUser,
-                  startDate,
-                  endDate,
-                  isRefundable: 'false',
-                },
-              });
-              if ((drawingResult as any)?.error) throw new Error((drawingResult as any).error);
-              const drawingId = (drawingResult as any).drawingId as number;
-              const { data: nftResult } = await fetchWithBQ({
-                url: 'endpoints/dropUpload?action=InsertNft',
-                method: 'POST',
-                body: { drawingId, numberOfEditions: 1, ...media },
-              });
-              if ((nftResult as any)?.error) throw new Error((nftResult as any).error);
-            } else {
-              const { data: result } = await fetchWithBQ({
-                url: 'endpoints/dropUpload?action=InsertOpenEdition',
-                method: 'POST',
-                body: {
-                  dropId,
-                  costTokens: artwork.costTokens,
-                  costPoints: artwork.costPoints,
-                  maxPerUser: artwork.maxPerUser,
-                  startDate,
-                  endDate,
-                  ...media,
-                },
-              });
-              if ((result as any)?.error) throw new Error((result as any).error);
-            }
+            const saleLabel =
+              artwork.saleType === 'auction'
+                ? 'auction'
+                : artwork.saleType === 'lottery'
+                ? 'drawing'
+                : 'open edition';
+            await dropProgress.track(`Registering ${saleLabel} for "${label}"`, async () => {
+              if (artwork.saleType === 'auction') {
+                const { data: result } = await fetchWithBQ({
+                  url: 'endpoints/dropUpload?action=InsertAuction',
+                  method: 'POST',
+                  body: { dropId, minPrice: String(artwork.minPrice), startDate, endDate, ...media },
+                });
+                if ((result as any)?.error) throw new Error((result as any).error);
+              } else if (artwork.saleType === 'lottery') {
+                const { data: drawingResult } = await fetchWithBQ({
+                  url: 'endpoints/dropUpload?action=InsertDrawing',
+                  method: 'POST',
+                  body: {
+                    dropId,
+                    ticketCostTokens: artwork.ticketCostTokens,
+                    ticketCostPoints: artwork.ticketCostPoints,
+                    maxTickets: artwork.maxTickets,
+                    maxTicketsPerUser: artwork.maxTicketsPerUser,
+                    startDate,
+                    endDate,
+                    isRefundable: 'false',
+                  },
+                });
+                if ((drawingResult as any)?.error) throw new Error((drawingResult as any).error);
+                const drawingId = (drawingResult as any).drawingId as number;
+                const { data: nftResult } = await fetchWithBQ({
+                  url: 'endpoints/dropUpload?action=InsertNft',
+                  method: 'POST',
+                  body: { drawingId, numberOfEditions: 1, ...media },
+                });
+                if ((nftResult as any)?.error) throw new Error((nftResult as any).error);
+              } else {
+                const { data: result } = await fetchWithBQ({
+                  url: 'endpoints/dropUpload?action=InsertOpenEdition',
+                  method: 'POST',
+                  body: {
+                    dropId,
+                    costTokens: artwork.costTokens,
+                    costPoints: artwork.costPoints,
+                    maxPerUser: artwork.maxPerUser,
+                    startDate,
+                    endDate,
+                    ...media,
+                  },
+                });
+                if ((result as any)?.error) throw new Error((result as any).error);
+              }
+            });
           }
           if (req.approveNow) {
             if (req.signer) {
               // real on-chain deploy: creates/reuses the artist's NFT contract
               // and registers the auctions/lotteries/open editions, prompting
               // wallet signatures. Also flips approvedAt/isLive when done.
+              // deployDrop emits its own per-step progress (see deployStep).
+              dropProgress.note('Minting on-chain — approve each wallet prompt');
               await deployDrop(dropId, req.signer, fetchWithBQ);
             } else {
-              await fetchWithBQ(`drops?action=UpdateApprovedDateAndIsLiveFlags&id=${dropId}`);
+              await dropProgress.track('Approving drop (off-chain)', async () =>
+                fetchWithBQ(`drops?action=UpdateApprovedDateAndIsLiveFlags&id=${dropId}`)
+              );
             }
           }
+          dropProgress.note(`Done — drop "${req.name}" (#${dropId}) is ready.`);
+          dropProgress.finish();
           toast.success(`Drop '${req.name}' created!`);
           return { data: dropId };
         } catch (e: any) {
           console.error('createDropWithUploads() failed', e);
           const message = extractErrorMessage(e);
+          dropProgress.finish();
           if (createdDropId) {
             toast.error(
               `Drop '${req.name}' (#${createdDropId}) was created and its media uploaded, ` +
@@ -245,12 +273,17 @@ export const dropsApi = baseApi.injectEndpoints({
     }),
     approveAndDeployDrop: builder.mutation<boolean, { dropId: number; signer: Signer }>({
       queryFn: async ({ dropId, signer }, { dispatch }, _, fetchWithBQ) => {
+        dropProgress.reset();
+        dropProgress.note(`Minting drop #${dropId} on-chain — approve each wallet prompt`);
         try {
           await deployDrop(dropId, signer, fetchWithBQ);
+          dropProgress.note(`Done — drop #${dropId} deployed.`);
+          dropProgress.finish();
           dispatch(dropsApi.util.invalidateTags(['PendingDrops'])); // refetch pending drops
           toast.success(`Drop #${dropId} deployed on-chain!`);
           return { data: true };
         } catch (e: any) {
+          dropProgress.finish();
           console.error(`approveAndDeployDrop(${dropId}) failed`, e);
           toast.error(`Deploy of drop #${dropId} failed — ${extractErrorMessage(e)}`, {
             autoClose: false,
@@ -420,9 +453,13 @@ async function checkUsersExistAndAreArtists(presetDrops: PresetDrop[], fetchWith
 // surfacing a bare ethers error with no context.
 async function deployStep<T>(step: string, run: () => Promise<T>): Promise<T> {
   console.log(`deployDrop() :: ${step}...`);
+  const progressId = dropProgress.begin(`Minting on-chain: ${step}`);
   try {
-    return await run();
+    const result = await run();
+    dropProgress.complete(progressId);
+    return result;
   } catch (e: any) {
+    dropProgress.fail(progressId, extractErrorMessage(e));
     console.error(`deployDrop() :: FAILED at step '${step}'`, e);
     throw new Error(`${step}: ${extractErrorMessage(e)}`);
   }

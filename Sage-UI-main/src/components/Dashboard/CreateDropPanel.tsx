@@ -9,6 +9,7 @@ import { useGetUserDisplayInfoQuery } from '@/store/usersReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import shortenAddress from '@/utilities/shortenAddress';
 import LoaderSpinner from '../LoaderSpinner';
+import DropProgressLog from './DropProgressLog';
 
 const ACCEPTED_MEDIA = 'image/png,image/jpeg,image/gif,image/svg+xml,video/mp4';
 
@@ -475,12 +476,9 @@ export default function CreateDropPanel() {
         <button type='submit' className='create-drop-panel__submit-button'>
           {isCreating ? <LoaderSpinner /> : 'CREATE DROP'}
         </button>
-        {isCreating && (
-          <p className='create-drop-panel__uploading-note'>
-            Uploading media to Arweave — keep this tab open…
-          </p>
-        )}
       </fieldset>
+      {/* outside the fieldset so the live log stays readable while it's disabled */}
+      <DropProgressLog />
     </form>
   );
 }
