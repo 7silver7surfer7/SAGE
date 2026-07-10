@@ -3,10 +3,9 @@ import NextCors from 'nextjs-cors';
 import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
 import { Role } from '@prisma/client';
-import { getSession } from 'next-auth/react';
 import { createS3SignedUrl } from '@/utilities/awsS3-server';
 import { sendArweaveTransaction, signChunkedUploadTx } from '@/utilities/arweave-server';
-import { requireRole, Requester } from '@/utilities/apiAuth';
+import { getRequester, requireRole, Requester } from '@/utilities/apiAuth';
 import { parameters } from '@/constants/config';
 import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SAGEOpenEdition.json';
 
@@ -496,9 +495,10 @@ async function registerOpenEditionMint(
 
 async function deleteNft(nftId: number, request: NextApiRequest, response: NextApiResponse) {
   console.log(`deleteNft(${nftId})`);
-  const session = await getSession({ req: request });
-  const { address: walletAddress } = session!;
-  if (!session || !walletAddress) {
+  const requester = await getRequester(request);
+  const walletAddress = requester?.walletAddress;
+  if (!walletAddress) {
+    response.status(401).end('Not Authenticated');
     return;
   }
   await prisma.nft.deleteMany({

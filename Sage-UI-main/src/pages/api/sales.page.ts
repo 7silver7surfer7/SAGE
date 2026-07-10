@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getSession } from 'next-auth/react';
+import { getRequester } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
 import { SaleEventType } from '@prisma/client';
 import { getSagePriceUsd } from '@/utilities/sagePrice';
@@ -9,10 +9,11 @@ export default async function (request: NextApiRequest, response: NextApiRespons
     query: { action },
     body,
   } = request;
-  const session = await getSession({ req: request });
-  const { address: walletAddress } = session!;
-  if (!session || !walletAddress) {
-    response.status(500).end();
+  // was `const { address } = session!` — a null session crashed the destructure
+  const requester = await getRequester(request);
+  const walletAddress = requester?.walletAddress;
+  if (!walletAddress) {
+    response.status(401).end('Not Authenticated');
     return;
   }
   switch (action) {

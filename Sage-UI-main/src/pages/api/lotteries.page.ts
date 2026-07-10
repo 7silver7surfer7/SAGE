@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getSession } from 'next-auth/react';
+import { getRequester } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
 
 async function handler(request: NextApiRequest, response: NextApiResponse) {
@@ -67,9 +67,9 @@ async function getWinners(lotteryId: number, response: NextApiResponse) {
 
 async function getRefund(request: NextApiRequest, response: NextApiResponse) {
   const lotteryId = Number(request.query.lotteryId);
-  const session = await getSession({ req: request });
-  const { address: walletAddress } = session!;
-  if (!session || !walletAddress || isNaN(lotteryId)) {
+  const requester = await getRequester(request);
+  const walletAddress = requester?.walletAddress;
+  if (!walletAddress || isNaN(lotteryId)) {
     response.json([]);
     return;
   }
@@ -82,9 +82,9 @@ async function getRefund(request: NextApiRequest, response: NextApiResponse) {
 }
 
 async function getRefunds(request: NextApiRequest, response: NextApiResponse) {
-  const session = await getSession({ req: request });
-  const { address: walletAddress } = session!;
-  if (!session || !walletAddress) {
+  const requester = await getRequester(request);
+  const walletAddress = requester?.walletAddress;
+  if (!walletAddress) {
     response.json([]);
     return;
   }

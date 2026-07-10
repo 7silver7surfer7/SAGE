@@ -268,15 +268,18 @@ describe('Data fetching', async () => {
       if (paths.length < 1) return;
     });
 
+    // getIndividualArtistsPageData now returns { artist, drops }, so the User
+    // fields live under .artist.* (the function previously returned the User
+    // directly — this spec wasn't updated when that shape changed).
     it('User fetched should have artist role', () => {
-      assert.deepEqual(artist?.role, Role.ARTIST);
+      assert.deepEqual(artist?.artist?.role, Role.ARTIST);
     });
     describe('Artist info required for display should be available', () => {
       it('bio', () => {
-        assert.isNotNull(artist?.bio);
+        assert.isNotNull(artist?.artist?.bio);
       });
       it('username', () => {
-        assert.isNotNull(artist?.username);
+        assert.isNotNull(artist?.artist?.username);
       });
     });
   });

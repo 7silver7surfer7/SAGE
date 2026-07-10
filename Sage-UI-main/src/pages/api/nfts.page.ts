@@ -3,7 +3,7 @@ import prisma from '@/prisma/client';
 import { Nft, OfferState, User } from '@prisma/client';
 import { getNFTContract } from '@/utilities/contracts';
 import { ethers } from 'ethers';
-import { getSession } from 'next-auth/react';
+import { getRequester } from '@/utilities/apiAuth';
 import { CollectedListingNft, Nft_include_NftContractAndOffers } from '@/prisma/types';
 import { SearchableNftData } from '@/store/nftsReducer';
 import { sendArweaveTransaction } from '@/utilities/arweave-server';
@@ -35,7 +35,7 @@ export default async function handler(request: NextApiRequest, response: NextApi
       await deleteOffer(request, response);
       break;
     case 'UpdateOwner':
-      await updateOwner(Number(request.query.id), response);
+      await updateOwner(request, Number(request.query.id), response);
       break;
     default:
       response.status(500);
@@ -126,9 +126,10 @@ async function getListingNftsByArtist(artistAddress: string, response: NextApiRe
 }
 
 async function getListingNftsByOwner(request: NextApiRequest, response: NextApiResponse) {
-  const session = await getSession({ req: request });
-  const ownerAddress: string = session?.address as string;
-  if (!session || !ownerAddress) {
+  const requester = await getRequester(request);
+  const ownerAddress = requester?.walletAddress;
+  if (!ownerAddress) {
+    response.status(401).end('Not Authenticated');
     return;
   }
   try {
@@ -148,9 +149,10 @@ async function getListingNftsByOwner(request: NextApiRequest, response: NextApiR
 
 async function createOffer(request: NextApiRequest, response: NextApiResponse) {
   console.log(`createOffer()`);
-  const session = await getSession({ req: request });
-  const address: string = session?.address as string;
-  if (!session || !address) {
+  const requester = await getRequester(request);
+  const address = requester?.walletAddress;
+  if (!address) {
+    response.status(401).end('Not Authenticated');
     return;
   }
   try {
@@ -175,10 +177,11 @@ async function createOffer(request: NextApiRequest, response: NextApiResponse) {
 
 async function deleteOffer(request: NextApiRequest, response: NextApiResponse) {
   const id = Number(request.query.id as string);
-  const session = await getSession({ req: request });
-  const address: string = session?.address as string;
+  const requester = await getRequester(request);
+  const address = requester?.walletAddress;
   const state = OfferState.ACTIVE;
-  if (!session || !address) {
+  if (!address) {
+    response.status(401).end('Not Authenticated');
     return;
   }
   console.log(`deleteOffer(${id}, ${address})`);
@@ -196,9 +199,10 @@ async function deleteOffer(request: NextApiRequest, response: NextApiResponse) {
 
 async function invalidateOffer(request: NextApiRequest, response: NextApiResponse) {
   const id = Number(request.query.id as string);
-  const session = await getSession({ req: request });
-  const address: string = session?.address as string;
-  if (!session || !address) {
+  const requester = await getRequester(request);
+  const address = requester?.walletAddress;
+  if (!address) {
+    response.status(401).end('Not Authenticated');
     return;
   }
   console.log(`invalidateOffer(${id}, ${address})`);
@@ -217,8 +221,16 @@ async function invalidateOffer(request: NextApiRequest, response: NextApiRespons
   }
 }
 
-async function updateOwner(id: number, response: NextApiResponse) {
+async function updateOwner(request: NextApiRequest, id: number, response: NextApiResponse) {
   console.log(`updateOwner(${id})`);
+  // Previously unauthenticated — any caller could mark any ACTIVE offer USED
+  // (griefing a legit offer). Require sign-in; the ownership check below ties
+  // the update to a party actually involved in the trade.
+  const requester = await getRequester(request);
+  if (!requester) {
+    response.status(401).end('Not Authenticated');
+    return;
+  }
   try {
     const offer = await prisma.offer.findUnique({
       where: { id },
@@ -234,6 +246,13 @@ async function updateOwner(id: number, response: NextApiResponse) {
     );
     if (ownerAddress == ethers.constants.AddressZero) {
       throw new Error('Token has no owner or was not found in contract');
+    }
+    // only the offer's signer or the token's (new) on-chain owner may finalize
+    // this offer — reconciling DB state to a trade they were part of
+    const caller = requester.walletAddress.toLowerCase();
+    if (caller !== offer.signer.toLowerCase() && caller !== ownerAddress.toLowerCase()) {
+      response.status(403).json({ error: 'Not a party to this offer' });
+      return;
     }
     await prisma.offer.update({
       where: { id },

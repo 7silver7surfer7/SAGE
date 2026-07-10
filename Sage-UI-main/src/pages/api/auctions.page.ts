@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import prisma from '@/prisma/client';
-import { getSession } from 'next-auth/react';
+import { getRequester } from '@/utilities/apiAuth';
 import { getUnclaimedAuctionWinner } from '@/utilities/contracts';
 import { Auction_include_Nft, GamePrize, User, Drop } from '@/prisma/types';
 
@@ -14,8 +14,11 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
   const {
     query: { action },
   } = request;
-  const session = await getSession({ req: request });
-  const walletAddress = session ? session.address : undefined;
+  // getRequester decodes the session JWT directly — reliable under
+  // trailingSlash:true, unlike getSession's internal self-fetch. Reads that
+  // don't need a caller (GetAuction etc.) still work when this is undefined.
+  const requester = await getRequester(request);
+  const walletAddress = requester?.walletAddress;
   switch (action) {
     case 'GetAuction':
       await getAuction(Number(request.query.auctionId), response);
@@ -217,6 +220,12 @@ async function updateNftClaimedDate(
   }
   try {
     const auctionWinner = await getUnclaimedAuctionWinner(auctionId);
+    // only the on-chain winner may mark their own auction settled/claimed —
+    // otherwise any signed-in wallet could flip auctions they didn't win
+    if (!auctionWinner || auctionWinner.toLowerCase() !== walletAddress.toLowerCase()) {
+      response.status(403).json({ error: 'Only the auction winner can claim this NFT' });
+      return;
+    }
     let now = new Date();
     await prisma.auction.updateMany({
       where: {

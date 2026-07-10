@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Prisma, PrizeProof, User } from '@prisma/client';
-import { getSession } from 'next-auth/react';
+import { getRequester } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
 import { GamePrize, PrizeWithNftAndArtist } from '@/prisma/types';
 
@@ -27,10 +27,14 @@ function flatten(dbPrize: PrizeWithNftAndArtist): GamePrize {
 export default async function (request: NextApiRequest, response: NextApiResponse) {
   const {
     query: { action, lotteryId },
-    body: { winnerAddress, nftId },
+    body: { nftId },
   } = request;
-  const session = await getSession({ req: request });
-  const { address: walletAddress } = session!;
+  const requester = await getRequester(request);
+  const walletAddress = requester?.walletAddress;
+  if (!walletAddress) {
+    response.status(401).end('Not Authenticated');
+    return;
+  }
   switch (action) {
     case 'IsLotteryDrawn':
       await isLotteryDrawn(Number(lotteryId), response);
@@ -48,7 +52,9 @@ export default async function (request: NextApiRequest, response: NextApiRespons
       await getPrizesByUserAndLottery(Number(lotteryId), walletAddress as string, response);
       break;
     case 'UpdatePrizeClaimedDate':
-      await updatePrizeClaimedDate(Number(lotteryId), winnerAddress, nftId, response);
+      // winnerAddress is forced to the authenticated caller — previously it
+      // came from the request body, so anyone could claim another's prize
+      await updatePrizeClaimedDate(Number(lotteryId), walletAddress, nftId, response);
       break;
     case 'GetPrizesStats':
       await getPrizesStats(response);

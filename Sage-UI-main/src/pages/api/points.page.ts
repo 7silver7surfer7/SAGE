@@ -1,11 +1,11 @@
 import { EarnedPoints } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import prisma from '@/prisma/client';
-import { getSession } from 'next-auth/react';
+import { getRequester } from '@/utilities/apiAuth';
 
 const handler = async (req: NextApiRequest, response: NextApiResponse) => {
-  const session = await getSession({ req });
-  if (!session) {
+  const requester = await getRequester(req);
+  if (!requester) {
     response.status(401).end('Not Authenticated');
     return;
   }
@@ -15,8 +15,7 @@ const handler = async (req: NextApiRequest, response: NextApiResponse) => {
       if (req.query.address) {
         await getEarnedPoints(req.query.address as string, response);
       } else {
-        const { address: walletAddress } = session!;
-        await getEarnedPoints(walletAddress as string, response);
+        await getEarnedPoints(requester.walletAddress, response);
       }
       return;
     default:

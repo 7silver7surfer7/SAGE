@@ -186,6 +186,21 @@ function computePixels(transactions, address, now) {
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
+// Run an async fn over items with a bounded number of in-flight calls, keeping
+// results index-aligned with the input. Used to parallelize per-holder RPCs.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // eth_getCode cache: only EOAs earn pixels. Contracts that hold SAGE (the token
 // itself, the Uniswap pair, the auction/open-edition escrow) must be excluded —
 // they'd otherwise accrue pixels and get a bogus User row.
@@ -209,21 +224,42 @@ async function isContract(address) {
 
 async function updateEarnedPoints() {
   const now = Math.floor(Date.now() / 1000);
-  // Derive holders from on-chain transfer activity, NOT the User table — a wallet
-  // earns pixels for HOLDING SAGE whether or not it has ever visited the site.
-  // (Previously this iterated prisma.user.findMany(), so a SAGE-rich wallet with
-  //  no account — e.g. an agent — silently accrued nothing.)
-  const txRows = await prisma.tokenTransaction.findMany({ select: { from: true, to: true } });
+  // Load ALL token transactions ONCE and bucket them in memory, instead of
+  // running two queries per holder per asset (the old O(holders × assets)
+  // N+1). Same inputs to computePixels — each address gets the txns where it
+  // is either sender or receiver, ordered by block — so the result is
+  // identical, just far fewer round-trips.
+  // Holders are derived from on-chain activity, NOT the User table: a wallet
+  // earns pixels for HOLDING SAGE whether or not it ever visited the site.
+  const allTxns = await prisma.tokenTransaction.findMany({
+    orderBy: { blockNumber: 'asc' },
+  });
+  // assetType -> (addressLower -> txns[])
+  const byAssetAddr = new Map();
   const holders = new Set();
-  for (const t of txRows) {
-    holders.add(t.from.toLowerCase());
-    holders.add(t.to.toLowerCase());
+  for (const tx of allTxns) {
+    const from = tx.from.toLowerCase();
+    const to = tx.to.toLowerCase();
+    holders.add(from);
+    holders.add(to);
+    if (!byAssetAddr.has(tx.assetType)) byAssetAddr.set(tx.assetType, new Map());
+    const addrMap = byAssetAddr.get(tx.assetType);
+    for (const addr of [from, to]) {
+      if (!addrMap.has(addr)) addrMap.set(addr, []);
+      addrMap.get(addr).push(tx);
+    }
   }
   holders.delete(ZERO_ADDR);
 
+  // Classify contract-vs-EOA in parallel (bounded) rather than one blocking
+  // eth_getCode per holder — each is an independent RPC.
+  const holderList = [...holders];
+  const contractFlags = await mapWithConcurrency(holderList, 8, (h) => isContract(h));
+  const isContractByAddr = new Map(holderList.map((h, i) => [h, contractFlags[i]]));
+
   const summary = [];
-  for (const lower of holders) {
-    if (await isContract(lower)) continue;
+  for (const lower of holderList) {
+    if (isContractByAddr.get(lower)) continue;
     // EIP-55 checksum so the row matches this wallet's future SIWE login exactly
     // (SIWE stores the checksummed address; a lowercase row would orphan behind a
     //  second account). getAddress() is deterministic, so existing rows still match.
@@ -232,11 +268,8 @@ async function updateEarnedPoints() {
     const balances = {};
     let hasActivity = false;
     for (const asset of ASSETS) {
-      const txs = await prisma.tokenTransaction.findMany({
-        where: { assetType: asset.type, OR: [{ from: lower }, { to: lower }] },
-        orderBy: { blockNumber: 'asc' },
-      });
-      if (txs.length === 0) continue;
+      const txs = byAssetAddr.get(asset.type)?.get(lower);
+      if (!txs || txs.length === 0) continue;
       hasActivity = true;
       const { pixels, balance } = computePixels(txs, lower, now);
       totalPixels += pixels;
