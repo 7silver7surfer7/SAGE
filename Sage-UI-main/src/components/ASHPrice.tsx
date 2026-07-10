@@ -1,5 +1,4 @@
 import useSageRoutes from '@/hooks/useSageRoutes';
-import { SAGE_PRICE_TOKEN_ADDRESS } from '@/constants/config';
 import { useEffect, useState } from 'react';
 
 interface Props {
@@ -19,11 +18,14 @@ export default function ASHPrice({ callback }: Props) {
   const [priceUSD, setPriceUSD] = useState<number>(null);
   const { pushToHowToBuyAsh } = useSageRoutes();
   useEffect(() => {
-    fetch(`https://api.dexscreener.com/latest/dex/tokens/${SAGE_PRICE_TOKEN_ADDRESS}`)
+    // Price comes from the on-chain SAGE/WETH pair on Robinhood mainnet via our
+    // own API route — DexScreener doesn't index Robinhood Chain, so it never
+    // returned a price for SAGE.
+    fetch('/api/sage-price')
       .then((res) => res.json())
-      .then(({ pairs }) => {
-        const price = Number(pairs?.[0]?.priceUsd);
-        if (!isNaN(price)) setPriceUSD(price);
+      .then(({ priceUsd }) => {
+        const price = Number(priceUsd);
+        if (!isNaN(price) && price > 0) setPriceUSD(price);
       })
       .catch(() => {
         // price feed unavailable (offline/local dev); leave price blank

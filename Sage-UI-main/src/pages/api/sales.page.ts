@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getSession } from 'next-auth/react';
 import prisma from '@/prisma/client';
 import { SaleEventType } from '@prisma/client';
-import { SAGE_PRICE_TOKEN_ADDRESS } from '@/constants/config';
+import { getSagePriceUsd } from '@/utilities/sagePrice';
 
 export default async function (request: NextApiRequest, response: NextApiResponse) {
   const {
@@ -103,12 +103,10 @@ async function findArtistAddress(eventType: string, eventId: number) {
 // TODO consider caching this value
 async function getTokenUSDValue(): Promise<number> {
   try {
-    // SAGE/USD from the token's live DEX pair (Uniswap v2 on Robinhood Chain)
-    const result = await fetch(
-      `https://api.dexscreener.com/latest/dex/tokens/${SAGE_PRICE_TOKEN_ADDRESS}`
-    );
-    const { pairs } = await result.json();
-    const price = parseFloat(pairs?.[0]?.priceUsd);
+    // SAGE/USD from the token's live on-chain SAGE/WETH pair on Robinhood
+    // mainnet. (DexScreener doesn't index Robinhood Chain, so the old lookup
+    // here always returned 0.)
+    const price = await getSagePriceUsd();
     return isNaN(price) ? 0.0 : price;
   } catch (e) {
     console.log(e);

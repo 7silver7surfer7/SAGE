@@ -3,10 +3,18 @@ import { Configuration, Parameters } from './types';
 export const DEFAULT_PROFILE_PICTURE = '/branding/sage-icon.svg';
 export const OPTIMIZED_IMAGE_WIDTH = 487;
 
-// USD price lookups (DexScreener) must always use the MAINNET token: the
-// testnet deployment in ASHTOKEN_ADDRESS has no DEX pair, so querying it
-// returns no price.
+// USD price lookups must always use the MAINNET token: the testnet deployment
+// in ASHTOKEN_ADDRESS has no DEX pair, so it has no price.
+// NOTE: DexScreener does NOT index Robinhood Chain, so it returns no pairs for
+// this token. Price is read straight from the on-chain SAGE/WETH Uniswap-v2
+// pair on Robinhood mainnet (see /api/sage-price) and converted to USD via the
+// live ETH/USD rate.
 export const SAGE_PRICE_TOKEN_ADDRESS = '0x08deaa8250beAeD65366fbbde0088E76261637bA';
+export const SAGE_PRICE_RPC_URL = 'https://rpc.mainnet.chain.robinhood.com';
+export const SAGE_PRICE_CHAIN_ID = 4663;
+// SAGE/WETH Uniswap-v2 pair and the wrapped-native token on Robinhood mainnet.
+export const SAGE_PRICE_PAIR_ADDRESS = '0x4a22349287bCda8FC97E42de9D9e0de5b9Fc5F38';
+export const SAGE_PRICE_WETH_ADDRESS = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
 
 var env = process.env.NEXT_PUBLIC_APP_MODE;
 
