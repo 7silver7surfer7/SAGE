@@ -11,7 +11,9 @@
 # prebuilt glibc binaries — both just work here.
 FROM node:20-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+# ffmpeg (+ffprobe): the /api/media proxy transcodes oversized videos to an
+# iOS-safe rendition on demand (see src/pages/api/media/[txid].page.ts)
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

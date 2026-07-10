@@ -2,21 +2,25 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { spawn } from 'child_process';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
 /**
- * Range-capable proxy for Arweave media.
+ * Range-capable transcoding proxy for Arweave media.
  *
- * The arweave.net gateway answers ranged requests with 200 + full body (no
- * Accept-Ranges/Content-Range), and Safari refuses to play <video> from
- * servers without 206 support — "media unsupported". No public gateway we
- * tested does ranges either, so we serve video bytes ourselves: download the
- * file from the gateway once (content-addressed, hence immutable), cache it
- * on local disk, and answer range requests properly from the cache.
- *
- * Also shields playback from transient gateway routing failures (random edge
- * nodes returning HTML error pages — seen repeatedly in production).
+ * Two jobs:
+ *  1. Range support. The arweave.net gateway answers ranged requests with 200 +
+ *     full body (no Accept-Ranges/Content-Range), and Safari refuses to play
+ *     <video> without 206. We cache the (immutable, content-addressed) file and
+ *     serve proper 206s from it. Also shields playback from transient gateway
+ *     routing failures (edge nodes returning HTML error pages).
+ *  2. iOS compatibility. iOS Safari's hardware H.264 decoder rejects oversized
+ *     videos (>~4K / level >5.0), so a master that plays on desktop fails on
+ *     mobile. Rather than storing a second copy on Arweave, we transcode an
+ *     iOS-safe rendition ON DEMAND (once, then cached) and serve THAT to
+ *     everyone. Only the master ever lives on Arweave. Curated drops pre-warm
+ *     this (see ?prewarm) at approval time so viewers never wait.
  */
 
 const CACHE_DIR = path.join(os.tmpdir(), 'arweave-media-cache');
@@ -28,81 +32,182 @@ const RESPONSE_LENGTH_DECLARE_MAX = 31 * 1024 * 1024;
 // On Cloud Run, os.tmpdir() is an in-memory tmpfs — cached files count against
 // the instance's RAM limit, NOT disk. Cap the on-tmpfs cache and evict the
 // least-recently-used entries so a burst of distinct large videos can't grow
-// the cache until the instance OOMs. Keep this well under the memory limit to
-// leave headroom for the Node runtime + concurrent request buffers.
+// the cache until the instance OOMs.
 const CACHE_LIMIT_BYTES = 512 * 1024 * 1024;
 const GATEWAY = 'https://arweave.net';
 
-// LRU bookkeeping: txid -> { size, atime }. Rebuilt lazily; the source of
-// truth is always the files on disk (an eviction just deletes them).
-const lru = new Map<string, { size: number; atime: number }>();
+// iOS-safe H.264 threshold: transcode when either dimension exceeds this or the
+// encoded level is above 5.0. Renditions we produce (1920 long side, level 5.0)
+// sit under this, so they're served as-is and never re-transcoded.
+const IOS_MAX_DIM = 2048;
+const IOS_MAX_LEVEL = 50; // ffprobe integer level (50 = 5.0, 51 = 5.1, 60 = 6.0)
 
-// dedupe concurrent downloads of the same tx (a video element fires several
-// range requests at once on first load)
-const inFlight = new Map<string, Promise<{ file: string; type: string; size: number }>>();
-
-function touch(txid: string, size: number) {
-  lru.set(txid, { size, atime: Date.now() });
+interface Entry {
+  file: string;
+  type: string;
+  size: number;
 }
 
-/** evict least-recently-used cache entries until we're under the byte budget */
-function evictToFit(incomingBytes: number) {
+// LRU keyed by cache filename ("<txid>" for a master, "<txid>.ios" for a
+// rendition). The files on disk are the source of truth; eviction just deletes.
+const lru = new Map<string, { size: number; atime: number }>();
+// dedupe concurrent work for the same tx (a <video> fires several ranges at once)
+const inFlight = new Map<string, Promise<Entry>>();
+// serialize ffmpeg runs — decoding a huge frame is memory-heavy; one at a time
+// protects the instance from OOM when several oversized videos warm together
+let transcodeGate: Promise<unknown> = Promise.resolve();
+
+function touch(key: string, size: number) {
+  lru.set(key, { size, atime: Date.now() });
+}
+
+function evictToFit(incomingBytes: number, protectKeys: Set<string>) {
   let total = incomingBytes;
   Array.from(lru.values()).forEach((v) => (total += v.size));
   if (total <= CACHE_LIMIT_BYTES) return;
   const byAge = Array.from(lru.entries()).sort((a, b) => a[1].atime - b[1].atime);
-  for (const [txid, meta] of byAge) {
+  for (const [key, meta] of byAge) {
     if (total <= CACHE_LIMIT_BYTES) break;
-    if (inFlight.has(txid)) continue; // don't evict a file being written
-    const file = path.join(CACHE_DIR, txid);
+    if (inFlight.has(key) || protectKeys.has(key)) continue;
+    const file = path.join(CACHE_DIR, key);
     fs.rmSync(file, { force: true });
     fs.rmSync(`${file}.meta.json`, { force: true });
-    lru.delete(txid);
+    lru.delete(key);
     total -= meta.size;
   }
 }
 
-async function fetchToCache(txid: string) {
-  const file = path.join(CACHE_DIR, txid);
+function readCached(key: string): Entry | null {
+  const file = path.join(CACHE_DIR, key);
   const metaFile = `${file}.meta.json`;
   if (fs.existsSync(file) && fs.existsSync(metaFile)) {
     const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
-    touch(txid, meta.size);
+    touch(key, meta.size);
     return { file, type: meta.type as string, size: meta.size as number };
   }
+  return null;
+}
+
+function commit(key: string, tmp: string, type: string, protectKeys: Set<string>): Entry {
+  const size = fs.statSync(tmp).size;
+  if (!size) throw new Error('empty output');
+  if (size > MAX_BYTES) throw new Error('file exceeds proxy size limit');
+  evictToFit(size, protectKeys);
+  const file = path.join(CACHE_DIR, key);
+  fs.renameSync(tmp, file);
+  fs.writeFileSync(`${file}.meta.json`, JSON.stringify({ type, size }));
+  touch(key, size);
+  return { file, type, size };
+}
+
+async function downloadMaster(txid: string): Promise<Entry> {
+  const cached = readCached(txid);
+  if (cached) return cached;
   const res = await fetch(`${GATEWAY}/${txid}`);
   if (!res.ok || !res.body) throw new Error(`gateway responded ${res.status}`);
   const type = res.headers.get('content-type') || 'application/octet-stream';
   if (type.startsWith('text/html')) {
-    // unhealthy edge node serving an error page instead of the content
     throw new Error('gateway returned an error page instead of media');
   }
-  // stream to disk — buffering whole files in memory (Buffer.from(arrayBuffer))
-  // doubled peak RAM per file and OOM-pressured the instance when several
-  // large videos were fetched cold at once (exactly what a fresh drop does)
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  const tmp = path.join(CACHE_DIR, `${txid}.dl-${process.pid}-${Date.now()}`);
   try {
-    // Readable.fromWeb exists since Node 16.5; this repo's @types/node predates it
     await pipeline((Readable as any).fromWeb(res.body), fs.createWriteStream(tmp));
-    const size = fs.statSync(tmp).size;
-    if (!size) throw new Error('gateway returned an empty body');
-    if (size > MAX_BYTES) throw new Error('file exceeds proxy size limit');
-    evictToFit(size); // make room before committing this file into the cache
-    fs.renameSync(tmp, file); // atomic — no partial reads by other requests
-    fs.writeFileSync(metaFile, JSON.stringify({ type, size }));
-    touch(txid, size);
-    return { file, type, size };
+    return commit(txid, tmp, type, new Set([txid]));
   } catch (e) {
     fs.rmSync(tmp, { force: true });
     throw e;
   }
 }
 
-function getCached(txid: string) {
+function run(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args);
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.stderr.on('data', (d) => (err += d));
+    p.on('error', reject);
+    p.on('close', (code) =>
+      code === 0 ? resolve(out) : reject(new Error(`${cmd} exited ${code}: ${err.slice(-500)}`))
+    );
+  });
+}
+
+/** returns { width, height, level } or null if not a decodable video stream */
+async function probeVideo(file: string) {
+  try {
+    const out = await run('ffprobe', [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height,level',
+      '-of', 'csv=p=0', file,
+    ]);
+    const [w, h, level] = out.trim().split(',').map(Number);
+    if (!w || !h) return null;
+    return { width: w, height: h, level: level || 0 };
+  } catch {
+    return null;
+  }
+}
+
+async function transcodeIosSafe(srcFile: string, outFile: string) {
+  await run('ffmpeg', [
+    '-nostdin', '-y', '-loglevel', 'error', '-i', srcFile,
+    // longest side -> 1920, even dimensions
+    '-vf', "scale='if(gt(iw,ih),1920,-2)':'if(gt(iw,ih),-2,1920)':flags=lanczos",
+    '-c:v', 'libx264', '-profile:v', 'high', '-level:v', '5.0',
+    '-pix_fmt', 'yuv420p', '-crf', '23', '-preset', 'veryfast',
+    '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+    // the cache temp file has no extension — tell ffmpeg the container
+    '-f', 'mp4', outFile,
+  ]);
+}
+
+/**
+ * Returns the file to serve for `txid`: a cached iOS rendition if one exists or
+ * is needed, otherwise the master. Downloads + probes + transcodes as required,
+ * caching each step. Deduped per-txid; transcodes are serialized.
+ */
+async function ensureServable(txid: string): Promise<Entry> {
+  const iosKey = `${txid}.ios`;
+  const iosCached = readCached(iosKey);
+  if (iosCached) return iosCached;
+
+  const master = await downloadMaster(txid);
+  if (!master.type.startsWith('video/')) return master; // images/other pass through
+
+  const info = await probeVideo(master.file);
+  const oversized =
+    info && (Math.max(info.width, info.height) > IOS_MAX_DIM || info.level > IOS_MAX_LEVEL);
+  if (!oversized) return master; // already iOS-safe
+
+  // transcode (serialized), then drop the big master from tmpfs to reclaim RAM
+  const outTmp = path.join(CACHE_DIR, `${iosKey}.tc-${process.pid}-${Date.now()}`);
+  const prev = transcodeGate;
+  let release: (value?: unknown) => void = () => {};
+  transcodeGate = new Promise((r) => (release = r));
+  try {
+    await prev.catch(() => {});
+    console.log(`media proxy [${txid}]: transcoding ${info!.width}x${info!.height} L${info!.level} -> iOS-safe`);
+    await transcodeIosSafe(master.file, outTmp);
+    const entry = commit(iosKey, outTmp, 'video/mp4', new Set([iosKey]));
+    // free the oversized master — the rendition is what we serve now
+    fs.rmSync(master.file, { force: true });
+    fs.rmSync(`${master.file}.meta.json`, { force: true });
+    lru.delete(txid);
+    return entry;
+  } catch (e) {
+    fs.rmSync(outTmp, { force: true });
+    throw e;
+  } finally {
+    release!();
+  }
+}
+
+function getServable(txid: string) {
   let promise = inFlight.get(txid);
   if (!promise) {
-    promise = fetchToCache(txid).finally(() => inFlight.delete(txid));
+    promise = ensureServable(txid).finally(() => inFlight.delete(txid));
     inFlight.set(txid, promise);
   }
   return promise;
@@ -118,8 +223,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(400).json({ error: 'invalid transaction id' });
     return;
   }
+
+  // Pre-warm: do the download + (if needed) transcode and cache it, without
+  // streaming a body. Called at drop-approval time so the first real viewer
+  // gets a cache hit instead of waiting on the transcode.
+  if (req.query.prewarm) {
+    try {
+      const { type, size } = await getServable(txid);
+      res.status(200).json({ warmed: true, type, size });
+    } catch (e: any) {
+      console.error(`media proxy prewarm [${txid}]:`, e.message);
+      res.status(502).json({ warmed: false, error: e.message });
+    }
+    return;
+  }
+
   try {
-    const { file, type, size } = await getCached(txid);
+    const { file, type, size } = await getServable(txid);
     res.setHeader('Accept-Ranges', 'bytes');
     // content-addressed: the bytes for a tx id can never change
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
@@ -136,16 +256,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return;
       }
       if (m[1] === '') {
-        // suffix range: last N bytes
-        start = Math.max(0, size - parseInt(m[2], 10));
+        start = Math.max(0, size - parseInt(m[2], 10)); // suffix range: last N bytes
         end = size - 1;
       }
       end = Math.min(end, size - 1);
       res.status(206);
       res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
-      // Cloud Run's edge rejects non-chunked responses over 32MB with an
-      // opaque 500 — declare a length only for segments safely under that,
-      // and let Node's chunked transfer-encoding handle anything bigger
+      // Cloud Run's edge rejects non-chunked responses over 32MB with an opaque
+      // 500 — declare a length only for segments safely under that, else stream
       if (end - start + 1 < RESPONSE_LENGTH_DECLARE_MAX) {
         res.setHeader('Content-Length', end - start + 1);
       }

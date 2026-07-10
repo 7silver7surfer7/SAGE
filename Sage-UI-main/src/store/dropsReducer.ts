@@ -14,6 +14,7 @@ import { baseApi } from './baseReducer';
 import { Role } from '@prisma/client';
 import { createNftMetadataOnArweave, uploadFileToArweave } from '@/utilities/arweave-client';
 import { dropProgress } from '@/utilities/dropProgress';
+import { isVideoSrc } from '@/utilities/media';
 
 export type ArtworkSaleType = 'auction' | 'lottery' | 'openEdition';
 
@@ -490,6 +491,34 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
     deployOpenEditions(drop, artistNftContractAddress, signer, fetchWithBQ)
   );
   await deployStep('approval flags', () => updateDbApprovedDateAndIsLiveFlags(drop, fetchWithBQ));
+  // fire-and-forget: warm the media proxy's iOS-safe transcode for any video in
+  // this drop, so the first mobile viewer at go-live gets a cache hit instead
+  // of waiting on the transcode. Never blocks or fails the deploy.
+  prewarmDropVideos(drop);
+}
+
+/** Kick off /api/media prewarm for every video NFT in a drop (fire-and-forget). */
+function prewarmDropVideos(drop: DropFull) {
+  try {
+    const nfts = [
+      ...drop.Auctions.map((a) => a.Nft),
+      ...drop.Lotteries.flatMap((l) => l.Nfts),
+      ...drop.OpenEditions.map((oe) => oe.Nft),
+    ];
+    const txids = new Set<string>();
+    for (const nft of nfts) {
+      const src = nft?.s3PathOptimized;
+      if (!src || !isVideoSrc(src)) continue;
+      const m = /arweave\.net\/([A-Za-z0-9_-]{43})/.exec(src);
+      if (m) txids.add(m[1]);
+    }
+    txids.forEach((txid) => {
+      fetch(`/api/media/${txid}/?prewarm=1`).catch(() => {});
+    });
+    if (txids.size) console.log(`prewarmDropVideos() :: warming ${txids.size} video(s)`);
+  } catch (e) {
+    console.log('prewarmDropVideos() skipped', e);
+  }
 }
 
 function inspectDropGamesEndTimes(drop: DropFull) {
