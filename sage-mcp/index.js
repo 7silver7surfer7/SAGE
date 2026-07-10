@@ -157,15 +157,52 @@ const liveWindow = (g) => {
   return new Date(g.startTime).getTime() <= now && now <= new Date(g.endTime ?? 8640000000000000).getTime();
 };
 
+const auctionReader = new ethers.Contract(config.marketplace.auction, ABIS.auction, marketplaceProvider);
+
+// The DB row id equals the on-chain auctionId ONLY for auctions actually created
+// on-chain; some approved auctions were never deployed. And DB start/end dates can
+// drift from the contract's. So report the AUTHORITATIVE on-chain state — an agent
+// bidding off the DB alone would target a non-existent auction and get a revert.
+async function enrichAuction(a) {
+  const base = { auctionId: a.id, nft: a.Nft?.name, minimumPriceSage: a.minimumPrice };
+  try {
+    const s = await auctionReader.getAuction(a.id);
+    const existsOnChain =
+      s.nftContract !== ethers.constants.AddressZero || Number(s.startTime) > 0;
+    if (!existsOnChain) {
+      return { ...base, onChainExists: false, live: false, note: 'not created on-chain — not biddable' };
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const live = !s.settled && Number(s.startTime) <= now && now <= Number(s.endTime);
+    const highestBid = Number(fmt(s.highestBid));
+    const minPrice = Number(fmt(s.minimumPrice));
+    // contract requires next bid >= highestBid * 1.01 (100 bps increment), or the
+    // minimum price for the first bid
+    const nextMinBidSage = highestBid > 0 ? (highestBid * 1.01).toFixed(4) : String(minPrice);
+    return {
+      ...base,
+      onChainExists: true,
+      live,
+      settled: s.settled,
+      currentHighestBidSage: String(highestBid),
+      highestBidder: s.highestBidder,
+      nextMinBidSage,
+      endsAt: new Date(Number(s.endTime) * 1000).toISOString(),
+    };
+  } catch (e) {
+    return { ...base, onChainExists: false, live: false, note: `on-chain read failed: ${e.reason || e.message}` };
+  }
+}
+
 server.tool(
   'sage_list_drops',
-  'List approved drops on SAGE with their purchasable games (open editions, lotteries, auctions) and prices in SAGE/pixels.',
+  'List approved drops on SAGE with their purchasable games (open editions, lotteries, auctions) and prices in SAGE/pixels. Auction fields (live, currentHighestBidSage, nextMinBidSage) come from the on-chain contract — bid with sage_place_auction_bid using nextMinBidSage or higher.',
   {},
   async () => {
     try {
       const drops = await siteGet('/api/drops?action=GetApprovedDrops');
-      return ok(
-        drops.map((d) => ({
+      const enriched = await Promise.all(
+        drops.map(async (d) => ({
           dropId: d.id,
           name: d.name,
           artist: d.artistDisplayName || d.NftContract?.Artist?.username || d.artistAddress,
@@ -186,15 +223,10 @@ server.tool(
             maxTicketsPerUser: l.maxTicketsPerUser,
             live: liveWindow(l),
           })),
-          auctions: (d.Auctions || []).map((a) => ({
-            auctionId: a.id,
-            nft: a.Nft?.name,
-            minimumPriceSage: a.minimumPrice,
-            settled: a.settled,
-            live: liveWindow(a),
-          })),
+          auctions: await Promise.all((d.Auctions || []).map(enrichAuction)),
         }))
       );
+      return ok(enriched);
     } catch (e) {
       return fail(e);
     }
@@ -214,10 +246,44 @@ server.tool(
   }
 );
 
+// ------------------------------------------------------------- pixels helper
+/**
+ * Marketplace contracts burn pixels from the Rewards contract's ON-CHAIN
+ * ledger, which starts at zero for every wallet — the balance the site shows
+ * is off-chain until claimed. For pixel-priced purchases the *WithSignedMessage
+ * / claimPointsAndMint contract paths verify the site oracle's signed balance
+ * and claim it on-chain in the same transaction. This fetches that signed
+ * balance and fails with actionable guidance when it can't cover the cost.
+ */
+async function requirePixels(wallet, totalCostPoints) {
+  const points = await siteGet('/api/points');
+  if (!points?.signedMessage) {
+    throw new Error(
+      `this purchase costs ${totalCostPoints} pixels but the agent wallet has none. ` +
+        'Pixels accrue by holding SAGE (0.25/day per SAGE) — buy SAGE with sage_buy_sage and wait for the next balance refresh.'
+    );
+  }
+  const rewards = new ethers.Contract(
+    config.marketplace.rewards,
+    ['function totalPointsUsed(address) view returns (uint256)'],
+    marketplaceProvider
+  );
+  const used = Number(await rewards.totalPointsUsed(wallet.address));
+  const available = Number(points.totalPointsEarned) - used;
+  if (available < totalCostPoints) {
+    throw new Error(
+      `insufficient pixels: need ${totalCostPoints}, have ${available} ` +
+        `(signed balance ${points.totalPointsEarned} minus ${used} already spent). ` +
+        'Hold more SAGE or wait for the hourly balance refresh.'
+    );
+  }
+  return points; // { totalPointsEarned, signedMessage, ... }
+}
+
 // ---------------------------------------------------------- open edition mint
 server.tool(
   'sage_mint_open_edition',
-  'Buy (mint) copies of an open-edition NFT. Pays the SAGE cost on-chain; approve happens automatically.',
+  'Buy (mint) copies of an open-edition NFT. Pays the SAGE and/or pixel cost on-chain; SAGE approval and pixel claiming happen automatically.',
   {
     editionId: z.number().int().describe('on-chain editionId from sage_list_drops'),
     quantity: z.number().int().min(1).max(300).default(1),
@@ -235,13 +301,31 @@ server.tool(
 
       const totalCost = edition.costTokens.mul(quantity);
       const approveTx = await ensureSageAllowance(wallet, config.marketplace.openEdition, totalCost);
-      const tx = await oe.batchMint(editionId, quantity);
+
+      // pixel-priced editions must go through claimPointsAndMint — plain
+      // batchMint reverts "Not enough points" (see requirePixels)
+      const totalCostPoints = Number(edition.costPoints) * quantity;
+      let tx;
+      let paidPixels = 0;
+      if (totalCostPoints > 0) {
+        const points = await requirePixels(wallet, totalCostPoints);
+        paidPixels = totalCostPoints;
+        tx = await oe.claimPointsAndMint(
+          editionId,
+          quantity,
+          points.totalPointsEarned,
+          points.signedMessage
+        );
+      } else {
+        tx = await oe.batchMint(editionId, quantity);
+      }
       const receipt = await tx.wait(1);
       return ok({
         status: 'minted',
         editionId,
         quantity,
         paidSage: fmt(totalCost),
+        paidPixels,
         approveTx: approveTx ?? 'allowance already sufficient',
         txHash: tx.hash,
         block: receipt.blockNumber,
@@ -255,7 +339,7 @@ server.tool(
 // ------------------------------------------------------------ lottery tickets
 server.tool(
   'sage_buy_lottery_tickets',
-  'Buy tickets for a drop lottery (drawing). Pays the SAGE ticket cost on-chain; approve happens automatically.',
+  'Buy tickets for a drop lottery (drawing). Pays the SAGE and/or pixel ticket cost on-chain; SAGE approval and pixel claiming happen automatically.',
   {
     lotteryId: z.number().int().describe('lotteryId from sage_list_drops'),
     tickets: z.number().int().min(1).default(1),
@@ -267,13 +351,31 @@ server.tool(
       const info = await lottery.getLotteryInfo(lotteryId);
       const totalCost = info.ticketCostTokens.mul(tickets);
       const approveTx = await ensureSageAllowance(wallet, config.marketplace.lottery, totalCost);
-      const tx = await lottery.buyTickets(lotteryId, tickets);
+
+      // pixel-priced tickets must go through buyTicketsWithSignedMessage —
+      // plain buyTickets reverts "Not enough points" (see requirePixels)
+      const totalCostPoints = Number(info.ticketCostPoints) * tickets;
+      let tx;
+      let paidPixels = 0;
+      if (totalCostPoints > 0) {
+        const points = await requirePixels(wallet, totalCostPoints);
+        paidPixels = totalCostPoints;
+        tx = await lottery.buyTicketsWithSignedMessage(
+          points.totalPointsEarned,
+          lotteryId,
+          tickets,
+          points.signedMessage
+        );
+      } else {
+        tx = await lottery.buyTickets(lotteryId, tickets);
+      }
       const receipt = await tx.wait(1);
       return ok({
         status: 'tickets purchased',
         lotteryId,
         tickets,
         paidSage: fmt(totalCost),
+        paidPixels,
         approveTx: approveTx ?? 'allowance already sufficient',
         txHash: tx.hash,
         block: receipt.blockNumber,
