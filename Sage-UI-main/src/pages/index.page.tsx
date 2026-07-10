@@ -34,7 +34,7 @@ function home({
       const vibrates = navigator.vibrate(1000);
     }
   }
-  const { pushToCreators, pushToDrops } = useSageRoutes();
+  const { pushToCreators, pushToDrops, pushToAgentApi } = useSageRoutes();
 
   return (
     <div className='home-page' data-cy='home-page' data-on={coverOn}>
@@ -71,6 +71,9 @@ function home({
           {welcomeSecondLine ? `${welcomeFirstLine},` : welcomeFirstLine} <pre />{' '}
           {welcomeSecondLine}
         </h1>
+        <button className='home-page__agent-api-link' onClick={pushToAgentApi}>
+          AI Agent API →
+        </button>
         <div className='home-page__upcoming-drops-header'>
           <h1 className='home-page__upcoming-drops-header-left'>drops</h1>
           <div className='home-page__upcoming-drops-header-right'>

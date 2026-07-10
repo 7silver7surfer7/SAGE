@@ -17,7 +17,7 @@ import {
   fmt,
   parse,
 } from './chain.js';
-import { siteGet } from './siwe-session.js';
+import { siteGet, siteGetRaw } from './siwe-session.js';
 
 const server = new McpServer({ name: 'sage-marketplace', version: '0.1.0' });
 
@@ -407,6 +407,23 @@ server.tool(
       const approveTx = await ensureSageAllowance(wallet, config.marketplace.auction, amount);
       const tx = await auction.bid(auctionId, amount);
       const receipt = await tx.wait(1);
+
+      // The auction's on-screen bidder list is a DB cache the UI writes after a
+      // human bid (SaveBid) — it is NOT read from chain. Mirror that here or the
+      // agent's bid, though it IS the on-chain highest, won't appear in the list.
+      // Best-effort: the bid already succeeded on-chain regardless.
+      let recordedInHistory = false;
+      try {
+        const block = await marketplaceProvider.getBlock(receipt.blockNumber);
+        await siteGet('/api/user'); // ensure the agent has a User row (SaveBid FK -> Bidder)
+        await siteGetRaw(
+          `/api/auctions?action=SaveBid&id=${auctionId}&amt=${bidSage}&ts=${block.timestamp}`
+        );
+        recordedInHistory = true;
+      } catch (e) {
+        console.error('bid confirmed on-chain but bid-history record failed:', e.message);
+      }
+
       return ok({
         status: 'bid placed',
         auctionId,
@@ -415,6 +432,10 @@ server.tool(
         approveTx: approveTx ?? 'allowance already sufficient',
         txHash: tx.hash,
         block: receipt.blockNumber,
+        recordedInHistory,
+        recordNote: recordedInHistory
+          ? undefined
+          : 'bid is live on-chain but not written to the site bid-history cache (check SAGE_SITE_URL points at the site you are viewing)',
       });
     } catch (e) {
       return fail(e);

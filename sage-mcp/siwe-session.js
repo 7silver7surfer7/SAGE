@@ -94,3 +94,19 @@ export async function siteGet(pathname) {
     return res.json();
   }
 }
+
+/** like siteGet but returns raw text — for endpoints with empty/non-JSON bodies (e.g. SaveBid) */
+export async function siteGetRaw(pathname) {
+  if (!Object.keys(jar).length) await signIn();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(`${config.siteUrl}${pathname}`, {
+      headers: { Cookie: cookieHeader() },
+    });
+    if (res.status === 401 && attempt === 0) {
+      await signIn();
+      continue;
+    }
+    if (!res.ok) throw new Error(`${pathname} -> HTTP ${res.status}`);
+    return res.text();
+  }
+}
