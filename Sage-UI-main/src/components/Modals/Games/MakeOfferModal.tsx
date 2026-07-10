@@ -101,7 +101,7 @@ export default function MakeOfferModal({ isOpen, closeModal, artist, nft, buyOff
         </section>
         <section className='games-modal__body'>
           <div className='games-modal__main-img-container'>
-            <BaseMedia src={nft.s3PathOptimized} />
+            <BaseMedia src={nft.s3PathOptimized} fit='contain' />
           </div>
           <div className='games-modal__main-content'>
             <div>

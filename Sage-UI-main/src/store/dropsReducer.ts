@@ -614,7 +614,10 @@ async function deployAuctions(
       minimumPrice,
       startTime,
       endTime: 0,
-      duration: 24*60*60,
+      // the auction contract starts its clock at the FIRST BID (endTime 0 +
+      // duration); honor the sale duration picked in the dashboard instead of
+      // a hardcoded 24h — DB start/end times encode that choice
+      duration: Math.max(endTime - startTime, 3600),
       nftContract: artistNftContractAddress,
       nftUri: auction.Nft.metadataPath,
       settled: false,

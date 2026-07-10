@@ -81,7 +81,7 @@ async function getUser(walletAddress: string, res: NextApiResponse) {
     }
     res.status(200).send(existingUser);
   } catch (e) {
-    res.status(500).end;
+    res.status(500).end();
   }
 }
 
@@ -98,7 +98,7 @@ async function getUserDisplayInfo(walletAddress: string, res: NextApiResponse) {
     }
   } catch (e) {
     console.log(e);
-    res.status(500).end;
+    res.status(500).end();
   }
 }
 
@@ -237,7 +237,7 @@ async function getIsFollowing(walletAddress: string, res: NextApiResponse) {
     res.status(200).json(following);
   } catch (e) {
     console.log(e);
-    res.status(500).end;
+    res.status(500).end();
   }
 }
 
@@ -261,6 +261,6 @@ async function setIsFollowing(
     res.status(200).end();
   } catch (e) {
     console.log(e);
-    res.status(500).end;
+    res.status(500).end();
   }
 }

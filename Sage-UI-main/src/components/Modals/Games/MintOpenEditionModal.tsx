@@ -71,14 +71,20 @@ export default function MintOpenEditionModal({
   const sagePriceDisplay = `${openEdition.costTokens * quantity} SAGE`;
   const pixelPriceDisplay = `${openEdition.costPoints * quantity} PIXEL`;
 
-  // whole hours render bare ("24 hours"), fractional ones keep their decimals ("1.5 hours")
+  // "3 days" / "1 week" for whole-day windows, hours otherwise ("1.5 hours")
   const durationHours = Number(
     (
       (new Date(openEdition.endTime).getTime() - new Date(openEdition.startTime).getTime()) /
       3600000
     ).toFixed(2)
   );
-  const gameInfo = `Users can mint this artwork as an open edition for ${durationHours} hours. Every mint is a numbered edition of the same artwork.${
+  const durationDisplay =
+    durationHours === 168
+      ? '1 week'
+      : durationHours % 24 === 0 && durationHours >= 24
+      ? `${durationHours / 24} day${durationHours === 24 ? '' : 's'}`
+      : `${durationHours} hour${durationHours === 1 ? '' : 's'}`;
+  const gameInfo = `Users can mint this artwork as an open edition for ${durationDisplay}. Every mint is a numbered edition of the same artwork.${
     maxPerUser > 0 ? ` Each wallet can mint up to ${maxPerUser}.` : ''
   }`;
 
@@ -188,7 +194,7 @@ export default function MintOpenEditionModal({
         <section className='games-modal__body'>
           <div className='games-modal__main'>
             <div className='games-modal__main-img-container'>
-              <BaseMedia src={openEdition.Nft.s3PathOptimized} isZoomable={true} />
+              <BaseMedia src={openEdition.Nft.s3PathOptimized} isZoomable={true} fit='contain' />
               {isLive && (
                 <Countdown
                   endTime={openEdition.endTime}

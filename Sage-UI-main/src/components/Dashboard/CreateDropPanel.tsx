@@ -433,16 +433,16 @@ export default function CreateDropPanel() {
 
         <div className='create-drop-panel__options'>
           <label className='create-drop-panel__label'>
-            auction duration
+            sale duration (auctions, drawings &amp; open editions)
             <select
               className='create-drop-panel__input'
               value={durationHours}
               onChange={(e) => setDurationHours(Number(e.target.value))}
             >
               <option value={1}>1 hour</option>
-              <option value={24}>24 hours</option>
+              <option value={24}>1 day</option>
               <option value={72}>3 days</option>
-              <option value={168}>7 days</option>
+              <option value={168}>1 week</option>
             </select>
           </label>
           <label className='create-drop-panel__label'>

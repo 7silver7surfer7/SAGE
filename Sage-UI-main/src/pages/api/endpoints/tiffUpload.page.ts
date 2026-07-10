@@ -3,6 +3,8 @@ import multer from 'multer';
 import sharp from 'sharp';
 import { uploadBufferToS3 } from '@/utilities/awsS3-server';
 import NextCors from 'nextjs-cors';
+import { Role } from '@prisma/client';
+import { requireRole } from '@/utilities/apiAuth';
 import { OPTIMIZED_IMAGE_WIDTH } from '@/constants/config';
 
 export const config = { api: { bodyParser: false } };
@@ -18,6 +20,10 @@ const upload = multer({
 
 async function handler(req: RequestWithFile, res: NextApiResponse) {
   await setupCors(req, res);
+  // was an unauthenticated S3 upload relay; gate it (ADMIN) so it can't be
+  // abused for arbitrary storage writes
+  const requester = await requireRole(req, res, [Role.ADMIN]);
+  if (!requester) return;
   try {
     await runMiddleware(req, res, upload.single('file'));
     const tiffBuffer: Buffer = Buffer.from(req.file.buffer);

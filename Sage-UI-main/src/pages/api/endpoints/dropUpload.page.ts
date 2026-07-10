@@ -5,7 +5,7 @@ import prisma from '@/prisma/client';
 import { Role } from '@prisma/client';
 import { getSession } from 'next-auth/react';
 import { createS3SignedUrl } from '@/utilities/awsS3-server';
-import { sendArweaveTransaction } from '@/utilities/arweave-server';
+import { sendArweaveTransaction, signChunkedUploadTx } from '@/utilities/arweave-server';
 import { requireRole, Requester } from '@/utilities/apiAuth';
 import { parameters } from '@/constants/config';
 import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SAGEOpenEdition.json';
@@ -28,6 +28,10 @@ const ACTION_ROLES: Record<string, Role[]> = {
   InsertNft: [Role.ARTIST, Role.ADMIN],
   DeleteNft: [Role.ARTIST, Role.ADMIN], // additionally scoped to own NFTs below
   RegisterOpenEditionMint: [Role.USER, Role.ARTIST, Role.ADMIN],
+  // signs Arweave tx headers so big media (>32MB — Cloud Run's edge rejects
+  // such request bodies outright) can be uploaded browser→Arweave directly;
+  // same trust level as the regular upload endpoint (we pay for storage)
+  SignArweaveTx: [Role.ARTIST, Role.ADMIN],
 };
 
 async function handler(request: NextApiRequest, response: NextApiResponse) {
@@ -84,8 +88,46 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
     case 'RegisterOpenEditionMint':
       await registerOpenEditionMint(request.body, requester, response);
       break;
+    case 'SignArweaveTx':
+      await signArweaveTx(request.body, response);
+      break;
   }
   response.end();
+}
+
+// media types the app accepts for drop artwork (see CreateDropPanel)
+const SIGNABLE_CONTENT_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/svg+xml',
+  'video/mp4',
+]);
+const MAX_SIGNABLE_BYTES = 500 * 1024 * 1024; // cost guard: 500MB per file
+
+async function signArweaveTx(data: any, response: NextApiResponse) {
+  try {
+    const dataSize = Number(data.dataSize);
+    const dataRoot = String(data.dataRoot || '');
+    const contentType = String(data.contentType || '');
+    if (!Number.isInteger(dataSize) || dataSize <= 0 || dataSize > MAX_SIGNABLE_BYTES) {
+      response.status(400).json({ error: 'invalid dataSize' });
+      return;
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(dataRoot)) {
+      response.status(400).json({ error: 'invalid dataRoot' });
+      return;
+    }
+    if (!SIGNABLE_CONTENT_TYPES.has(contentType)) {
+      response.status(400).json({ error: `unsupported content type '${contentType}'` });
+      return;
+    }
+    const { tx, balance } = await signChunkedUploadTx(dataSize, dataRoot, contentType);
+    response.json({ tx, balance });
+  } catch (e: any) {
+    console.log(e);
+    response.json({ error: e.message });
+  }
 }
 
 async function setupCors(request: NextApiRequest, response: NextApiResponse) {

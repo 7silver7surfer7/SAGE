@@ -8,3 +8,17 @@ export function isVideoSrc(src: string | null | undefined): boolean {
   const s = src.toLowerCase();
   return s.endsWith('mp4') || s.includes('filetype=mp4');
 }
+
+/**
+ * Rewrites an arweave.net media URL to this app's own /api/media proxy for
+ * VIDEO playback. The Arweave gateway answers ranged requests with 200 + full
+ * body instead of 206, and Safari refuses to play <video> without real range
+ * support ("media unsupported") — the proxy serves proper 206 responses from
+ * a local cache. Images don't need ranges and keep loading from the gateway
+ * directly. Non-Arweave URLs (legacy S3 .mp4 paths) pass through untouched.
+ */
+export function videoPlaybackSrc(src: string): string {
+  const m = /^https?:\/\/arweave\.net\/([A-Za-z0-9_-]{43})(?:[?#]|$)/.exec(src || '');
+  // trailing slash avoids the app's trailingSlash 308 redirect on every segment request
+  return m ? `/api/media/${m[1]}/` : src;
+}

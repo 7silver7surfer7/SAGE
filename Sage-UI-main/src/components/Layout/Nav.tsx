@@ -17,6 +17,7 @@ export default function Nav() {
     pushToHome,
     pushToSubmissions,
     pushToAgentApi,
+    pushToHowToBuyAsh,
     isProfilePage,
     isSingleDropsPage,
     pushToProfile,
@@ -46,6 +47,10 @@ export default function Nav() {
     {
       name: 'Agent API',
       routeFunction: pushToAgentApi,
+    },
+    {
+      name: 'SAGE Token',
+      routeFunction: pushToHowToBuyAsh,
     },
   ];
 

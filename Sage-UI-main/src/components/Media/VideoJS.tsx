@@ -5,9 +5,11 @@ interface Props {
   options: any;
   onReady: (player: any) => void;
   className?: string;
+  /** crop to fill (cover, default — grid tiles) or letterbox (contain — modals) */
+  fit?: 'cover' | 'contain';
 }
 
-export const VideoJS = ({ options, onReady, className }: Props) => {
+export const VideoJS = ({ options, onReady, className, fit = 'cover' }: Props) => {
   const videoRef = useRef(null);
   const playerRef = useRef(null);
 
@@ -60,7 +62,7 @@ export const VideoJS = ({ options, onReady, className }: Props) => {
           position: 'absolute',
           width: '100%',
           height: '100%',
-          objectFit: 'cover',
+          objectFit: fit,
         }}
       />
     </div>

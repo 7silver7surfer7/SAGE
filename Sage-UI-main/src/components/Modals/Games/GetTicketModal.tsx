@@ -211,7 +211,7 @@ function GetTicketModal({
         <section className='games-modal__body'>
           <div className='games-modal__main'>
             <div className='games-modal__main-img-container'>
-              <BaseMedia src={selectedNftS3Path} isZoomable={true} />
+              <BaseMedia src={selectedNftS3Path} isZoomable={true} fit='contain' />
               {isLive && (
                 <Countdown
                   endTime={lottery.endTime}

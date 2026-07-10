@@ -14,6 +14,7 @@ import {
   basePathHome,
   basePathSubmissions,
   basePathAgentApi,
+  basePathHowToBuyAsh,
 } from '@/constants/paths';
 import Motto from '../Layout/Motto';
 
@@ -42,6 +43,10 @@ const navLinks: NavLink[] = [
   {
     name: 'Agent API',
     url: basePathAgentApi,
+  },
+  {
+    name: 'SAGE Token',
+    url: basePathHowToBuyAsh,
   },
 ];
 

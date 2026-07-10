@@ -4,7 +4,7 @@ import Image, { ImageProps } from 'next/image';
 import Zoom from 'react-medium-image-zoom';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useState } from 'react';
-import { isVideoSrc } from '@/utilities/media';
+import { isVideoSrc, videoPlaybackSrc } from '@/utilities/media';
 // video.js is ~200 kB minified; load it only when a video actually renders
 const VideoJS = dynamic(() => import('./VideoJS'), { ssr: false });
 
@@ -50,6 +50,10 @@ interface BaseMediaProps extends Partial<ImageProps> {
   className?: string;
   muted?: boolean;
   autoPlay?: boolean;
+  /** 'cover' (default) crops to fill the container — right for grid tiles;
+   *  'contain' letterboxes so the WHOLE artwork is visible at its true
+   *  aspect ratio — right for detail/mint/bid modals. */
+  fit?: 'cover' | 'contain';
 }
 
 function BaseMedia({
@@ -61,6 +65,7 @@ function BaseMedia({
   className,
   muted,
   priority,
+  fit = 'cover',
 }: BaseMediaProps) {
   const isVideo = (): boolean => isVideoSrc(src);
   const retryable = useRetryableSrc(src);
@@ -88,7 +93,9 @@ function BaseMedia({
         // poster: 'https://d180qjjsfkqvjc.cloudfront.net/trailers/lehel_poster.png',
         sources: [
           {
-            src,
+            // proxied through /api/media for real 206 range support — Safari
+            // refuses to play video from arweave.net's range-less gateway
+            src: videoPlaybackSrc(src),
             type: 'video/mp4',
           },
         ],
@@ -106,11 +113,11 @@ function BaseMedia({
             style={{
               width: '100%',
               height: '100%',
-              objectFit: 'cover',
+              objectFit: fit,
               overflow: 'hidden',
             }}
           >
-            <VideoJS options={videoJsOptions} onReady={() => {}} />
+            <VideoJS options={videoJsOptions} onReady={() => {}} fit={fit} />
           </div>
         ) : isZoomable ? (
           <img
@@ -121,7 +128,7 @@ function BaseMedia({
               overflow: 'hidden',
               width: '100%',
               height: '100%',
-              objectFit: 'cover',
+              objectFit: fit,
             }}
             draggable={false}
             className={className}
@@ -132,7 +139,7 @@ function BaseMedia({
             onError={retryable.onError}
             priority={priority}
             layout='fill'
-            objectFit='cover'
+            objectFit={fit}
             draggable={false}
             className={className}
             onClick={onClickHandler}

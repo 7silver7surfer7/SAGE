@@ -58,6 +58,51 @@ export async function sendArweaveTransaction(
   return { tx, balance };
 }
 
+/**
+ * Signs an Arweave transaction HEADER for a browser-side chunked upload.
+ *
+ * Cloud Run rejects request bodies over 32MB at Google's edge (hard HTTP/1
+ * limit — the request never reaches this app), so large media can't flow
+ * through our own upload endpoint. Instead the browser computes the data's
+ * merkle root locally and uploads the bytes straight to arweave.net; an
+ * Arweave signature only covers the header fields (data_root + data_size +
+ * tags — not the raw bytes), so this server can authorize and pay for the
+ * upload without ever seeing the file, and the wallet key never leaves here.
+ *
+ * The caller-supplied data_root is unforgeable-by-construction: chunks whose
+ * merkle root doesn't match simply can't be attached to the transaction.
+ */
+export async function signChunkedUploadTx(
+  dataSize: number,
+  dataRoot: string,
+  contentType: string
+): Promise<{ tx: object; balance: string }> {
+  // createTransaction() insists on full data bytes, so build the header-only
+  // transaction manually: anchor + network price + caller's data_root.
+  const [anchor, price] = await Promise.all([
+    arweave.api.get('tx_anchor').then((r) => String(r.data)),
+    arweave.api.get(`price/${dataSize}`).then((r) => String(r.data)),
+  ]);
+  const tx = new Transaction({
+    format: 2,
+    last_tx: anchor,
+    owner: arweaveJwk.n,
+    reward: price,
+    data_size: String(dataSize),
+    data_root: dataRoot,
+  } as any);
+  // pre-set chunks so sign()'s prepareChunks(empty data) doesn't blank the
+  // data_root we were given; the raw-bytes form is only used client-side
+  (tx as any).chunks = { chunks: [], proofs: [], data_root: new Uint8Array() };
+  tx.addTag('Content-Type', contentType);
+  await arweave.transactions.sign(tx, arweaveJwk);
+  console.log(
+    `signChunkedUploadTx() :: signed ${tx.id} (${dataSize} bytes, ${contentType})`
+  );
+  const { balance } = await getArweaveBalance();
+  return { tx: tx.toJSON(), balance };
+}
+
 export async function getArweaveBalance(): Promise<{ address: string; balance: string }> {
   const address = await arweave.wallets.jwkToAddress(arweaveJwk);
   var balance = await arweave.wallets.getBalance(address);

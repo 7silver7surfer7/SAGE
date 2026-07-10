@@ -1,24 +1,50 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getSession } from 'next-auth/react';
-import prisma from '@/prisma/client';
-import { Nft, Prisma } from '@prisma/client';
+import { Nft, Prisma, Role } from '@prisma/client';
 import { readPresetDropsFromS3, uploadBufferToS3 } from '@/utilities/awsS3-server';
 import { isVideoSrc } from '@/utilities/media';
 import { PresetDrop } from '@/store/dropsReducer';
 import { withArtistDisplayNameOverride } from '@/prisma/functions';
+import { requireRole } from '@/utilities/apiAuth';
+import prisma from '@/prisma/client';
 import sharp from 'sharp';
 import { OPTIMIZED_IMAGE_WIDTH, parameters } from '@/constants/config';
+
+// Per-action role gating. Previously every action (including DeleteDrops,
+// which wipes the whole catalog) was reachable by ANY signed-in wallet — the
+// handler only checked for a session. Reads used by the dashboard/deploy flow
+// stay broad; drop mutation/approval/deletion is ADMIN-only.
+const ACTION_ROLES: Record<string, Role[]> = {
+  GetApprovedDrops: [Role.USER, Role.ARTIST, Role.ADMIN],
+  GetFullDrop: [Role.USER, Role.ARTIST, Role.ADMIN],
+  GetNftContractAddress: [Role.ARTIST, Role.ADMIN],
+  GetDropsPendingApproval: [Role.ADMIN],
+  GetPresetDrops: [Role.ADMIN],
+  FindSplitterAddress: [Role.ADMIN],
+  OptimizeDropImages: [Role.ADMIN],
+  UpdateNftContractAddress: [Role.ADMIN],
+  UpdateSplitterAddress: [Role.ADMIN],
+  UpdateAuctionContractAddress: [Role.ADMIN],
+  UpdateLotteryContractAddress: [Role.ADMIN],
+  UpdateOpenEditionContractAddress: [Role.ADMIN],
+  UpdateApprovedDateAndIsLiveFlags: [Role.ADMIN],
+  DeleteDrop: [Role.ADMIN],
+  DeleteDrops: [Role.ADMIN],
+};
 
 async function handler(request: NextApiRequest, response: NextApiResponse) {
   const {
     query: { action, id, address },
   } = request;
-  const session = await getSession({ req: request });
-  if (!session) {
-    response.status(401).end('Please Sign In');
+  const allowedRoles = ACTION_ROLES[String(action)];
+  if (!allowedRoles) {
+    response.status(400).end('Bad Request');
     return;
   }
-  const { address: walletAddress } = session!;
+  const requester = await requireRole(request, response, allowedRoles);
+  if (!requester) {
+    return;
+  }
+  const walletAddress = requester.walletAddress;
   switch (action) {
     case 'GetApprovedDrops':
       await getApprovedDrops(response);

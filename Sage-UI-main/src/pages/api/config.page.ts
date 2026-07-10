@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getSession } from 'next-auth/react';
+import { Role } from '@prisma/client';
+import { getRequester, requireRole } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
 
 export default async (req: NextApiRequest, res: NextApiResponse) => {
@@ -8,19 +9,25 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
     method,
   } = req;
 
-  const session = await getSession({ req });
-  if (!session) {
-    res.status(401).end('Not Authenticated');
-    return;
-  }
-
   switch (method) {
-    case 'GET':
+    case 'GET': {
+      // reading the config (welcome message / featured drop) only needs a session
+      const requester = await getRequester(req);
+      if (!requester) {
+        res.status(401).end('Not Authenticated');
+        return;
+      }
       await getConfig(res);
       break;
-    case 'PATCH':
+    }
+    case 'PATCH': {
+      // writing the site-wide homepage config is ADMIN-only — previously any
+      // signed-in wallet could rewrite the welcome message / featured drop
+      const requester = await requireRole(req, res, [Role.ADMIN]);
+      if (!requester) return;
       await updateConfig(Number(featuredDropId), welcomeMessage, res);
       break;
+    }
     default:
       res.status(501).end();
   }
@@ -42,7 +49,7 @@ async function getConfig(res: NextApiResponse) {
       });
     }
   } catch (e) {
-    res.status(500).end;
+    res.status(500).end();
   }
 }
 
