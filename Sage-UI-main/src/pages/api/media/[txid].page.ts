@@ -46,6 +46,9 @@ interface Entry {
   file: string;
   type: string;
   size: number;
+  // set only on the request that actually performed a downscale this call —
+  // surfaced by ?prewarm so the dashboard log can report it
+  transcode?: { from: string; to: string };
 }
 
 // LRU keyed by cache filename ("<txid>" for a master, "<txid>.ios" for a
@@ -195,6 +198,12 @@ async function ensureServable(txid: string): Promise<Entry> {
     fs.rmSync(master.file, { force: true });
     fs.rmSync(`${master.file}.meta.json`, { force: true });
     lru.delete(txid);
+    // output dims mirror the ffmpeg scale (longest side -> 1920, even)
+    const longest = Math.max(info!.width, info!.height);
+    const s = 1920 / longest;
+    const outW = Math.round((info!.width * s) / 2) * 2;
+    const outH = Math.round((info!.height * s) / 2) * 2;
+    entry.transcode = { from: `${info!.width}x${info!.height}`, to: `${outW}x${outH}` };
     return entry;
   } catch (e) {
     fs.rmSync(outTmp, { force: true });
@@ -229,8 +238,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // gets a cache hit instead of waiting on the transcode.
   if (req.query.prewarm) {
     try {
-      const { type, size } = await getServable(txid);
-      res.status(200).json({ warmed: true, type, size });
+      const { type, size, transcode } = await getServable(txid);
+      res.status(200).json({
+        warmed: true,
+        type,
+        size,
+        // present only when THIS call downscaled the video (first warm of an
+        // oversized master); the dashboard log reports it
+        downscaled: !!transcode,
+        from: transcode?.from,
+        to: transcode?.to,
+      });
     } catch (e: any) {
       console.error(`media proxy prewarm [${txid}]:`, e.message);
       res.status(502).json({ warmed: false, error: e.message });

@@ -490,34 +490,63 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   await deployStep('open editions', () =>
     deployOpenEditions(drop, artistNftContractAddress, signer, fetchWithBQ)
   );
-  await deployStep('approval flags', () => updateDbApprovedDateAndIsLiveFlags(drop, fetchWithBQ));
-  // fire-and-forget: warm the media proxy's iOS-safe transcode for any video in
-  // this drop, so the first mobile viewer at go-live gets a cache hit instead
-  // of waiting on the transcode. Never blocks or fails the deploy.
-  prewarmDropVideos(drop);
+  // Warm the media proxy's iOS-safe transcode for every video in the drop, so
+  // the first mobile viewer at go-live gets a cache hit. Reported in the log so
+  // the admin sees which videos get downscaled. Best-effort: never fails the
+  // deploy (the drop already succeeded on-chain), so it's awaited but its
+  // errors are swallowed.
+  await prewarmDropVideos(drop);
 }
 
-/** Kick off /api/media prewarm for every video NFT in a drop (fire-and-forget). */
-function prewarmDropVideos(drop: DropFull) {
+/**
+ * Prewarm + report the mobile downscale for each video NFT in a drop. Each
+ * video becomes a tracked step so the dashboard log shows whether it was
+ * downscaled (and from/to dimensions). Server-side transcodes are serialized,
+ * so a video that needs one shows an active spinner until it's ready.
+ */
+async function prewarmDropVideos(drop: DropFull) {
   try {
     const nfts = [
       ...drop.Auctions.map((a) => a.Nft),
       ...drop.Lotteries.flatMap((l) => l.Nfts),
       ...drop.OpenEditions.map((oe) => oe.Nft),
     ];
-    const txids = new Set<string>();
+    const seen = new Set<string>();
+    const videos: { name: string; txid: string }[] = [];
     for (const nft of nfts) {
       const src = nft?.s3PathOptimized;
       if (!src || !isVideoSrc(src)) continue;
       const m = /arweave\.net\/([A-Za-z0-9_-]{43})/.exec(src);
-      if (m) txids.add(m[1]);
+      if (m && !seen.has(m[1])) {
+        seen.add(m[1]);
+        videos.push({ name: nft.name || 'artwork', txid: m[1] });
+      }
     }
-    txids.forEach((txid) => {
-      fetch(`/api/media/${txid}/?prewarm=1`).catch(() => {});
-    });
-    if (txids.size) console.log(`prewarmDropVideos() :: warming ${txids.size} video(s)`);
+    if (videos.length === 0) return;
+    await Promise.allSettled(videos.map(prewarmOneVideo));
   } catch (e) {
     console.log('prewarmDropVideos() skipped', e);
+  }
+}
+
+async function prewarmOneVideo({ name, txid }: { name: string; txid: string }) {
+  const stepId = dropProgress.begin(`Preparing "${name}" for mobile playback`);
+  // give a slow first-time transcode room to finish, but don't hang forever
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 240000);
+  try {
+    const res = await fetch(`/api/media/${txid}/?prewarm=1`, { signal: controller.signal });
+    const data = await res.json().catch(() => ({}));
+    if (data?.downscaled) {
+      dropProgress.complete(stepId, `downscaled ${data.from} → ${data.to} for mobile`);
+    } else {
+      dropProgress.complete(stepId, 'already mobile-ready — no downscale needed');
+    }
+  } catch {
+    // best-effort: the proxy will still transcode on the first real view
+    dropProgress.complete(stepId, 'still optimizing in the background — safe to close');
+  } finally {
+    clearTimeout(timer);
   }
 }
 
