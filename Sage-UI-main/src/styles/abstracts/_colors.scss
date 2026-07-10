@@ -18,8 +18,12 @@ $modal-dark: #1a211d;
 $black: #000000;
 $dark: #17211c;
 $light: #eef3ec;
-$accent: #6ee7b7;
-$gold: #6ee7b7;
-$accent-deep: #0c9d68;
+// Robinhood-theme lime. Bright value is the dark-theme accent (lime on charcoal);
+// $accent-deep is a deep lime of the same hue for the LIGHT theme, where the
+// accent is used as a button background with near-white text — bright lime there
+// would be unreadable (same reason the old palette used a deep emerald in light).
+$accent: #d4fc52;
+$gold: #d4fc52;
+$accent-deep: #4f7500;
 $red: red;
 $white: #ffffff;

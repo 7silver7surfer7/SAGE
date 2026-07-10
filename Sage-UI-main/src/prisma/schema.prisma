@@ -218,7 +218,7 @@ model User {
   mediumUsername                String?       @db.VarChar(40)
   createdAt                     DateTime      @default(now())
   role                          Role          @default(USER)
-  bio                           String?       @db.VarChar(400)
+  bio                           String?       @db.VarChar(1000)
   ashBalanceAtCreation          String        @default("0")
   profilePicture                String?
   country                       String?

@@ -14,14 +14,14 @@
     "ethers": "^5.5.3",
     "hardhat": "^2.11.0",
     "hardhat-gas-reporter": "^1.0.8",
-    "prisma": "^4.4.0",
+    "prisma": "4.16.2",
     "typechain": "^8.0.0"
   },
   "dependencies": {
     "@chainlink/contracts": "^0.4.1",
     "@openzeppelin/contracts": "^4.7.3",
     "@openzeppelin/contracts-upgradeable": "^4.7.3",
-    "@prisma/client": "^4.4.0",
+    "@prisma/client": "4.16.2",
     "arweave": "^1.11.6",
     "bignumber": "^1.1.0",
     "dotenv": "^16.0.1",

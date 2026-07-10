@@ -4,9 +4,25 @@ import type { SafeUserUpdate } from '@/prisma/types';
 import { signIn, signOut } from 'next-auth/react';
 import { SiweMessage } from 'siwe';
 import { baseApi } from './baseReducer';
+import { resetEscrowPoints } from './pointsReducer';
 import { uploadFileToArweave } from '@/utilities/arweave-client';
 
 export type UserDisplayInfo = Pick<User, 'username' | 'profilePicture'>;
+
+/**
+ * Wipe the whole RTK Query cache when the signed-in account changes.
+ * Tag invalidation alone is NOT enough: after sign-out the refetch gets a 401
+ * and RTK Query keeps serving the previous account's last-good data — which
+ * then leaks into the next account's UI (e.g. the profile form seeding itself
+ * with the prior user's name/email). Everything in this store is account- or
+ * session-scoped, so a full reset is the correct blast radius.
+ * Deferred a tick so it doesn't abort the sign-in/sign-out mutation that
+ * dispatches it (the mutation lives in the same api state being reset).
+ */
+function resetAccountScopedCache(dispatch: (action: any) => void) {
+  resetEscrowPoints();
+  setTimeout(() => dispatch(baseApi.util.resetApiState()), 0);
+}
 
 // export async function isOnCorrectNetwork(): Promise<boolean> {
 //   try {
@@ -21,19 +37,21 @@ const usersApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (builder) => ({
     signIn: builder.mutation<null, { message: SiweMessage; signature: string }>({
-      queryFn: async ({ message, signature }) => {
+      queryFn: async ({ message, signature }, { dispatch }) => {
         await signIn('credentials', {
           message: JSON.stringify(message),
           redirect: false,
           signature,
         });
+        resetAccountScopedCache(dispatch);
         return { data: null };
       },
       invalidatesTags: ['User'],
     }),
     signOut: builder.mutation<null, void>({
-      queryFn: () => {
-        signOut({ redirect: false });
+      queryFn: async (_, { dispatch }) => {
+        await signOut({ redirect: false });
+        resetAccountScopedCache(dispatch);
         return { data: null };
       },
       invalidatesTags: [

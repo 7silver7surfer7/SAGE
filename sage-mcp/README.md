@@ -36,19 +36,31 @@ Claude Code / Claude Desktop config:
       "args": ["/path/to/SAGE/sage-mcp/index.js"],
       "env": {
         "SAGE_AGENT_PRIVATE_KEY": "0x…",
-        "SAGE_SITE_URL": "https://www.sage.art"
+        "SAGE_SITE_URL": "https://sageart.xyz"
       }
     }
   }
 }
 ```
 
+## Agent wallet
+
+The agent transacts from its own wallet, set via `SAGE_AGENT_PRIVATE_KEY`. A
+dedicated wallet was generated and its key stored in `sage-mcp/.env` (which is
+gitignored — never commit it). The server auto-loads that `.env` on startup
+regardless of the launch directory. Env vars set in the MCP client config take
+precedence over the `.env` file.
+
+Fund the agent address (printed in the startup banner) with:
+- **ETH on Robinhood mainnet** (chainId 4663) → for `sage_buy_sage` swaps
+- **testnet ETH on 46630** → for marketplace mints / tickets / bids
+
 ## Configuration (env vars)
 
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `SAGE_AGENT_PRIVATE_KEY` | — | Agent wallet. Required for transactions; read-only tools work without it |
-| `SAGE_SITE_URL` | `http://localhost:3005` | SAGE web app (drops catalog + pixels API, via SIWE) |
+| `SAGE_SITE_URL` |  `https://sageart.xyz` | SAGE web app (drops catalog + pixels API, via SIWE) |
 | `SAGE_MARKETPLACE_RPC` / `_CHAIN_ID` | Robinhood testnet / 46630 | Chain with Auction/Lottery/OpenEdition contracts |
 | `SAGE_TOKEN_ADDRESS` | testnet SAGE | Payment token on the marketplace chain |
 | `SAGE_OPENEDITION_ADDRESS` `SAGE_LOTTERY_ADDRESS` `SAGE_AUCTION_ADDRESS` | testnet deployment | Marketplace contracts |

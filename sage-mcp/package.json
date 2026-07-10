@@ -3,14 +3,19 @@
   "version": "0.1.0",
   "description": "MCP server exposing SAGE marketplace actions (buy SAGE, mint open editions, lottery tickets, auction bids) as tools for AI agents",
   "type": "module",
-  "bin": { "sage-mcp": "index.js" },
+  "bin": {
+    "sage-mcp": "index.js"
+  },
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^16.6.1",
     "ethers": "^5.7.2",
     "siwe": "^2.3.2",
     "zod": "^3.23.0"

@@ -6,7 +6,8 @@ import Copyright from '../Branding/Copyright';
 import Motto from './Motto';
 
 export default function Footer() {
-  const { pushToHowToBuyAsh, pushToPrivacyPolicy, pushToTermsOfService } = useSageRoutes();
+  const { pushToHowToBuyAsh, pushToPrivacyPolicy, pushToTermsOfService, pushToAgentApi } =
+    useSageRoutes();
 
   return (
     <div className='footer' data-cy='footer'>
@@ -54,6 +55,10 @@ export default function Footer() {
               <div className='footer__middle-item-content'>
                 <div className='footer__middle-item-content-link'>
                   <a onClick={pushToHowToBuyAsh}>Get SAGE & Earn Pixels</a>
+                </div>
+
+                <div className='footer__middle-item-content-link'>
+                  <a onClick={pushToAgentApi}>Agent API (MCP)</a>
                 </div>
 
                 <div className='footer__middle-item-content-link'>

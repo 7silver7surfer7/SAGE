@@ -20,9 +20,12 @@ COPY . .
 # peer auto-install rejects the lock as out of sync
 RUN npm ci --legacy-peer-deps
 
-# generate the prisma client and compile contracts at build time so the job
-# starts instantly; the runtime `hre.run("compile")` becomes a cached no-op
-RUN npx prisma generate && npx hardhat compile
+# compile contracts at build time so the runtime `hre.run("compile")` is a
+# cached no-op. prisma generate deliberately runs at job START instead of
+# here: executing prisma's x86 engine binary under Docker Desktop's Rosetta
+# emulation on Apple Silicon crashes ("BasicBlock requested for unrecognized
+# address") — on Cloud Run's real amd64 it works and costs ~5s per run.
+RUN npx hardhat compile
 
 ENV HARDHAT_NETWORK=robinhoodTestnet
-CMD ["node", "scripts/update_games.js"]
+CMD ["sh", "-c", "npx prisma generate && node scripts/update_games.js"]

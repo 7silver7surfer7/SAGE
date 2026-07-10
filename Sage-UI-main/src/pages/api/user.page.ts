@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getToken } from 'next-auth/jwt';
+import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
 import { Prisma, Role } from '@prisma/client';
 import type { SafeUserUpdate } from '@/prisma/types';
@@ -36,7 +37,7 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
       const { action } = req.query;
       switch (action) {
         case 'GetAllUsersAndEarnedPoints':
-          await getAllUsersAndEarnedPoints(res);
+          await getAllUsersAndEarnedPoints(String(walletAddress), res);
           break;
         case 'PromoteToArtist':
           await promoteToArtist(String(walletAddress), String(req.query.address), res);
@@ -101,7 +102,15 @@ async function getUserDisplayInfo(walletAddress: string, res: NextApiResponse) {
   }
 }
 
-async function getAllUsersAndEarnedPoints(res: NextApiResponse) {
+async function getAllUsersAndEarnedPoints(callerAddress: string, res: NextApiResponse) {
+  try {
+    // returns every user's email/country/state/bio — admin-only, or any
+    // signed-in wallet could enumerate all users' personal info
+    await requireAdmin(callerAddress);
+  } catch {
+    res.status(403).end('Forbidden');
+    return;
+  }
   try {
     const users = await prisma.user.findMany({
       include: { EarnedPoints: true, NftContract: true },
@@ -164,42 +173,56 @@ async function requireAdmin(walletAddress: string) {
   }
 }
 
-async function promoteToArtist(signerAddress: string, walletAddress: string, res: NextApiResponse) {
-  console.log(`promoteToArtist(${signerAddress}, ${walletAddress})`);
+async function setUserRole(
+  signerAddress: string,
+  targetAddress: string,
+  role: Role,
+  res: NextApiResponse
+) {
+  console.log(`setUserRole(${signerAddress} -> ${targetAddress} = ${role})`);
   try {
-    requireAdmin(signerAddress);
-    const updatedUser = await prisma.user.update({
-      where: {
-        walletAddress,
-      },
-      data: {
-        role: Role.ARTIST,
-      },
+    // MUST await: requireAdmin is async and rejects for non-admins. Without
+    // await the rejection floats off as an unhandled promise and the write
+    // below runs anyway — i.e. any signed-in wallet could self-promote.
+    await requireAdmin(signerAddress);
+  } catch {
+    res.status(403).json({ error: 'FORBIDDEN' });
+    return;
+  }
+
+  // Normalise to the EIP-55 checksum SIWE produces at login, so a row created
+  // here for a not-yet-signed-in wallet matches when that wallet later logs in
+  // (walletAddress is an exact-match key; a casing mismatch would orphan the
+  // promoted role behind a second, default USER row).
+  let walletAddress: string;
+  try {
+    walletAddress = ethers.utils.getAddress(targetAddress);
+  } catch {
+    res.status(400).json({ error: 'INVALID_ADDRESS' });
+    return;
+  }
+
+  try {
+    // upsert, not update: an admin may promote a wallet that hasn't signed in
+    // yet (no User row). Create it with the target role in that case.
+    const user = await prisma.user.upsert({
+      where: { walletAddress },
+      update: { role },
+      create: { walletAddress, role },
     });
-    res.status(200).json({ success: !!updatedUser });
+    res.status(200).json({ success: !!user });
   } catch (error) {
     console.error(error);
-    res.status(500).end();
+    res.status(500).json({ error: 'SERVER_ERROR' });
   }
 }
 
+async function promoteToArtist(signerAddress: string, walletAddress: string, res: NextApiResponse) {
+  await setUserRole(signerAddress, walletAddress, Role.ARTIST, res);
+}
+
 async function promoteToAdmin(signerAddress: string, walletAddress: string, res: NextApiResponse) {
-  console.log(`promoteToAdmin(${signerAddress}, ${walletAddress})`);
-  try {
-    requireAdmin(signerAddress);
-    const updatedUser = await prisma.user.update({
-      where: {
-        walletAddress,
-      },
-      data: {
-        role: Role.ADMIN,
-      },
-    });
-    res.status(200).json({ success: !!updatedUser });
-  } catch (error) {
-    console.error(error);
-    res.status(500).end();
-  }
+  await setUserRole(signerAddress, walletAddress, Role.ADMIN, res);
 }
 
 async function getIsFollowing(walletAddress: string, res: NextApiResponse) {

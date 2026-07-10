@@ -9,6 +9,7 @@ const basePathGames = '/games';
 const basePathAuctions = `${basePathGames}/auctions`;
 const basePathLotteries = `${basePathGames}/lotteries`;
 const basePathSubmissions = '/submissions';
+const basePathAgentApi = '/agent-api';
 
 const basePathProfile = '/profile';
 
@@ -24,4 +25,5 @@ export {
   basePathPress,
   basePathHowToBuyAsh,
   basePathSubmissions,
+  basePathAgentApi,
 };

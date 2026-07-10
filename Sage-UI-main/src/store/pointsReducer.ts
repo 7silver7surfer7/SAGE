@@ -5,6 +5,13 @@ import { baseApi } from './baseReducer';
 
 var escrowPoints: number = 0;
 
+// Module-global escrow survives RTK's resetApiState (it's not store state), so
+// it must be cleared explicitly when the account changes — otherwise a pending
+// pixel-spend from the previous account briefly shows on the next one.
+export function resetEscrowPoints() {
+  escrowPoints = 0;
+}
+
 export const pointsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (builder) => ({

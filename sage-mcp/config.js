@@ -2,6 +2,14 @@
 // deployments: marketplace contracts on TESTNET (46630), SAGE/WETH DEX pair
 // on MAINNET (4663) — the only chain with a market, and the balance that
 // earns pixels fastest.
+import { config as loadEnv } from 'dotenv';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+// load sage-mcp/.env regardless of the client's working directory (Claude
+// Desktop launches the server from an arbitrary cwd). Env vars already set by
+// the MCP client config take precedence — dotenv does not override them.
+loadEnv({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '.env') });
 
 const env = (key, fallback) => process.env[key] ?? fallback;
 
@@ -10,8 +18,9 @@ export const config = {
   // work without it.
   agentPrivateKey: env('SAGE_AGENT_PRIVATE_KEY', ''),
 
-  // the SAGE web app (drops catalog + pixels API, authenticated via SIWE)
-  siteUrl: env('SAGE_SITE_URL', 'http://localhost:3005').replace(/\/$/, ''),
+  // the SAGE web app (drops catalog + pixels API, authenticated via SIWE).
+  // Default is the live deployment; point at http://localhost:3005 for dev.
+  siteUrl: env('SAGE_SITE_URL', 'https://sageart.xyz').replace(/\/$/, ''),
 
   // marketplace chain (where Auction/Lottery/OpenEdition contracts live)
   marketplace: {

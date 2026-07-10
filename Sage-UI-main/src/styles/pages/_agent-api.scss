@@ -1,0 +1,35 @@
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/breakpoints' as b;
+
+// Copy/paste blocks for the Agent API page. Reuses the submissions-page layout
+// (see _submissions.scss); only the code presentation is new here.
+.agent-api-page__code {
+  @include m.theme() {
+    background-color: m.t(base2);
+    color: m.t(contrast);
+    border: 1px solid rgba(m.t(contrast), 0.12);
+  }
+  font-family: 'Space Grotesk', monospace;
+  font-size: clamp(11px, 1.1vw, 14px);
+  line-height: 1.6;
+  border-radius: 10px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+  // long paths/keys shouldn't force the whole page to scroll sideways
+  max-width: 100%;
+}
+
+.agent-api-page__inline-code {
+  @include m.theme() {
+    background-color: m.t(base2);
+    color: m.t(contrast);
+  }
+  font-family: 'Space Grotesk', monospace;
+  font-size: 0.9em;
+  padding: 1px 6px;
+  border-radius: 5px;
+  white-space: nowrap;
+}

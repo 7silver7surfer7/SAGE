@@ -5,6 +5,7 @@ import {
   basePathLotteries,
   basePathHome,
   basePathSubmissions,
+  basePathAgentApi,
   basePathProfile,
 } from '@/constants/paths';
 import { useRouter } from 'next/router';
@@ -37,6 +38,10 @@ export default function useSageRoutes() {
 
   async function pushToSubmissions() {
     await router.push(basePathSubmissions);
+  }
+
+  async function pushToAgentApi() {
+    await router.push(basePathAgentApi);
   }
 
   async function pushToProfile() {
@@ -74,6 +79,7 @@ export default function useSageRoutes() {
     pushToDrops,
     pushToHome,
     pushToSubmissions,
+    pushToAgentApi,
     pushToProfile,
     pushToHowToBuyAsh,
     pushToPrivacyPolicy,
