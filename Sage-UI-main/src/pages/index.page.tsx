@@ -45,6 +45,16 @@ function home({
         removeCover={removeCover}
       />
       <div data-on={isMobile ? coverOn : false} className='home-page__main'>
+        <div
+          className='home-page__testnet-banner'
+          role='alert'
+          aria-label='Robinhood Testnet — for testing only'
+        >
+          <span className='home-page__testnet-banner-title'>Robinhood Testnet</span>
+          <span className='home-page__testnet-banner-note'>
+            Test network — for testing only, tokens have no real value
+          </span>
+        </div>
         <Logotype></Logotype>
         <LaunchTrailer
           src={featuredDrop?.featuredMediaS3Path}
