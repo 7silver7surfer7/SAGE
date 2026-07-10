@@ -103,15 +103,34 @@ function commit(key: string, tmp: string, type: string, protectKeys: Set<string>
   return { file, type, size };
 }
 
+async function fetchFromGateway(txid: string): Promise<Response> {
+  // The gateway load-balances across edge nodes; an unhealthy one can 404 or
+  // serve an HTML error page for content that IS available elsewhere. Retry a
+  // few times before giving up (genuinely-missing data won't heal, but this
+  // rides out transient routing).
+  let last = '';
+  for (let i = 0; i < 4; i++) {
+    try {
+      const res = await fetch(`${GATEWAY}/${txid}`);
+      const type = res.headers.get('content-type') || '';
+      if (res.ok && res.body && !type.startsWith('text/html')) return res;
+      last = type.startsWith('text/html') ? 'gateway error page' : `status ${res.status}`;
+    } catch (e: any) {
+      last = e?.message || 'fetch failed';
+    }
+    if (i < 3) {
+      console.warn(`media proxy [${txid}]: gateway attempt ${i + 1} failed (${last}), retrying…`);
+      await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+  throw new Error(`gateway did not serve data after retries (${last})`);
+}
+
 async function downloadMaster(txid: string): Promise<Entry> {
   const cached = readCached(txid);
   if (cached) return cached;
-  const res = await fetch(`${GATEWAY}/${txid}`);
-  if (!res.ok || !res.body) throw new Error(`gateway responded ${res.status}`);
+  const res = await fetchFromGateway(txid);
   const type = res.headers.get('content-type') || 'application/octet-stream';
-  if (type.startsWith('text/html')) {
-    throw new Error('gateway returned an error page instead of media');
-  }
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   const tmp = path.join(CACHE_DIR, `${txid}.dl-${process.pid}-${Date.now()}`);
   try {

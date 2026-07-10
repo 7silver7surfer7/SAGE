@@ -81,35 +81,87 @@ async function uploadLargeFileToArweave(
     throw new Error(error || 'Arweave upload authorization failed');
   }
 
-  // resume-style uploader: signed header from the server + data we hold.
-  // getUploader expects a serialized-uploader wrapper (not a bare tx); it
-  // recomputes the merkle root from `data` and refuses on mismatch, then
-  // posts the tx header (txPosted:false) before streaming chunks.
-  const uploader = await arweave.transactions.getUploader(
-    {
-      chunkIndex: 0,
-      transaction: signedTx,
-      lastRequestTimeEnd: 0,
-      lastResponseStatus: 0,
-      lastResponseError: '',
-      txPosted: false,
-    } as any,
-    data
-  );
-  while (!uploader.isComplete) {
-    await uploader.uploadChunk();
+  // Post all chunks. Wrapped so we can re-run it: arweave.net sometimes ACKs a
+  // chunk POST (200) but drops it before persisting — the uploader reports
+  // "complete" yet the data never seeds (a mined tx header with no retrievable
+  // data). That's what silently shipped a broken artwork. We verify below and
+  // re-post if needed.
+  async function postAllChunks() {
+    const uploader = await arweave.transactions.getUploader(
+      {
+        chunkIndex: 0,
+        transaction: signedTx,
+        lastRequestTimeEnd: 0,
+        lastResponseStatus: 0,
+        lastResponseError: '',
+        txPosted: false,
+      } as any,
+      data
+    );
+    while (!uploader.isComplete) {
+      await uploader.uploadChunk();
+    }
+    if (uploader.lastResponseError) {
+      throw new Error(
+        `Arweave upload of '${file.name}' failed: ${uploader.lastResponseError} (http ${uploader.lastResponseStatus})`
+      );
+    }
   }
-  if (uploader.lastResponseError) {
+
+  console.log(`uploadLargeFileToArweave() :: ${file.name} -> ${signedTx.id}, posting chunks…`);
+  await postAllChunks();
+
+  // VERIFY the data is actually retrievable before we let this URL be recorded.
+  // A good upload can lag a bit (propagation), so poll; if it never appears,
+  // re-post the chunks once (the ACK-but-dropped case) and re-verify. If it's
+  // still unretrievable, THROW — so the NFT is never created with dead media.
+  console.log(`uploadLargeFileToArweave() :: verifying ${signedTx.id} is retrievable…`);
+  let ok = await isArweaveDataRetrievable(signedTx.id);
+  if (!ok) {
+    console.warn(`uploadLargeFileToArweave() :: ${signedTx.id} not retrievable, re-posting chunks…`);
+    await postAllChunks();
+    ok = await isArweaveDataRetrievable(signedTx.id);
+  }
+  if (!ok) {
     throw new Error(
-      `Arweave upload of '${file.name}' failed: ${uploader.lastResponseError} (http ${uploader.lastResponseStatus})`
+      `Arweave upload of '${file.name}' did not persist — the data isn't retrievable after re-posting. ` +
+        `Please retry; nothing was recorded for this artwork.`
     );
   }
+  console.log(`uploadLargeFileToArweave() :: ${signedTx.id} verified retrievable`);
 
   const isVideo = file.type === 'video/mp4';
   const url = `https://arweave.net/${signedTx.id}${isVideo ? '?filetype=mp4' : ''}`;
   // no server-side sharp pass on this path; large stills are downscaled on
   // the fly by next/image, videos never had an optimized variant anyway
   return { url, optimizedUrl: url };
+}
+
+/**
+ * Polls the Arweave gateway until a tx's DATA is actually retrievable (not just
+ * its mined header). Uses a tiny ranged GET; a real 2xx with non-HTML body means
+ * the chunks are seeded. Retries with backoff to ride out propagation lag, then
+ * gives up (caller treats that as "not seeded").
+ */
+export async function isArweaveDataRetrievable(txid: string, attempts = 10): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(`https://arweave.net/${txid}`, {
+        headers: { Range: 'bytes=0-0' },
+      });
+      const ct = res.headers.get('content-type') || '';
+      // gateway serves 200/206 with the real content-type when data is present;
+      // a 404 or an HTML error page means it isn't (yet)
+      if ((res.status === 200 || res.status === 206) && !ct.startsWith('text/html')) {
+        return true;
+      }
+    } catch {
+      /* network hiccup — retry */
+    }
+    // backoff: 2s, 3s, 4s… (capped) — total ~45s across 10 attempts
+    await new Promise((r) => setTimeout(r, Math.min(2000 + i * 1000, 6000)));
+  }
+  return false;
 }
 
 /**

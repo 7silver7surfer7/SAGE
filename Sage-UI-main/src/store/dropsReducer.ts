@@ -12,7 +12,11 @@ import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.j
 import { fetchOrCreateNftContract } from './nftsReducer';
 import { baseApi } from './baseReducer';
 import { Role } from '@prisma/client';
-import { createNftMetadataOnArweave, uploadFileToArweave } from '@/utilities/arweave-client';
+import {
+  createNftMetadataOnArweave,
+  isArweaveDataRetrievable,
+  uploadFileToArweave,
+} from '@/utilities/arweave-client';
 import { dropProgress } from '@/utilities/dropProgress';
 import { isVideoSrc } from '@/utilities/media';
 
@@ -470,6 +474,12 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   await assertSignerOnConfiguredChain(signer);
   const { data: drop } = await fetchWithBQ(`drops?action=GetFullDrop&id=${dropId}`);
   inspectDropGamesEndTimes(drop);
+  // HARD GATE: confirm every artwork's media + metadata is actually retrievable
+  // on Arweave BEFORE anything is minted on-chain. An Arweave upload can ACK but
+  // not persist (mined tx header, unseeded data); without this, a game would be
+  // minted on-chain pointing at dead media. If any artwork fails, this throws
+  // and NOTHING is deployed on-chain — the drop can be re-uploaded and retried.
+  await verifyDropMediaRetrievable(drop);
   //await processSplitter(drop.PrimarySplitter, signer, fetchWithBQ);
   //await processSplitter(drop.SecondarySplitter, signer, fetchWithBQ);
   //await createNftCollection(drop, signer);
@@ -496,6 +506,44 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   // deploy (the drop already succeeded on-chain), so it's awaited but its
   // errors are swallowed.
   await prewarmDropVideos(drop);
+}
+
+/** extract a 43-char Arweave txid from an arweave.net URL, or null */
+function arweaveTxid(url?: string | null): string | null {
+  const m = url ? /arweave\.net\/([A-Za-z0-9_-]{43})/.exec(url) : null;
+  return m ? m[1] : null;
+}
+
+/**
+ * Pre-mint gate: verifies every artwork's media AND metadata is actually
+ * retrievable from Arweave before the drop is deployed on-chain. Throws (naming
+ * the artwork) if any isn't — so a game is never minted pointing at dead media.
+ * Reported per-artwork in the dashboard log.
+ */
+async function verifyDropMediaRetrievable(drop: DropFull) {
+  const nfts = [
+    ...drop.Auctions.map((a) => a.Nft),
+    ...drop.Lotteries.flatMap((l) => l.Nfts),
+    ...drop.OpenEditions.map((oe) => oe.Nft),
+  ].filter(Boolean);
+  for (const nft of nfts) {
+    const name = nft?.name || 'artwork';
+    // arweavePath = the master media; metadataPath = the on-chain tokenURI JSON
+    const txids = [arweaveTxid(nft?.arweavePath), arweaveTxid(nft?.metadataPath)].filter(
+      (t): t is string => !!t
+    );
+    await dropProgress.track(`Verifying "${name}" uploaded to Arweave`, async () => {
+      for (const txid of txids) {
+        const ok = await isArweaveDataRetrievable(txid);
+        if (!ok) {
+          throw new Error(
+            `"${name}" isn't retrievable on Arweave — its upload didn't fully persist. ` +
+              `Nothing was minted on-chain; re-upload this artwork and try again.`
+          );
+        }
+      }
+    });
+  }
 }
 
 /**
