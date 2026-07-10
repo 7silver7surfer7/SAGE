@@ -12,11 +12,7 @@ import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.j
 import { fetchOrCreateNftContract } from './nftsReducer';
 import { baseApi } from './baseReducer';
 import { Role } from '@prisma/client';
-import {
-  createNftMetadataOnArweave,
-  isArweaveDataRetrievable,
-  uploadFileToArweave,
-} from '@/utilities/arweave-client';
+import { createNftMetadataOnArweave, uploadFileToArweave } from '@/utilities/arweave-client';
 import { dropProgress } from '@/utilities/dropProgress';
 import { isVideoSrc } from '@/utilities/media';
 
@@ -516,9 +512,12 @@ function arweaveTxid(url?: string | null): string | null {
 
 /**
  * Pre-mint gate: verifies every artwork's media AND metadata is actually
- * retrievable from Arweave before the drop is deployed on-chain. Throws (naming
- * the artwork) if any isn't — so a game is never minted pointing at dead media.
- * Reported per-artwork in the dashboard log.
+ * retrievable from Arweave before the drop is deployed on-chain. Throws — naming
+ * the specific asset (the video/image vs the metadata) and the HTTP reason — if
+ * any isn't, so a game is never minted pointing at dead data. Checks route
+ * through our /api/media proxy's resilient, retried existence check rather than
+ * a single arweave.net node, so a transient gateway 404 doesn't false-fail a
+ * good upload. Reported per-artwork in the dashboard log.
  */
 async function verifyDropMediaRetrievable(drop: DropFull) {
   const nfts = [
@@ -528,21 +527,40 @@ async function verifyDropMediaRetrievable(drop: DropFull) {
   ].filter(Boolean);
   for (const nft of nfts) {
     const name = nft?.name || 'artwork';
-    // arweavePath = the master media; metadataPath = the on-chain tokenURI JSON
-    const txids = [arweaveTxid(nft?.arweavePath), arweaveTxid(nft?.metadataPath)].filter(
-      (t): t is string => !!t
-    );
+    const assets = [
+      { label: nft?.arweavePath?.includes('filetype=mp4') ? 'video' : 'image', txid: arweaveTxid(nft?.arweavePath) },
+      { label: 'metadata', txid: arweaveTxid(nft?.metadataPath) },
+    ].filter((a): a is { label: string; txid: string } => !!a.txid);
     await dropProgress.track(`Verifying "${name}" uploaded to Arweave`, async () => {
-      for (const txid of txids) {
-        const ok = await isArweaveDataRetrievable(txid);
-        if (!ok) {
+      for (const asset of assets) {
+        const result = await verifyAssetRetrievable(asset.txid);
+        console.log(
+          `verifyDropMedia() :: "${name}" ${asset.label} ${asset.txid} -> ` +
+            (result.retrievable ? 'OK' : `NOT retrievable (${result.reason})`)
+        );
+        if (!result.retrievable) {
           throw new Error(
-            `"${name}" isn't retrievable on Arweave — its upload didn't fully persist. ` +
-              `Nothing was minted on-chain; re-upload this artwork and try again.`
+            `"${name}" — the ${asset.label} isn't retrievable on Arweave (${result.reason}). ` +
+              `Its upload didn't fully persist. Nothing was minted on-chain; ` +
+              `re-upload this artwork and try again.`
           );
         }
       }
     });
+  }
+}
+
+/** resilient existence check via the proxy (retries the gateway server-side) */
+async function verifyAssetRetrievable(
+  txid: string
+): Promise<{ retrievable: boolean; reason?: string }> {
+  try {
+    const res = await fetch(`/api/media/${txid}/?verify=1`);
+    if (!res.ok) return { retrievable: false, reason: `verify HTTP ${res.status}` };
+    const data = await res.json().catch(() => ({}));
+    return { retrievable: !!data.retrievable, reason: data.reason };
+  } catch (e: any) {
+    return { retrievable: false, reason: e?.message || 'verify request failed' };
   }
 }
 

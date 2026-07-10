@@ -241,6 +241,37 @@ function getServable(txid: string) {
   return promise;
 }
 
+/**
+ * Lightweight existence check: is this tx's DATA actually seeded on Arweave?
+ * A tiny ranged GET, retried several times server-side to ride out the
+ * gateway's transient per-node 404s / HTML error pages (which otherwise
+ * false-fail a good upload). Does NOT download or transcode the whole file.
+ */
+async function verifyRetrievable(
+  txid: string
+): Promise<{ retrievable: boolean; status: number; reason?: string }> {
+  let lastStatus = 0;
+  let lastReason = '';
+  for (let i = 0; i < 6; i++) {
+    try {
+      const res = await fetch(`${GATEWAY}/${txid}`, { headers: { Range: 'bytes=0-0' } });
+      lastStatus = res.status;
+      const ct = res.headers.get('content-type') || '';
+      res.body?.cancel?.().catch(() => {}); // don't buffer the body
+      if ((res.status === 200 || res.status === 206) && !ct.startsWith('text/html')) {
+        return { retrievable: true, status: res.status };
+      }
+      lastReason = ct.startsWith('text/html') ? 'gateway error page' : `HTTP ${res.status}`;
+    } catch (e: any) {
+      lastReason = e?.message || 'request failed';
+    }
+    // patient backoff: ~1.5s..8s, ~25s total across 6 attempts — a genuinely
+    // unseeded upload stays 404 throughout; transient routing clears within it
+    await new Promise((r) => setTimeout(r, Math.min(1500 + i * 1500, 8000)));
+  }
+  return { retrievable: false, status: lastStatus, reason: lastReason || 'not retrievable' };
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.status(405).end();
@@ -249,6 +280,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const txid = String(req.query.txid || '');
   if (!TXID_RE.test(txid)) {
     res.status(400).json({ error: 'invalid transaction id' });
+    return;
+  }
+
+  // Existence check for the pre-mint gate: resilient, lightweight, no download.
+  if (req.query.verify) {
+    const result = await verifyRetrievable(txid);
+    res.status(200).json(result);
     return;
   }
 

@@ -82,20 +82,19 @@ export async function sendArweaveTransaction(
   }
 
   const totalChunks = await postChunks();
-  let ok = await isDataRetrievable(tx.id);
-  if (!ok) {
-    console.warn(`sendArweaveTransaction() :: ${tx.id} not retrievable, re-posting chunks…`);
+  // Nudge availability but DON'T block on it: arweave.net read-availability lags
+  // behind the committed tx (minutes+), so a still-lagging read here does NOT
+  // mean the upload failed. Re-post once (often speeds availability); proceed
+  // regardless. The pre-mint gate re-checks before any on-chain mint.
+  if (!(await isDataRetrievable(tx.id))) {
+    console.warn(`sendArweaveTransaction() :: ${tx.id} not readable yet, re-posting chunks…`);
     await postChunks();
-    ok = await isDataRetrievable(tx.id);
-  }
-  if (!ok) {
-    throw new Error(
-      `Arweave upload of '${filename}' did not persist — data not retrievable after re-posting.`
+    const readable = await isDataRetrievable(tx.id);
+    console.log(
+      `sendArweaveTransaction() :: ${tx.id} ${readable ? 'now readable' : 'still propagating (committed)'}`
     );
   }
-  console.log(
-    `sendArweaveTransaction() :: ${filename} -> ${tx.id} (${totalChunks} chunks, verified retrievable)`
-  );
+  console.log(`sendArweaveTransaction() :: ${filename} -> ${tx.id} (${totalChunks} chunks)`);
   const { balance } = await getArweaveBalance();
   return { tx, balance };
 }
