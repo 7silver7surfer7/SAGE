@@ -184,31 +184,75 @@ function computePixels(transactions, address, now) {
   return { pixels, balance };
 }
 
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+
+// eth_getCode cache: only EOAs earn pixels. Contracts that hold SAGE (the token
+// itself, the Uniswap pair, the auction/open-edition escrow) must be excluded —
+// they'd otherwise accrue pixels and get a bogus User row.
+const codeCache = new Map();
+async function isContract(address) {
+  const key = address.toLowerCase();
+  if (codeCache.has(key)) return codeCache.get(key);
+  let contract = false;
+  for (const asset of ASSETS) {
+    try {
+      const code = await rpc(asset.rpcUrl, 'eth_getCode', [address, 'latest']);
+      if (code && code !== '0x') {
+        contract = true;
+        break;
+      }
+    } catch {}
+  }
+  codeCache.set(key, contract);
+  return contract;
+}
+
 async function updateEarnedPoints() {
-  const users = await prisma.user.findMany({ select: { walletAddress: true } });
   const now = Math.floor(Date.now() / 1000);
+  // Derive holders from on-chain transfer activity, NOT the User table — a wallet
+  // earns pixels for HOLDING SAGE whether or not it has ever visited the site.
+  // (Previously this iterated prisma.user.findMany(), so a SAGE-rich wallet with
+  //  no account — e.g. an agent — silently accrued nothing.)
+  const txRows = await prisma.tokenTransaction.findMany({ select: { from: true, to: true } });
+  const holders = new Set();
+  for (const t of txRows) {
+    holders.add(t.from.toLowerCase());
+    holders.add(t.to.toLowerCase());
+  }
+  holders.delete(ZERO_ADDR);
+
   const summary = [];
-  for (const { walletAddress } of users) {
+  for (const lower of holders) {
+    if (await isContract(lower)) continue;
+    // EIP-55 checksum so the row matches this wallet's future SIWE login exactly
+    // (SIWE stores the checksummed address; a lowercase row would orphan behind a
+    //  second account). getAddress() is deterministic, so existing rows still match.
+    const walletAddress = ethers.utils.getAddress(lower);
     let totalPixels = 0;
     const balances = {};
     let hasActivity = false;
     for (const asset of ASSETS) {
       const txs = await prisma.tokenTransaction.findMany({
-        where: {
-          assetType: asset.type,
-          OR: [{ from: walletAddress.toLowerCase() }, { to: walletAddress.toLowerCase() }],
-        },
+        where: { assetType: asset.type, OR: [{ from: lower }, { to: lower }] },
         orderBy: { blockNumber: 'asc' },
       });
       if (txs.length === 0) continue;
       hasActivity = true;
-      const { pixels, balance } = computePixels(txs, walletAddress, now);
+      const { pixels, balance } = computePixels(txs, lower, now);
       totalPixels += pixels;
       balances[asset.label] = (Number(balance / WEI) + Number(balance % WEI) / 1e18).toFixed(2);
     }
     if (!hasActivity) continue;
     const rounded = Math.floor(totalPixels);
     const signedMessage = await signPointsBalance(walletAddress, rounded);
+    // EarnedPoints.address FKs to User.walletAddress, so ensure a minimal account
+    // exists for holders that never signed in. It's forward-compatible: if they
+    // later log in, getUser finds this same (checksummed) row.
+    await prisma.user.upsert({
+      where: { walletAddress },
+      update: {},
+      create: { walletAddress },
+    });
     await prisma.earnedPoints.upsert({
       where: { address: walletAddress },
       update: { totalPointsEarned: BigInt(rounded), updatedAt: new Date(), signedMessage },
