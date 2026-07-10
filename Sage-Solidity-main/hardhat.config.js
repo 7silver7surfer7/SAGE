@@ -17,24 +17,31 @@ task("accounts", "Prints the list of accounts", async (args, hre) => {
  * @type import('hardhat/config').HardhatUserConfig
  */
 
+// Legacy Ethereum networks (pre-Robinhood-Chain migration). Hardhat validates
+// EVERY network entry at config load, so these must not be `undefined` even
+// when the env vars are absent (e.g. inside the cron Docker build, which
+// ships no .env) — fall back to a placeholder URL and no accounts.
+const legacyUrl = process.env.PROVIDER_URL || "http://localhost:8545";
+const legacyAccounts = process.env.DEPLOYER_PK ? [process.env.DEPLOYER_PK] : [];
+
 module.exports = {
     networks: {
         mainnet: {
             gasPrice: 10000000000,
-            url: process.env.PROVIDER_URL,
-            accounts: [process.env.DEPLOYER_PK]
+            url: legacyUrl,
+            accounts: legacyAccounts
         },
         rinkeby: {
-            url: process.env.PROVIDER_URL,
-            accounts: [process.env.DEPLOYER_PK]
+            url: legacyUrl,
+            accounts: legacyAccounts
         },
         goerli: {
-            url: process.env.PROVIDER_URL,
-            accounts: [process.env.DEPLOYER_PK]
+            url: legacyUrl,
+            accounts: legacyAccounts
         },
         dev: {
-            url: process.env.PROVIDER_URL,
-            accounts: [process.env.DEPLOYER_PK],
+            url: legacyUrl,
+            accounts: legacyAccounts,
             chainId: 0xfa2
         },
         robinhood: {
