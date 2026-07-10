@@ -27,6 +27,33 @@ export function arweaveUrl(txId: string): string {
   return `${ARWEAVE_PROTOCOL}://${host}/${txId}`;
 }
 
+/**
+ * Polls the gateway until a tx's DATA is retrievable (not just its mined
+ * header). arweave.net can ACK a chunk POST (200) then drop it before
+ * persisting, leaving a header with unseeded data — this is how a metadata
+ * JSON or small media silently failed to land. A tiny ranged GET returning a
+ * real 2xx (non-HTML) means the chunks are seeded.
+ */
+async function isDataRetrievable(txid: string, attempts = 8): Promise<boolean> {
+  const host =
+    ARWEAVE_PROTOCOL === 'https' && ARWEAVE_PORT === 443
+      ? ARWEAVE_HOST
+      : `${ARWEAVE_HOST}:${ARWEAVE_PORT}`;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(`${ARWEAVE_PROTOCOL}://${host}/${txid}`, {
+        headers: { Range: 'bytes=0-0' },
+      });
+      const ct = res.headers.get('content-type') || '';
+      if ((res.status === 200 || res.status === 206) && !ct.startsWith('text/html')) return true;
+    } catch {
+      /* retry */
+    }
+    await new Promise((r) => setTimeout(r, Math.min(2000 + i * 1000, 6000)));
+  }
+  return false;
+}
+
 export async function sendArweaveTransaction(
   filename: string,
   data: Uint8Array,
@@ -35,24 +62,39 @@ export async function sendArweaveTransaction(
   const tx = await arweave.createTransaction({ data }, arweaveJwk);
   tx.addTag('Content-Type', contentType);
   await arweave.transactions.sign(tx, arweaveJwk);
+
   // Chunked uploader, NOT transactions.post(): post()'s response was never
-  // checked, and a silently failed data upload leaves an accepted tx header
-  // with no data behind it — a permanently 0-byte URL that the UI treats as
-  // a successful upload. The uploader posts chunk-by-chunk with retries and
-  // throws on failure, so a broken upload fails the request loudly instead.
-  const uploader = await arweave.transactions.getUploader(tx);
-  while (!uploader.isComplete) {
-    await uploader.uploadChunk();
+  // checked. The uploader posts chunk-by-chunk with retries and throws on a
+  // hard failure. But a 200-then-dropped chunk still leaves unseeded data, so
+  // we also VERIFY the data is retrievable and RE-POST once if not.
+  async function postChunks() {
+    const uploader = await arweave.transactions.getUploader(tx);
+    while (!uploader.isComplete) {
+      await uploader.uploadChunk();
+    }
+    if (uploader.lastResponseError) {
+      throw new Error(
+        `Arweave upload of '${filename}' failed: ${uploader.lastResponseError} ` +
+          `(http ${uploader.lastResponseStatus})`
+      );
+    }
+    return uploader.totalChunks;
   }
-  if (uploader.lastResponseError) {
+
+  const totalChunks = await postChunks();
+  let ok = await isDataRetrievable(tx.id);
+  if (!ok) {
+    console.warn(`sendArweaveTransaction() :: ${tx.id} not retrievable, re-posting chunks…`);
+    await postChunks();
+    ok = await isDataRetrievable(tx.id);
+  }
+  if (!ok) {
     throw new Error(
-      `Arweave upload of '${filename}' failed: ${uploader.lastResponseError} ` +
-        `(http ${uploader.lastResponseStatus})`
+      `Arweave upload of '${filename}' did not persist — data not retrievable after re-posting.`
     );
   }
   console.log(
-    `sendArweaveTransaction() :: ${filename} -> ${tx.id} ` +
-      `(${uploader.uploadedChunks}/${uploader.totalChunks} chunks)`
+    `sendArweaveTransaction() :: ${filename} -> ${tx.id} (${totalChunks} chunks, verified retrievable)`
   );
   const { balance } = await getArweaveBalance();
   return { tx, balance };
