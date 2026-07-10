@@ -537,13 +537,27 @@ async function prewarmOneVideo({ name, txid }: { name: string; txid: string }) {
   try {
     const res = await fetch(`/api/media/${txid}/?prewarm=1`, { signal: controller.signal });
     const data = await res.json().catch(() => ({}));
-    if (data?.downscaled) {
+    if (!res.ok || !data?.warmed) {
+      // the proxy couldn't retrieve the master from Arweave. Usually the
+      // upload's data chunks didn't fully seed (a mined tx header with missing
+      // data) — a broken artwork that must be re-uploaded. Occasionally it's
+      // just slow gateway propagation of a good upload. Flag it either way so
+      // it isn't silently shipped (this is exactly how a bad upload used to
+      // only surface later on mobile).
+      dropProgress.fail(
+        stepId,
+        `media not retrievable from Arweave (${data?.error || res.status}). ` +
+          `If it doesn't appear within a few minutes, re-upload this artwork.`
+      );
+      return;
+    }
+    if (data.downscaled) {
       dropProgress.complete(stepId, `downscaled ${data.from} → ${data.to} for mobile`);
     } else {
       dropProgress.complete(stepId, 'already mobile-ready — no downscale needed');
     }
   } catch {
-    // best-effort: the proxy will still transcode on the first real view
+    // network/timeout on our own endpoint — the proxy will retry on first view
     dropProgress.complete(stepId, 'still optimizing in the background — safe to close');
   } finally {
     clearTimeout(timer);
