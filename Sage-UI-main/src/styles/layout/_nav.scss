@@ -61,17 +61,12 @@
 }
 
 .nav__personal {
-  // position: absolute;
-  // left: 10vw;
-  // top: -50%;
-  // overflow: visible;
-  // display: flex;
-  // align-items: center;
-  // // gap: 10px;
-  // // width: 240px;
   width: 33%;
-  // white-space: no-wrap;
-  // line-height: 44px;
+  // profile now sits on the RIGHT — hug the right edge, mirroring the search
+  // on the left (search uses justify-content: flex-start)
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .nav__personal-pfp-container {
@@ -107,7 +102,8 @@
 .nav__search {
   width: 33%;
   display: flex;
-  justify-content: flex-end;
+  // search now sits on the LEFT — hug the left edge (was flex-end on the right)
+  justify-content: flex-start;
   align-items: center;
 }
 

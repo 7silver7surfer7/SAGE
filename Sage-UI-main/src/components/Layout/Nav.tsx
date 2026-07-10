@@ -48,15 +48,18 @@ export default function Nav() {
     <div className='nav__wrapper'>
       <div className='nav' data-color={dataColor} data-cy='nav'>
         <div className='nav__content'>
-          {shouldShowPersonal && (
-            <div className='nav__personal'>
-              {isSignedIn ? (
-                <>
-                  <ProfileDisplay />
-                </>
-              ) : (
-                <Connect></Connect>
-              )}
+          {shouldShowSearch && (
+            <div className='nav__search'>
+              <div className='nav__search-wrapper'>
+                <div className='searchform'>
+                  <SearchInput
+                    placeholder='search sage'
+                    className='searchform__input'
+                    displayIcon={true}
+                    dataColor={dataColor}
+                  />
+                </div>
+              </div>
             </div>
           )}
           <div className='nav__menu'>
@@ -77,18 +80,15 @@ export default function Nav() {
               );
             })}
           </div>
-          {shouldShowSearch && (
-            <div className='nav__search'>
-              <div className='nav__search-wrapper'>
-                <div className='searchform'>
-                  <SearchInput
-                    placeholder='search sage'
-                    className='searchform__input'
-                    displayIcon={true}
-                    dataColor={dataColor}
-                  />
-                </div>
-              </div>
+          {shouldShowPersonal && (
+            <div className='nav__personal'>
+              {isSignedIn ? (
+                <>
+                  <ProfileDisplay />
+                </>
+              ) : (
+                <Connect></Connect>
+              )}
             </div>
           )}
         </div>
