@@ -1,0 +1,96 @@
+@use "@/styles/abstracts/colors" as c;
+@use "@/styles/layout/layout" as l;
+.footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background-color: c.$bg-dark;
+  padding: 70px l.$indent 100px;
+  .inner {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 0 5px;
+
+    height: auto;
+    width: 100%;
+  }
+
+  .logo-and-social {
+    height: auto;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .social {
+    display: flex;
+    align-items: center;
+    flex-direction: row;
+    background-color: red;
+  }
+
+  .social-icons {
+    display: flex;
+    align-items: center;
+    flex-direction: row;
+    .social-icon {
+      margin-right: 22px;
+      position: relative;
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+    }
+    .rectangle {
+      width: 1.5px;
+      height: 31px;
+      background: rgba(111, 118, 126, 0.3);
+      border-radius: 2px;
+    }
+    .token-icon {
+      position: relative;
+      margin: 0 30px;
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+    }
+  }
+
+  .links {
+    display: flex;
+    width: 100%;
+    margin-top: 75px;
+
+    .column {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-right: 100px;
+      height: 100%;
+      padding: 16px 0 0;
+      height: 130px;
+      .title {
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 15px;
+        color: c.$purple-light;
+        text-transform: uppercase;
+        cursor: default;
+      }
+
+      li {
+        cursor: pointer;
+        font-weight: 500;
+        font-size: 14px;
+        line-height: 15px;
+        color: #6f767e;
+      }
+    }
+  }
+
+  .dont-buy-meme {
+    position: fixed;
+    left: 19px;
+    bottom: 20px;
+  }
+}

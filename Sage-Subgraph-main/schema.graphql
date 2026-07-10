@@ -1,0 +1,63 @@
+enum LotteryStatus {
+  Created
+  Cancelled
+  Closed
+  Completed
+}
+
+type Lottery @entity {
+  id: ID!
+  status: LotteryStatus!
+  tickets: [Ticket!]!
+  claimedPrizes: [ClaimedPrize!]!
+  refunds: [Refund!]!
+}
+
+type Ticket @entity {
+  id: ID!
+  txnHash: Bytes!
+  lottery: Lottery!
+  ticketNumber: Int!
+  address: Bytes!
+}
+
+type ClaimedPrize @entity {
+  id: ID!
+  txnHash: Bytes!
+  lottery: Lottery!
+  address: Bytes!
+  nftId: Int!
+}
+
+type Refund @entity {
+  id: ID!
+  txnHash: Bytes!
+  lottery: Lottery!
+  address: Bytes!
+  amount: BigInt!
+}
+
+enum AuctionStatus {
+  Created
+  Settled
+  Cancelled
+}
+
+type Auction @entity {
+  id: ID! # auctionId
+  status: AuctionStatus!
+  bids: [Bid!]!
+  highestBid: BigInt
+  highestBidder: Bytes # address
+  endTime: Int
+}
+
+type Bid @entity {
+  id: ID! # tx id
+  txnHash: Bytes!
+  auction: Auction!
+  bidder: Bytes! # address
+  amount: BigInt!
+  endTime: Int!
+  blockTimestamp: BigInt!
+}

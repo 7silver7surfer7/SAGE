@@ -1,0 +1,19 @@
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+.hidden-menu {
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding: 0 10vw;
+  min-height: 44px;
+  margin-left: auto;
+  margin-right: auto;
+  display: none;
+  @include b.min-width('medium') {
+    display: flex;
+  }
+  @include m.theme() {
+    // background-color: m.t(base2);
+  }
+  @include m.desktop-width;
+}

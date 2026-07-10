@@ -1,0 +1,41 @@
+$breakpoints: (
+  'tiny': (
+    min-width: 440px,
+  ),
+  'small': (
+    min-width: 768px,
+  ),
+  'medium': (
+    min-width: 1024px,
+  ),
+  'mobile': (
+    min-width: 1024px,
+  ),
+  'large': (
+    min-width: 1280px,
+  ),
+  'xl': (
+    min-width: 1440px,
+  ),
+  '2xl': (
+    min-width: 1536px,
+  ),
+) !default;
+
+/// @param {String} $breakpoint - Breakpoint name
+/// @require $breakpoints
+@mixin min-width($breakpoint) {
+  // If the key exists in the map
+  @if map-has-key($breakpoints, $breakpoint) {
+    // Prints a media query based on the value
+    @media #{inspect(map-get($breakpoints, $breakpoint))} {
+      @content;
+    }
+  }
+
+  // If the key doesn't exist in the map
+  @else {
+    @warn "no value could be retrieved from `#{$breakpoint}`. "
+        + "Available breakpoints are: #{map-keys($breakpoints)}.";
+  }
+}

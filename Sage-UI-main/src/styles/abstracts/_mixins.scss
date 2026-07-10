@@ -1,0 +1,466 @@
+@use '@/styles/abstracts/colors' as *;
+@use '@/styles/abstracts/breakpoints' as b;
+
+@mixin modal-header {
+  display: flex;
+  width: max-content;
+  align-items: center;
+  width: 95%;
+  // margin-top: 5px;
+  gap: 0 25px;
+  width: 90%;
+  @include b.min-width('medium') {
+    // padding-top: 20px;
+    width: 95%;
+  }
+}
+
+@mixin data-hide {
+  &[data-hide='true'] {
+    display: none;
+  }
+}
+
+@mixin mobile-buttons {
+  @include button-base;
+  @include theme() {
+    border: 1px solid rgba(t(contrast), 0.35);
+    background-color: t(base);
+    color: t(contrast);
+    border-radius: 999px;
+    width: 269px;
+    height: 51px;
+    aspect-ratio: auto;
+    @content;
+  }
+}
+
+@mixin disable {
+  &:disabled {
+    filter: brightness(0.4);
+    cursor: default;
+    @content;
+  }
+}
+
+@mixin input-label {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 17px;
+  text-transform: capitalize;
+
+  @include theme() {
+    color: #696969;
+  }
+}
+
+@mixin input-field {
+  @include theme() {
+    flex: 1;
+    background: transparent;
+    padding: 2px 12px;
+    color: t(contrast);
+    border: 1px solid rgba(t(contrast), 0.25);
+    border-radius: 10px;
+    min-height: 42px;
+    transition: border-color 200ms;
+    &:focus,
+    &:focus-within {
+      border-color: t(accent);
+      outline: none;
+    }
+    @content;
+  }
+}
+
+@mixin input-select {
+  @include input-field {
+    appearance: none;
+    background-color: t(base);
+    @content;
+  }
+}
+
+@mixin input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+@mixin tabs-list {
+  @include flex-row;
+  gap: 22px;
+}
+
+@mixin tabs-tab {
+  @include theme() {
+    @include interact;
+    @include text-p5;
+    @include flex-center;
+    @include pill;
+    text-transform: uppercase;
+    width: 131px;
+    height: 25px;
+    color: t(contrast);
+    border-width: 1px;
+    border-style: solid;
+    border-color: rgba(t(contrast), 0.35);
+    &--selected {
+      color: t(base);
+      background-color: t(accent);
+      border-color: t(accent);
+    }
+  }
+}
+
+@mixin tabs-panels {
+  // @include flex-center;
+  margin-top: 72px;
+}
+
+@mixin flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+@mixin flex-row {
+  display: flex;
+  flex-direction: row;
+}
+
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin img-container {
+  position: relative;
+  overflow: hidden;
+}
+
+@mixin circle {
+  border-radius: 100%;
+  aspect-ratio: 1/1;
+}
+
+@mixin no-scrollbar {
+  &::-webkit-scrollbar {
+    width: 0px;
+    height: 0px;
+    display: none;
+  }
+  -ms-overflow-style: none; /* IE 11 */
+  scrollbar-width: none; /* Firefox 64 */
+}
+
+@mixin custom-scrollbar {
+  &::-webkit-scrollbar {
+    width: 10px;
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    @include theme() {
+      background-color: t('accent');
+      color: t('contrast');
+    }
+  }
+}
+
+@mixin page {
+  width: 100vw;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  @include page-paddings;
+}
+
+@mixin page-paddings {
+  padding: 97px 0 0px;
+  @include b.min-width('medium') {
+    padding: 80px 0 60px;
+  }
+}
+
+@mixin noselect {
+  -webkit-touch-callout: none; /* iOS Safari */
+  -webkit-user-select: none; /* Safari */
+  -khtml-user-select: none; /* Konqueror HTML */
+  -moz-user-select: none; /* Old versions of Firefox */
+  -ms-user-select: none; /* Internet Explorer/Edge */
+  user-select: none; /* Non-prefixed version, currently
+                                  supported by Chrome, Edge, Opera and Firefox */
+}
+
+@mixin interact {
+  &[disabled] {
+    filter: brightness(0.5);
+
+    cursor: not-allowed;
+    &[data-loading='true'] {
+      cursor: progress;
+    }
+  }
+  &:not([disabled]) {
+    cursor: pointer;
+    @include transition-base;
+    @include hover {
+      filter: brightness(0.9);
+      @content;
+    }
+    @include active {
+      @content;
+    }
+  }
+}
+
+@mixin hover {
+  &:not([disabled]):hover {
+    @content;
+  }
+}
+
+@mixin hover-underline {
+  @include hover {
+    text-decoration: underline;
+    cursor: pointer;
+  }
+}
+
+@mixin active {
+  &:not([disabled]):active {
+    @content;
+  }
+}
+
+@mixin btn {
+  @include interact;
+}
+
+@mixin pill {
+  border-radius: 999px;
+}
+
+$themes: (
+  dark: (
+    base: #0e1412,
+    base2: #17211c,
+    accent: $accent,
+    contrast2: #cfdad2,
+    contrast: #f2f7f3,
+    filter-base: invert(0%) sepia(2%) saturate(0%) hue-rotate(344deg) brightness(98%) contrast(101%),
+  ),
+  light: (
+    base: #fafcf9,
+    base2: $light,
+    accent: $accent-deep,
+    contrast2: #3c4a42,
+    contrast: #101613,
+    filter-base: invert(100%) sepia(42%) saturate(228%) hue-rotate(47deg) brightness(119%)
+      contrast(100%),
+  ),
+);
+
+// From Sass 2.0 on, it is no longer allowed to declare globals on the fly.
+$theme-map: null;
+
+@mixin theme() {
+  @each $theme, $map in $themes {
+    // $theme: darkTheme, lightTheme
+    // $map: ('text-color': ..., 'bg-color': ...)
+
+    // make the $map globally accessible, so that theme-get() can access it
+    $theme-map: $map !global;
+
+    // make a class for each theme using interpolation -> #{}
+    // use & for making the theme class ancestor of the class
+    // from which you use @include theme() {...}
+    .#{$theme} & {
+      @content; // the content inside @include theme() {...}
+    }
+  }
+  // no use of the variable $theme-map now
+  $theme-map: null !global;
+}
+
+@function t($key) {
+  @return map-get($theme-map, $key);
+}
+
+@mixin data-color {
+  &[data-color='white'] {
+    color: $white;
+  }
+}
+
+@mixin data-bg-color {
+  &[data-bg-color='white'] {
+    background-color: $white;
+  }
+}
+
+@mixin animate-highlight {
+  animation-duration: 900ms;
+  animation-iteration-count: 7;
+  animation-name: highlight;
+}
+
+$desktop-width: 1345px;
+
+@mixin desktop-width {
+  @include b.min-width('medium') {
+    width: min($desktop-width, 83vw);
+  }
+}
+
+@mixin desktop-inner-width {
+  width: 850px;
+}
+
+@mixin mobile-width {
+  width: min($desktop-width, 80vw);
+}
+
+@mixin mobile-width-full {
+  width: min($desktop-width, 100vw);
+}
+
+@mixin standard-width {
+  @include desktop-width;
+  @include mobile-width;
+}
+
+@mixin text-h1 {
+  text-align: left;
+  font-weight: 400;
+  font-size: clamp(20px, 5vw, 50px);
+  line-height: clamp(24px, 1em, 60px);
+  @include header-margins;
+  text-transform: uppercase;
+}
+
+@mixin header-margins {
+  margin-top: clamp(24px, 5vw, 70px);
+  margin-bottom: clamp(10px, 5vw, 50px);
+}
+
+@mixin text-h2 {
+  font-size: clamp(25px, 3vw, 40px);
+  line-height: 51px;
+}
+
+@mixin text-h3 {
+  font-size: 16px;
+  line-height: 22px;
+}
+
+@mixin text-p1 {
+  line-height: 120%;
+  font-size: clamp(10px, 2vw, 16px);
+}
+
+@mixin text-p3 {
+  font-size: clamp(14px, 0.8vw, 20px);
+  line-height: 1.25em;
+}
+@mixin text-p4 {
+  font-size: clamp(10px, 0.7vw, 15px);
+  // line-height: clamp(18px, 1.5em, 25px);
+}
+
+@mixin text-p5 {
+  font-size: clamp(6px, 0.8vw, 10px);
+  line-height: 130%;
+}
+
+@mixin text-tag {
+  font-size: clamp(6px, 0.8vw, 10px);
+}
+
+@mixin transition-base {
+  transition-duration: 200ms;
+}
+
+@mixin transition-cover {
+  transition-duration: 1200ms;
+}
+
+@mixin animate-pulse {
+  animation: pulse 1900ms infinite;
+  animation-timing-function: ease-in;
+}
+
+@mixin animate-drop {
+  animation: drop 200ms linear;
+  animation-timing-function: ease-in;
+}
+
+@mixin media-container {
+  position: relative;
+  overflow: hidden;
+}
+
+@mixin super {
+  vertical-align: text-top;
+  font-size: 3px;
+}
+
+@mixin pfp-container {
+  // @include interact;
+  cursor: pointer;
+  position: relative;
+  aspect-ratio: 1/1;
+  border-radius: max(300px, 200%);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin button-base {
+  display: flex;
+  text-transform: uppercase;
+  align-items: center;
+  justify-content: center;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 40px;
+  text-align: center;
+  letter-spacing: 0.2em;
+  width: min(250px, 80vw);
+  height: 35px;
+  text-align: center;
+  letter-spacing: 0.1em;
+  @include pill;
+  @include interact;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes highlight {
+  60% {
+    // background-color: c.$bg-base;
+  }
+}
+
+@keyframes drop {
+  0% {
+    transform: translateY(10%);
+  }
+
+  100% {
+    transform: translateY(0%);
+  }
+}

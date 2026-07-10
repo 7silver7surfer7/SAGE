@@ -1,0 +1,59 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.howtobuyash {
+  @include m.page;
+}
+
+.howtobuyash-header {
+  @include m.text-h1;
+  @include m.standard-width;
+}
+
+.howtobuyash__import-button {
+  @include m.button-base;
+  @include m.theme() {
+    background-color: m.t(accent);
+    color: m.t(base);
+  }
+  margin-right: auto;
+  margin-bottom: 40px;
+}
+
+.howtobuyash-text {
+  @include m.theme() {
+    @include m.standard-width;
+    @include m.text-p1;
+    @include m.flex-col;
+    color: m.t(contrast2);
+  }
+}
+
+.howtobuyash__group {
+  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: clamp(8px, 1.5vh, 40px);
+  @include m.standard-width;
+}
+
+.howtobuyash__earning-pixels-info {
+  @include m.standard-width;
+  @include m.text-p1;
+  @include m.theme() {
+    color: m.t(contrast2);
+  }
+}
+
+.howtobuyash-text-link {
+  text-decoration: underline;
+}
+
+.howtobuyash-bullet {
+  font-style: normal;
+  font-weight: 600;
+  font-size: clamp(16px, 2.5vw, 20px);
+  line-height: 130%;
+  text-transform: capitalize;
+}

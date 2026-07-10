@@ -1,0 +1,21 @@
+@use "@/styles/abstracts/colors" as c;
+
+$indent: max(1em, 10vw);
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  color: c.$white;
+  background-color: c.$bg-base;
+
+  overflow-x: visible;
+  #main {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: visible;
+    flex: 1;
+    min-height: 100vh;
+  }
+}

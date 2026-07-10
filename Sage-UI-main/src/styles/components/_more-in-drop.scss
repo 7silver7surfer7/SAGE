@@ -1,0 +1,26 @@
+@use '@/styles/layout/layout' as l;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.more-in-drop {
+  margin-top: 100px;
+  width: 100%;
+}
+
+.more-in-drop__header {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 19px;
+  line-height: 23px;
+  /* identical to box height, or 121% */
+  /* Text.White */
+  color: #ffffff;
+}
+
+.more-in-drop__grid {
+  margin-top: 23px;
+  width: 100%;
+  min-height: 400px;
+  display: flex;
+	flex-wrap: wrap;
+  gap: 30px;
+}

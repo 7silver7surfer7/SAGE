@@ -1,0 +1,8 @@
+@use '@/styles/abstracts/mixins' as m;
+.user-handle {
+  &[data-is-ens='true'] {
+    @include m.theme() {
+      color: m.t(accent);
+    }
+  }
+}

@@ -1,0 +1,238 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+.game-panel {
+  padding: 28px;
+  margin-top: 24px;
+  box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  background-color: #1e1e21;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.game-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.game-panel__header-title {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 17px;
+  line-height: 27px;
+  color: #ffffff;
+}
+
+.game-panel__balance-label {
+  gap: 14px;
+  display: flex;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 19px;
+  align-items: center;
+  color: #6f767e;
+}
+
+.game-panel__balance {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 17px;
+  display: flex;
+  align-items: center;
+  color: #ffffff;
+  background: #171719;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.game-panel__pricing {
+  background-color: c.$box-black;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  gap: 50px;
+}
+
+.game-panel__pricing-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.game-panel__price {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 23px;
+  line-height: 33px;
+  display: flex;
+  color: #ffffff;
+  gap: 6px;
+}
+
+.game-panel__price-unit {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 33px;
+  display: flex;
+  align-items: center;
+  color: #6f767e;
+}
+
+.game-panel__pricing-label {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 17px;
+  display: flex;
+  align-items: center;
+  color: #6f767e;
+}
+
+.game-panel__highest-bidder {
+  display: flex;
+  gap: 10px;
+}
+
+.game-panel__highest-bidder-pfp {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1/1;
+  height: 30px;
+  border-radius: 7px;
+}
+
+.game-panel__highest-bidder-name {
+  display: flex;
+  flex-direction: column;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 15px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.game-panel__highest-bidder-username {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 15px;
+  display: flex;
+  align-items: center;
+  color: #6f767e;
+}
+
+.game-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.game-panel__btn-container {
+  // @include m.btn;
+  display: flex;
+  // flex-direction: column;
+  // justify-content: center;
+  align-items: center;
+  // padding: 14px 20px;
+  // background: linear-gradient(90deg, #6c2e9c 0%, #792e9c 100%);
+  // border-radius: 23px;
+  // color: white;
+  width: 190px;
+
+  // font-style: normal;
+  // font-weight: 600;
+  // font-size: 13px;
+  // line-height: 16px;
+  // text-align: center;
+  // color: #ffffff;
+}
+
+.game-panel__status-text {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 17px;
+  display: flex;
+  align-items: center;
+  color: #6f767e;
+}
+
+.game-panel__status-dot {
+  aspect-ratio: 1/1;
+  height: 8px;
+  border-radius: 100%;
+}
+
+.game-panel__status-dot--active {
+  background-color: c.$purple;
+}
+
+.game-panel__status-dot--inactive {
+  background-color: grey;
+}
+
+.game-panel__status-dot--error {
+  background-color: red;
+}
+
+.game-panel__rules {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 17px;
+  align-items: center;
+  text-align: end;
+  color: #b47dbd;
+  flex: 1;
+  cursor: pointer;
+}
+
+.game-panel__countdown {
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  padding: 4px 10px 4px 9px;
+  gap: 7px;
+  background: #171719;
+  border-radius: 14px;
+
+  font-style: normal;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 17px;
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: #ffffff;
+}
+
+.game-panel__extra-info {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 21px;
+  color: #9299a0;
+}
+
+.game-panel__tickets-available {
+  flex: 1;
+  font-style: normal;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 17px;
+  display: flex;
+  justify-content: end;
+  align-items: center;
+  color: c.$white;
+  gap: 7px;
+}
+
+.game-panel__tickets-available-label {
+  color: c.$text-gray-2;
+}

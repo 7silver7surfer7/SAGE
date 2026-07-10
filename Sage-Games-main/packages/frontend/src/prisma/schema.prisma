@@ -1,0 +1,205 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_CONNECTION_POOL_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+model Drop {
+  id                  Int        @id @default(autoincrement())
+  primarySplitterId   Int?
+  secondarySplitterId Int?
+  whitelistId         Int?
+  createdAt           DateTime   @default(now())
+  royaltyPercentage   Float      @default(0.0)
+  approvedAt          DateTime?
+  approvedBy          String?    @db.Char(42)
+  bannerImageS3Path   String
+  dropMetadataCid     String
+  description         String
+  metadataS3Path      String
+  tags                String
+  artistAddress       String     @db.Char(42)
+  name                String
+  ApprovedByUser      User?      @relation("Drop_approvedByToUser", fields: [approvedBy], references: [walletAddress])
+  Artist              User       @relation("ArtistDrops", fields: [artistAddress], references: [walletAddress])
+  PrimarySplitter     Splitter?  @relation("primarySplitter", fields: [primarySplitterId], references: [id])
+  SecondarySplitter   Splitter?  @relation("secondarySplitter", fields: [secondarySplitterId], references: [id])
+  Whitelist           Whitelist? @relation(fields: [whitelistId], references: [id])
+  Auctions            Auction[]
+  Lotteries           Lottery[]
+  UserFavoriteDrops   User[]     @relation("userFavoriteDrops")
+}
+
+model Lottery {
+  defaultPrizeId      Int?
+  dropId              Int
+  id                  Int          @id @default(autoincrement())
+  maxTickets          Int          @default(0)
+  maxTicketsPerUser   Int          @default(0)
+  endTime             DateTime
+  startTime           DateTime
+  isRefundable        Boolean      @default(false)
+  isLive              Boolean      @default(false)
+  prizesAwardedAt     DateTime?
+  costPerTicketPoints Int          @default(0)
+  costPerTicketTokens Float        @default(0.0)
+  contractAddress     String?      @db.Char(42)
+  DefaultPrize        Nft?         @relation("defaultPrize", fields: [defaultPrizeId], references: [id])
+  Drop                Drop         @relation(fields: [dropId], references: [id])
+  Nfts                Nft[]
+  PrizeProofs         PrizeProof[]
+}
+
+model Auction {
+  buyNowPrice     String?
+  endTime         DateTime
+  minimumPrice    String?
+  settled         Boolean   @default(false)
+  startTime       DateTime
+  dropId          Int
+  id              Int       @id @default(autoincrement())
+  lastUpdatedAt   DateTime?
+  isLive          Boolean   @default(false)
+  nftId           Int       @unique
+  claimedAt       DateTime?
+  winnerAddress   String?   @db.Char(42)
+  contractAddress String?   @db.Char(42)
+  Drop            Drop      @relation(fields: [dropId], references: [id])
+  Nft             Nft       @relation(fields: [nftId], references: [id])
+}
+
+model SplitEntry {
+  id                 Int      @id @default(autoincrement())
+  destinationAddress String   @db.Char(42)
+  splitterId         Int
+  percent            Float
+  Splitter           Splitter @relation(fields: [splitterId], references: [id])
+}
+
+model Splitter {
+  id               Int          @id @default(autoincrement())
+  splitterAddress  String?      @db.Char(42)
+  DropsAsPrimary   Drop[]       @relation("primarySplitter")
+  DropsAsSecondary Drop[]       @relation("secondarySplitter")
+  SplitterEntries  SplitEntry[]
+}
+
+model WhitelistEntry {
+  id          Int           @id @default(autoincrement())
+  whitelistId Int
+  minBalance  String?
+  tokenId     BigInt?
+  type        WhitelistType
+  Whitelist   Whitelist     @relation(fields: [whitelistId], references: [id])
+}
+
+model Whitelist {
+  id               Int              @id @default(autoincrement())
+  contractAddress  String           @db.Char(42)
+  name             String
+  Drops            Drop[]
+  WhitelistEntries WhitelistEntry[]
+}
+
+model Nft {
+  id                      Int          @id @default(autoincrement())
+  name                    String
+  description             String
+  rarity                  String
+  ipfsPath                String
+  s3Path                  String
+  tags                    String
+  isVideo                 Boolean      @default(false)
+  numberOfEditions        Int          @default(0)
+  lotteryId               Int?
+  Lottery                 Lottery?     @relation(fields: [lotteryId], references: [id])
+  Auction                 Auction?
+  DefaultPrizeInLotteries Lottery[]    @relation("defaultPrize")
+  PrizeProof              PrizeProof[]
+}
+
+model PrizeProof {
+  winnerAddress String    @db.Char(42)
+  proof         String
+  claimedAt     DateTime?
+  createdAt     DateTime
+  nftId         Int
+  lotteryId     Int
+  ticketNumber  Int
+  Lottery       Lottery   @relation(fields: [lotteryId], references: [id])
+  Nft           Nft       @relation(fields: [nftId], references: [id])
+
+  @@id([lotteryId, winnerAddress, nftId, ticketNumber])
+}
+
+model TokenTransaction {
+  blockNumber    Int
+  blockTimestamp Int
+  from           String    @db.Char(42)
+  to             String    @db.Char(42)
+  value          String
+  assetType      AssetType
+  id             Int       @id @default(autoincrement())
+  txHash         String    @db.Char(66)
+
+  @@index([from, to])
+}
+
+model EarnedPoints {
+  address           String   @id @db.Char(42)
+  totalPointsEarned BigInt   @default(0)
+  proof             String
+  updatedAt         DateTime @default(now())
+  signedMessage     String
+  User              User     @relation(fields: [address], references: [walletAddress])
+}
+
+model RewardType {
+  type               AssetType @id
+  rewardRate         Float
+  lastBlockInspected Int
+  chainId            Int
+  contract           String    @db.Char(42)
+  startingBlock      Int
+  positionSizeLimit  String    @default("0")
+}
+
+model User {
+  walletAddress  String        @id @db.Char(42)
+  email          String?
+  createdAt      DateTime      @default(now())
+  role           Role          @default(USER)
+  bio            String?       @db.VarChar(200)
+  profilePicture String?
+  username       String?       @db.VarChar(40)
+  displayName    String?       @db.VarChar(40)
+  DropsApproved  Drop[]        @relation("Drop_approvedByToUser")
+  ArtistDrops    Drop[]        @relation("ArtistDrops")
+  EarnedPoints   EarnedPoints?
+  FavoriteDrops  Drop[]        @relation("userFavoriteDrops")
+
+  @@index([walletAddress])
+}
+
+enum AssetType {
+  ETH_ASH
+}
+
+enum Role {
+  USER
+  ARTIST
+  ADMIN
+}
+
+enum WhitelistType {
+  WALLET
+  ERC20
+  ERC721
+  ERC1155
+  MERKLE
+}

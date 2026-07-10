@@ -1,0 +1,12 @@
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.default-pfp-src {
+  @include m.theme() {
+    width: 100%;
+		padding: 20%;
+    height: 100%;
+    color: m.t(base);
+    background-color: m.t(contrast);
+  }
+}

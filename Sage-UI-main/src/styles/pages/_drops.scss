@@ -1,0 +1,125 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+.drops-page {
+  @include m.page;
+  align-items: center;
+}
+
+.drops-page__header {
+  @include m.standard-width;
+}
+
+.drops-page__subheader {
+  display: flex;
+  @include m.standard-width;
+}
+
+.drops-page__subheader-top {
+  display: flex;
+}
+
+.drops-page__subheader-sage-icon {
+  position: relative;
+  height: min(60px, 7vw);
+  aspect-ratio: 43/46;
+  align-items: center;
+  display: none;
+  @include b.min-width('medium') {
+    display: flex;
+  }
+}
+
+.drops-page__subheader-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.drops-page__subheader-label {
+  @include m.text-h1;
+}
+
+.drops-page__subheader-info {
+  font-style: normal;
+  font-weight: 400;
+  @include m.text-p1;
+  text-transform: uppercase;
+}
+
+.drops-page__drops-section {
+  display: grid;
+  grid-template-columns: repeat(1, 1fr);
+  // flex-direction: column;
+  gap: 40px 20px;
+  margin-top: 48px;
+  @include m.mobile-width;
+  @include b.min-width('medium') {
+    grid-template-columns: repeat(2, 1fr);
+    @include m.desktop-width;
+  }
+}
+
+.drops-page__drop {
+  overflow: hidden;
+  // position: relative;
+  width: 100%;
+  // aspect-ratio: 1440/1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.drops-page__drop-header {
+  position: relative;
+  display: flex;
+  flex: 1;
+  z-index: 1;
+  width: 100%;
+  align-items: center;
+  aspect-ratio: 738/528;
+  justify-content: space-between;
+  @include m.interact;
+}
+
+.drops-page__drop-header-title {
+  font-style: normal;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: c.$light;
+  z-index: 2;
+  position: absolute;
+  bottom: 0;
+  margin: 20px 20px 5%;
+
+  font-size: 32px;
+  @include b.min-width('medium') {
+    line-height: 1em;
+    font-size: clamp(14px, 3vw, 52px);
+  }
+}
+
+.drops-page__drop-header-title-artist {
+  // font-size: clamp(8px, 1vw, 28px);
+  // line-height: clamp(19px, 1em, 81px);
+  font-size: clamp(8px, 1.5vw, 18px);
+}
+
+.drops-page__drop-content-description {
+  font-weight: 400;
+  font-size: clamp(12px, 1vw, 16px);
+  width: min(506px, 40%);
+  line-height: 130%;
+  text-transform: uppercase;
+  color: c.$white;
+  display: none;
+
+  @include b.min-width('medium') {
+    display: initial;
+  }
+}
+
+.drops-page__drop-backdrop {
+  width: 1000px;
+  height: 1000px;
+}

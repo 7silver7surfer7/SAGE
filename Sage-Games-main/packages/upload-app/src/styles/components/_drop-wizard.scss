@@ -1,0 +1,83 @@
+.rsw-wrapper {
+  min-height: 400px !important;
+}
+
+/** Progress Bar */
+$progress-height: 5px;
+$duration: 3s;
+
+input, select {
+  height: 25px;
+}
+
+body {
+  font-size: 14px;
+  font-weight: 400;
+}
+
+h1 {
+  font-size: 26px;
+  font-weight: 200;
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: 300;
+}
+
+@keyframes stripes {
+  from {
+    background-position: 1rem 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@keyframes rainbow {
+  0% {
+    background-color: red;
+  }
+  20% {
+    background-color: orange;
+  }
+  40% {
+    background-color: yellow;
+  }
+  60% {
+    background-color: green;
+  }
+  80% {
+    background-color: blue;
+  }
+  100% {
+    background-color: indigo;
+  }
+}
+
+@keyframes grow {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+.progress-wrapper {
+  padding-top: 25%;
+}
+
+.progress {
+  height: $progress-height;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: $progress-height;
+  width: 100%;
+
+  .loaded & {
+    animation: grow $duration ease, stripes 1s linear infinite, rainbow $duration ease infinite;
+  }
+}

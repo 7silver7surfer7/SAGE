@@ -1,0 +1,21 @@
+{
+    "status": "planned",
+    "lotteryId": 345,
+    "costPerTicketCoins": 1,
+    "costPerTicketPoints": 1,
+    "startTime": "1643050700",
+    "endTime": "1643054299",
+    "artistName": "meme",
+    "bannerImageName": "ummmm",
+    "dropName": "Memeverse Drop #4",
+    "dropDescription": "Drop #4, one prize, 4 mints",
+    "numberOfNftsInDrop": 1,
+    "tags": "meme memeverse zombies attack",
+    "nft1": {
+        "name": "MemeX - 004",
+        "description": "A card featuring a cat fighting off zombies",
+        "numberOfMints": 4,
+        "tags": "Cat zombies Memeverse"
+    },
+    "walletAddress": "0x544223D219154D647A4BE47d68820A9171A43e2E"
+}

@@ -1,0 +1,60 @@
+@use '@/styles/abstracts/colors' as c;
+@use 'sass:color';
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.modal {
+  position: relative;
+  z-index: 998;
+}
+
+.modal__backdrop {
+  @include m.theme() {
+    position: fixed;
+    // opacity: 0.9;
+    backdrop-filter: blur(32px);
+    // transform: scale(1.2);
+    inset: 0;
+    // background-color: m.t(base);
+    // background-color: #020000;
+    // background-color: black;
+  }
+}
+
+.modal__container {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal__panel {
+  @include m.theme() {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    flex-direction: column;
+    color: m.t(contrast);
+    padding: 40px;
+    height: 100%;
+    background-color: m.t(base);
+    @include b.min-width('medium') {
+      height: auto;
+      background-color: color.change(m.t(base), $alpha: 0.75);
+      padding: 0;
+    }
+  }
+}
+
+// .modal__header {
+//   display: flex;
+//   font-family: 'Poppins';
+//   font-style: normal;
+//   font-weight: 600;
+//   font-size: 15px;
+//   line-height: 21px;
+//   width: 100%;
+//   justify-content: space-between;
+//   align-items: center;
+// }

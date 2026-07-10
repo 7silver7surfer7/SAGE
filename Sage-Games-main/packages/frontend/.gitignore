@@ -1,0 +1,12 @@
+.env
+.DS_Store
+.next
+.vercel
+# typechain generated files
+types/contracts/
+!types/react-table-config.d.ts
+tests/e2e/screenshots
+tests/e2e/videos
+node_modules
+settings.json
+package-lock.json

@@ -1,0 +1,78 @@
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.sage-logotype__wrapper {
+  @include m.noselect;
+  // margin-bottom: auto;
+  overflow: visible;
+  position: relative;
+  z-index: 1;
+  @include m.desktop-width;
+}
+
+.sage-logotype {
+  @include m.noselect;
+  overflow: visible;
+  display: flex;
+  justify-content: flex-start;
+  @include m.standard-width;
+  &[data-route-home='true'] {
+    cursor: pointer;
+  }
+}
+
+.motto {
+  @include m.theme() {
+    @include m.text-p5;
+    letter-spacing: 0.1em;
+    position: absolute;
+    gap: 10px;
+    transform: rotate(-90deg);
+    transform-origin: bottom left;
+    color: m.t(contrast2);
+    left: 5vw;
+    // height: 25vw;
+    bottom: 50%;
+    cursor: default;
+    @include b.min-width('medium') {
+      // height: 256px;
+    }
+  }
+}
+
+.motto__super {
+  @include m.super;
+  color: inherit;
+}
+
+.sage-logotype__src {
+  position: absolute;
+}
+
+.sage-logotype__motto {
+  flex: 1;
+  @include m.data-color;
+}
+
+.sage-logotype__sage-icon {
+  @include m.theme() {
+    width: clamp(10px, 1vw, 30px);
+    color: m.t(contrast2);
+    @include m.data-color;
+  }
+}
+
+.sage-logotype__svg {
+  @include m.theme() {
+    display: flex;
+    justify-content: flex-start;
+    color: m.t(contrast2);
+    height: 10vw;
+    width: 40vw;
+    @include m.data-color;
+    @include b.min-width('medium') {
+      height: 4.9vw;
+      width: min(19.6vw, 236px);
+    }
+  }
+}

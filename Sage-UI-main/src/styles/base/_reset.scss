@@ -1,0 +1,228 @@
+/* http://meyerweb.com/eric/tools/css/reset/ 
+   v2.0 | 20110126
+   License: none (public domain)
+*/
+
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+
+//element highlights in accented color
+*::selection {
+  @include m.theme() {
+    background-color: m.t(accent);
+    color: m.t(base);
+  }
+}
+
+//reset default button on file inputs
+input[type='file'] {
+  opacity: 0;
+}
+
+input[type='file']::file-selector-button {
+  display: none;
+}
+
+//hide arrows for number inputs
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Firefox */
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+// The m.theme() mixin emits ancestor selectors (`.dark body`), but the theme
+// class is set ON body itself (useTheme.ts), so a themed body background has
+// never actually applied — the canvas stayed white, visible on iOS in the
+// status-bar/home-indicator safe areas and rubber-band overscroll. Style the
+// canvas directly. Default to the dark base (the app's default theme) so
+// there's no white flash before hydration adds the class.
+// NOTE: the old block also declared overflow:hidden — intentionally not
+// carried over: it never matched, and enabling it would break scrolling.
+html {
+  background-color: #0e1412;
+}
+// the canvas color comes from <html>, which CSS can't style from a class on
+// <body> without :has() (Safari 15.4+/Chrome 105+); older browsers keep the
+// dark default, which only shows as a slightly-off overscroll tint in light mode
+html:has(body.light) {
+  background-color: #fafcf9;
+}
+body.dark {
+  background-color: #0e1412;
+  color-scheme: dark;
+}
+body.light {
+  background-color: #fafcf9;
+  color-scheme: light;
+}
+
+* {
+  @include m.no-scrollbar;
+}
+
+html,
+body,
+div,
+span,
+applet,
+object,
+iframe,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+blockquote,
+pre,
+a,
+abbr,
+acronym,
+address,
+big,
+cite,
+code,
+del,
+dfn,
+em,
+img,
+ins,
+kbd,
+q,
+s,
+samp,
+small,
+strike,
+strong,
+sub,
+sup,
+tt,
+var,
+b,
+u,
+i,
+center,
+dl,
+dt,
+dd,
+ol,
+ul,
+li,
+fieldset,
+form,
+label,
+legend,
+table,
+caption,
+tbody,
+tfoot,
+thead,
+tr,
+th,
+td,
+article,
+aside,
+canvas,
+details,
+embed,
+figure,
+figcaption,
+footer,
+header,
+hgroup,
+menu,
+nav,
+output,
+ruby,
+section,
+summary,
+time,
+mark,
+audio,
+video {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 100%;
+  font: inherit;
+  vertical-align: baseline;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial,
+    sans-serif;
+}
+/* HTML5 display-role reset for older browsers */
+article,
+aside,
+details,
+figcaption,
+figure,
+footer,
+header,
+hgroup,
+menu,
+nav,
+section {
+  display: block;
+}
+body {
+  line-height: 1;
+}
+ol,
+ul {
+  list-style: none;
+}
+blockquote,
+q {
+  quotes: none;
+}
+blockquote:before,
+blockquote:after,
+q:before,
+q:after {
+  content: '';
+  content: none;
+}
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+a {
+  text-decoration: inherit;
+  color: inherit;
+}
+
+button {
+  border: none;
+}
+
+input {
+  border: none;
+}
+
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+}
+
+img {
+  // @include m.noselect;
+}
+
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  /* display: none; <- Crashes Chrome on hover */
+  -webkit-appearance: none;
+  margin: 0; /* <-- Apparently some margin are still there even though it's hidden */
+}
+
+sup {
+  @include m.super;
+}

@@ -1,0 +1,21 @@
+{
+    "status": "planned",
+    "lotteryId": 345,
+    "costPerTicketCoins": 1,
+    "costPerTicketPoints": 1,
+    "startTime": "1643050700",
+    "endTime": "1643054299",
+    "artistName": "meme",
+    "bannerImageName": "ummmm",
+    "dropName": "Memeverse Drop #1",
+    "dropDescription": "Test #1, one prize and one mint.",
+    "numberOfNftsInDrop": 1,
+    "tags": "meme memeverse mike tyson",
+    "nft1": {
+        "name": "MemeX - 001 The Champ Returns",
+        "description": "A card featuring Mike Tyson",
+        "numberOfMints": 1,
+        "tags": "Mike Tyson Memeverse"
+    },
+    "walletAddress": "0x544223D219154D647A4BE47d68820A9171A43e2E"
+}

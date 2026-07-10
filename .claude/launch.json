@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sage-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "Sage-UI-main", "run", "dev", "--", "-p", "3005"],
+      "port": 3005,
+      "autoPort": true
+    },
+    {
+      "name": "sage-deploy-page",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "http-server", "Sage-Solidity-main/deploy", "-p", "4680", "-c-1"],
+      "port": 4680,
+      "autoPort": false
+    },
+    {
+      "name": "arlocal",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "arlocal", "1984"],
+      "port": 1984,
+      "autoPort": false
+    }
+  ]
+}

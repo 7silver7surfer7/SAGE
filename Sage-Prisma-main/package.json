@@ -1,0 +1,30 @@
+{
+  "name": "memex-prisma",
+  "version": "1.0.0",
+  "description": "Internal package for sharing the Prisma client across projects.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "db:introspect": "dotenv -- prisma introspect",
+    "db:generate": "dotenv -- prisma generate",
+    "postinstall": "tsc && cp src/index.d.ts dist/index.d.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SageDAO/MemeX-Prisma.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/SageDAO/MemeX-Prisma/issues"
+  },
+  "homepage": "https://github.com/SageDAO/MemeX-Prisma#readme",
+  "dependencies": {
+    "@prisma/client": "^3.11.1"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^5.1.0",
+    "prisma": "^3.11.1",
+    "typescript": "^4.6.3"
+  }
+}

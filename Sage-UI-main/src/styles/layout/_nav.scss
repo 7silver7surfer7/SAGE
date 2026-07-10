@@ -1,0 +1,120 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+@use '@/styles/layout/layout' as l;
+.nav {
+  margin-top: 50px;
+  height: 44px;
+  justify-content: center;
+  gap: 20%;
+  display: none;
+  @include b.min-width('medium') {
+    display: flex;
+  }
+  @include m.data-color;
+}
+
+.nav__content {
+  justify-content: center;
+  display: flex;
+}
+
+.nav__wrapper {
+  top: 0;
+  z-index: 998;
+  // position: sticky;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav__menu {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(10px, 0.5vw, 19px);
+  justify-self: center;
+  text-align: center;
+  width: 33%;
+}
+
+.nav__menu-link {
+  @include m.theme() {
+    @include m.noselect;
+    width: clamp(72px, 8.3vw, 102px);
+    font-size: 12px;
+    text-transform: uppercase;
+    cursor: pointer;
+    background: transparent;
+    color: inherit;
+    letter-spacing: 0.15em;
+    position: relative;
+    // @include m.disable;
+  }
+}
+
+.nav__content {
+  margin-left: auto;
+  margin-right: auto;
+  display: flex;
+  @include m.desktop-width;
+}
+
+.nav__personal {
+  // position: absolute;
+  // left: 10vw;
+  // top: -50%;
+  // overflow: visible;
+  // display: flex;
+  // align-items: center;
+  // // gap: 10px;
+  // // width: 240px;
+  width: 33%;
+  // white-space: no-wrap;
+  // line-height: 44px;
+}
+
+.nav__personal-pfp-container {
+  @include m.theme() {
+    position: relative;
+    width: 70px;
+    height: 70px;
+    border-radius: 100%;
+    overflow: hidden;
+    background-color: m.t(contrast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    @include m.interact() {
+      .nav__personal-pfp-src {
+        transition: 200ms;
+        transform: scale(1.03);
+      }
+    }
+  }
+}
+
+.nav__personal-message {
+  text-transform: capitalize;
+  font-style: normal;
+  font-weight: 400;
+  font-size: clamp(12px, 0.7vw, 14px);
+  line-height: 100%;
+  flex: 1;
+  letter-spacing: 0.1em;
+}
+
+.nav__search {
+  width: 33%;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.nav__search-wrapper {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: max(200px, 50%);
+}

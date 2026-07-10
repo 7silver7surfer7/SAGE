@@ -1,0 +1,182 @@
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/breakpoints' as b;
+
+// UTILS
+.submissions-page__emphasis {
+  // font-style: italic;
+}
+
+// ----------------------------------------------- * //
+
+.submissions-page {
+  @include m.page;
+  margin-bottom: 10vh;
+}
+
+.submissions-page__logotype-container {
+  @include m.standard-width;
+}
+
+.submissions-page__header {
+  @include m.theme() {
+    color: m.t(contrast);
+    @include m.text-h1;
+    @include m.standard-width;
+  }
+}
+
+.submissions-page__main {
+  display: flex;
+  @include m.standard-width;
+  flex-direction: column;
+  @include b.min-width('medium') {
+    flex-direction: row;
+  }
+}
+
+.submissions-page__main-left {
+  display: flex;
+  gap: clamp(24px, 10vw, 79px);
+  flex-direction: column;
+  @include m.mobile-width;
+  @include b.min-width('medium') {
+    flex: 1;
+  }
+}
+
+.privacy-page__main-left {
+  display: flex;
+  gap: clamp(24px, 10vw, 79px);
+  flex-direction: column;
+  @include m.mobile-width;
+  @include b.min-width('medium') {
+    // width: 50%;
+  }
+}
+
+.submissions-page__main-right {
+  position: relative;
+  display: flex;
+  justify-content: end;
+  flex: 1;
+}
+
+.submissions-page__big-logo {
+  @include m.theme {
+    top: 0;
+    aspect-ratio: 373/1167;
+    width: 300px;
+    height: 600px;
+    color: m.t(base2);
+    align-items: flex-end;
+    display: none;
+    @include m.mobile-width;
+    @include b.min-width('medium') {
+      display: flex;
+      width: 300px;
+    }
+  }
+}
+
+.submissions-page__guidelines-group {
+  gap: 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.submissions-page__guidelines-header {
+  font-style: normal;
+  font-weight: 600;
+  font-size: clamp(16px, 2.5vw, 20px);
+  line-height: 130%;
+  text-transform: capitalize;
+}
+
+.submissions-page__guidelines-text {
+  @include m.theme() {
+    @include m.text-p1;
+    @include m.flex-col;
+    gap: 10px;
+    color: m.t(contrast2);
+  }
+}
+
+.submissions-page__guidelines-list {
+  @include m.flex-col;
+  gap: 10px;
+  list-style-type: circle;
+  padding: 20px;
+
+  li {
+    @include m.text-p1;
+  }
+}
+
+.submissions-page__aspect-ratios-section {
+  display: flex;
+  gap: clamp(20px, 5vw, 55px);
+  justify-content: center;
+}
+
+.submissions-page__aspect-ratios-group {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+@mixin aspect-ratio-examples {
+  @include m.theme() {
+    background-color: m.t(contrast2);
+  }
+}
+
+.submissions-page__aspect-ratios-example {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.submissions-page__aspect-ratios-1-1 {
+  aspect-ratio: 1/1;
+  height: clamp(40px, 15vw, 122px);
+  @include aspect-ratio-examples;
+}
+
+.submissions-page__aspect-ratios-16-9 {
+  aspect-ratio: 16/9;
+  height: clamp(40px, 15vw, 122px);
+  @include aspect-ratio-examples;
+}
+
+.submissions-page__aspect-ratios-9-16 {
+  aspect-ratio: 9/16;
+  width: clamp(40px, 15vw, 122px);
+  @include aspect-ratio-examples;
+}
+
+.submissions-page__aspect-ratios-label {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  font-weight: 600;
+  font-size: clamp(8px, 1vw, 12px);
+  line-height: 130%;
+  letter-spacing: 1px;
+  text-transform: capitalize;
+}
+
+.submissions-page__design-icons {
+  display: flex;
+  gap: 27px;
+  margin: 50px 0 0;
+  align-items: center;
+}
+.submissions-page__design-icons-svg {
+  width: 37px;
+  height: 37px;
+}
+.submissions-page__ {
+}
+.submissions-page__ {
+}

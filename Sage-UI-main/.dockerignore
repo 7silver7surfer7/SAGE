@@ -1,0 +1,11 @@
+# secrets must never enter the build context
+.env
+.env.*
+
+node_modules
+.next
+out
+cypress
+*.log
+.DS_Store
+tsconfig.tsbuildinfo

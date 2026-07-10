@@ -1,0 +1,376 @@
+[
+  {
+    "nfts": [
+      {
+        "name": "nft1",
+        "description": "A Japanese town at night",
+        "numberOfMints": 10,
+        "rarity": "10 Editions | 9.09% Chance",
+        "ipfsPath": "https://bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m.ipfs.dweb.link/nft1.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m/nft1.png",
+        "tags": "Japanese town night"
+      },
+      {
+        "name": "nft2",
+        "description": "A vast starry sky",
+        "numberOfMints": 100,
+        "rarity": "100 Editions | 90.91% Chance",
+        "ipfsPath": "https://bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m.ipfs.dweb.link/nft2.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m/nft2.png",
+        "tags": "starry sky"
+      }
+    ],
+    "uniqueCid": "bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m",
+    "banner": {
+      "ipfsPath": "https://bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m.ipfs.dweb.link/banner.png",
+      "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m/banner.png",
+      "fileName": "banner.png",
+      "name": "banner"
+    },
+    "bannerImageIpfsPath": "https://bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m.ipfs.dweb.link/banner.png",
+    "bannerImageS3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m/banner.png",
+    "bannerImageName": "banner",
+    "metadataIpfsPath": "https://bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m.ipfs.dweb.link/metadata.json",
+    "metadataS3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiadsplyerqnpfl4foj756bnrfo7m6bxbvcmx7ogjgn6j6s5zq6m2m/metadata.json",
+    "metadata": {
+      "status": "planned",
+      "entryFee": 1,
+      "lotteryId": 7,
+      "lotSize": 2,
+      "costPerTicket": 1,
+      "startTime": "1628604156000",
+      "endTime": "1628690556000",
+      "artistName": "dtoc",
+      "dropName": "dtoc-drop2",
+      "dropDescription": "someDescription",
+      "numberOfNftsInDrop": 2,
+      "tags": "dtoc dtoc-drop2",
+      "nft1": {
+        "name": "Japanese town at night",
+        "description": "A Japanese town at night",
+        "numberOfMints": 10,
+        "tags": "Japanese town night"
+      },
+      "nft2": {
+        "name": "Starry Sky",
+        "description": "A vast starry sky",
+        "numberOfMints": 100,
+        "tags": "starry sky"
+      }
+    },
+    "lotteryId": 7,
+    "costPerTicket": 1,
+    "startTime": "1628604156000",
+    "endTime": "1628690556000",
+    "artistName": "dtoc",
+    "dropName": "dtoc-drop2",
+    "dropDescription": "someDescription",
+    "numberOfNftsInDrop": 2,
+    "tags": "dtoc dtoc-drop2",
+    "prizeMetadataCid": "bafybeib7gfnnfcgosajqigm5zwsjt5jcpc5udkd3w7niaa4cpx4x5rcf5m",
+    "prizes": 2
+  },
+  {
+    "nfts": [
+      {
+        "name": "nft1",
+        "description": "A Japanese town at night",
+        "numberOfMints": 10,
+        "rarity": "10 Editions | 0.9% Chance",
+        "ipfsPath": "https://bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji.ipfs.dweb.link/nft1.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji/nft1.png",
+        "tags": "Japanese town night"
+      },
+      {
+        "name": "nft2",
+        "description": "A vast starry sky",
+        "numberOfMints": 100,
+        "rarity": "100 Editions | 9.01% Chance",
+        "ipfsPath": "https://bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji.ipfs.dweb.link/nft2.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji/nft2.png",
+        "tags": "starry sky"
+      },
+      {
+        "name": "nft3",
+        "description": "A picture of someone's iris",
+        "numberOfMints": 1000,
+        "rarity": "1000 Editions | 90.09% Chance",
+        "ipfsPath": "https://bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji.ipfs.dweb.link/nft3.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji/nft3.png",
+        "tags": "iris"
+      }
+    ],
+    "uniqueCid": "bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji",
+    "banner": {
+      "ipfsPath": "https://bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji.ipfs.dweb.link/banner.png",
+      "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji/banner.png",
+      "fileName": "banner.png",
+      "name": "banner"
+    },
+    "bannerImageIpfsPath": "https://bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji.ipfs.dweb.link/banner.png",
+    "bannerImageS3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji/banner.png",
+    "bannerImageName": "banner",
+    "metadataIpfsPath": "https://bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji.ipfs.dweb.link/metadata.json",
+    "metadataS3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeiarfhqyvgymx6zdiwremflw4qocxwocjqcm2yxo3zrj7ezx4hdjji/metadata.json",
+    "metadata": {
+      "status": "planned",
+      "entryFee": 1,
+      "lotteryId": 456,
+      "lotSize": 2,
+      "costPerTicket": 1,
+      "startTime": "1628604156000",
+      "endTime": "1629146089000",
+      "artistName": "otherArtist",
+      "dropName": "otherArtistDrop",
+      "dropDescription": "someDescription",
+      "numberOfNftsInDrop": 3,
+      "tags": "otherArtist otherArtistDrop",
+      "nft1": {
+        "name": "Japanese town at night",
+        "description": "A Japanese town at night",
+        "numberOfMints": 10,
+        "tags": "Japanese town night"
+      },
+      "nft2": {
+        "name": "Starry Sky",
+        "description": "A vast starry sky",
+        "numberOfMints": 100,
+        "tags": "starry sky"
+      },
+      "nft3": {
+        "name": "Iris",
+        "description": "A picture of someone's iris",
+        "numberOfMints": 1000,
+        "tags": "iris"
+      }
+    },
+    "lotteryId": 456,
+    "costPerTicket": 1,
+    "startTime": "1628604156000",
+    "endTime": "1629146089000",
+    "artistName": "otherArtist",
+    "dropName": "otherArtistDrop",
+    "dropDescription": "someDescription",
+    "numberOfNftsInDrop": 3,
+    "tags": "otherArtist otherArtistDrop",
+    "prizeMetadataCid": "bafybeienwiuq4wml4rlvttu5eb5njiicnkmjq6w32bmjwhvcadkbu6mhbm",
+    "prizes": 3
+  },
+  {
+    "nfts": [
+      {
+        "name": "nft1",
+        "description": "A Japanese town at night",
+        "numberOfMints": 1,
+        "rarity": "1 Edition | 0.01% Chance",
+        "ipfsPath": "https://bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm.ipfs.dweb.link/nft1.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm/nft1.png",
+        "tags": "Japanese town night"
+      },
+      {
+        "name": "nft2",
+        "description": "A vast starry sky",
+        "numberOfMints": 10,
+        "rarity": "10 Editions | 0.09% Chance",
+        "ipfsPath": "https://bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm.ipfs.dweb.link/nft2.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm/nft2.png",
+        "tags": "starry sky"
+      },
+      {
+        "name": "nft3",
+        "description": "A picture of someone's iris",
+        "numberOfMints": 100,
+        "rarity": "100 Editions | 0.9% Chance",
+        "ipfsPath": "https://bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm.ipfs.dweb.link/nft3.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm/nft3.png",
+        "tags": "iris"
+      },
+      {
+        "name": "nft4",
+        "description": "An assortment of yummy snacks",
+        "numberOfMints": 1000,
+        "rarity": "1000 Editions | 9% Chance",
+        "ipfsPath": "https://bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm.ipfs.dweb.link/nft4.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm/nft4.png",
+        "tags": "snacks"
+      },
+      {
+        "name": "nft5",
+        "description": "A Deer or an antelope?",
+        "numberOfMints": 10000,
+        "rarity": "10000 Editions | 90% Chance",
+        "ipfsPath": "https://bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm.ipfs.dweb.link/nft5.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm/nft5.png",
+        "tags": "deer antelope"
+      }
+    ],
+    "uniqueCid": "bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm",
+    "banner": {
+      "ipfsPath": "https://bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm.ipfs.dweb.link/banner.png",
+      "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm/banner.png",
+      "fileName": "banner.png",
+      "name": "banner"
+    },
+    "bannerImageIpfsPath": "https://bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm.ipfs.dweb.link/banner.png",
+    "bannerImageS3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm/banner.png",
+    "bannerImageName": "banner",
+    "metadataIpfsPath": "https://bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm.ipfs.dweb.link/metadata.json",
+    "metadataS3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeidzkj2byzoo7b57al46qvfnbnikpf6fsmfehicur4dzioxawj5bsm/metadata.json",
+    "metadata": {
+      "status": "planned",
+      "entryFee": 1,
+      "lotteryId": 123,
+      "lotSize": 2,
+      "costPerTicket": 1,
+      "startTime": "1628886889000",
+      "endTime": "1628973289000",
+      "artistName": "anArtist",
+      "dropName": "anArtistDrop",
+      "dropDescription": "someDescription",
+      "numberOfNftsInDrop": 5,
+      "tags": "anArtist anArtistDrop",
+      "nft1": {
+        "name": "Japanese town at night",
+        "description": "A Japanese town at night",
+        "numberOfMints": 1,
+        "tags": "Japanese town night"
+      },
+      "nft2": {
+        "name": "Starry Sky",
+        "description": "A vast starry sky",
+        "numberOfMints": 10,
+        "tags": "starry sky"
+      },
+      "nft3": {
+        "name": "Iris",
+        "description": "A picture of someone's iris",
+        "numberOfMints": 100,
+        "tags": "iris"
+      },
+      "nft4": {
+        "name": "Yummies",
+        "description": "An assortment of yummy snacks",
+        "numberOfMints": 1000,
+        "tags": "snacks"
+      },
+      "nft5": {
+        "name": "Oh Deerie",
+        "description": "A Deer or an antelope?",
+        "numberOfMints": 10000,
+        "tags": "deer antelope"
+      }
+    },
+    "lotteryId": 123,
+    "costPerTicket": 1,
+    "startTime": "1628886889000",
+    "endTime": "1628973289000",
+    "artistName": "anArtist",
+    "dropName": "anArtistDrop",
+    "dropDescription": "someDescription",
+    "numberOfNftsInDrop": 5,
+    "tags": "anArtist anArtistDrop",
+    "prizeMetadataCid": "bafybeiaiual7yxyga7cfoxmdhi6ditir3nhg4uhkjr4fk32mcl35sz4vca",
+    "prizes": 5
+  },
+  {
+    "nfts": [
+      {
+        "name": "nft1",
+        "description": "A Japanese town at night",
+        "numberOfMints": 1,
+        "rarity": "1 Edition | 0.09% Chance",
+        "ipfsPath": "https://bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4.ipfs.dweb.link/nft1.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4/nft1.png",
+        "tags": "Japanese town night"
+      },
+      {
+        "name": "nft2",
+        "description": "A vast starry sky",
+        "numberOfMints": 10,
+        "rarity": "10 Editions | 0.9% Chance",
+        "ipfsPath": "https://bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4.ipfs.dweb.link/nft2.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4/nft2.png",
+        "tags": "starry sky"
+      },
+      {
+        "name": "nft3",
+        "description": "A picture of someone's iris",
+        "numberOfMints": 100,
+        "rarity": "100 Editions | 9% Chance",
+        "ipfsPath": "https://bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4.ipfs.dweb.link/nft3.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4/nft3.png",
+        "tags": "iris"
+      },
+      {
+        "name": "nft4",
+        "description": "An assortment of yummy snacks",
+        "numberOfMints": 1000,
+        "rarity": "1000 Editions | 90.01% Chance",
+        "ipfsPath": "https://bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4.ipfs.dweb.link/nft4.png",
+        "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4/nft4.png",
+        "tags": "snacks"
+      }
+    ],
+    "uniqueCid": "bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4",
+    "banner": {
+      "ipfsPath": "https://bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4.ipfs.dweb.link/banner.png",
+      "s3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4/banner.png",
+      "fileName": "banner.png",
+      "name": "banner"
+    },
+    "bannerImageIpfsPath": "https://bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4.ipfs.dweb.link/banner.png",
+    "bannerImageS3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4/banner.png",
+    "bannerImageName": "banner",
+    "metadataIpfsPath": "https://bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4.ipfs.dweb.link/metadata.json",
+    "metadataS3Path": "https://memex-staging.s3.us-east-2.amazonaws.com/bafybeifohkphvnirspiaj7au7h2jn43z3g5zzhv77iahkg7hmrpig25oq4/metadata.json",
+    "metadata": {
+      "status": "planned",
+      "entryFee": 1,
+      "lotteryId": 234,
+      "lotSize": 2,
+      "costPerTicket": 1,
+      "startTime": "1628604156000",
+      "endTime": "1628690556000",
+      "artistName": "dtoc",
+      "dropName": "dtoc-drop",
+      "dropDescription": "someDescription",
+      "numberOfNftsInDrop": 4,
+      "tags": "dtoc dtoc-drop",
+      "nft1": {
+        "name": "Japanese town at night",
+        "description": "A Japanese town at night",
+        "numberOfMints": 1,
+        "tags": "Japanese town night"
+      },
+      "nft2": {
+        "name": "Starry Sky",
+        "description": "A vast starry sky",
+        "numberOfMints": 10,
+        "tags": "starry sky"
+      },
+      "nft3": {
+        "name": "Iris",
+        "description": "A picture of someone's iris",
+        "numberOfMints": 100,
+        "tags": "iris"
+      },
+      "nft4": {
+        "name": "Yummies",
+        "description": "An assortment of yummy snacks",
+        "numberOfMints": 1000,
+        "tags": "snacks"
+      }
+    },
+    "lotteryId": 234,
+    "costPerTicket": 1,
+    "startTime": "1628604156000",
+    "endTime": "1628690556000",
+    "artistName": "dtoc",
+    "dropName": "dtoc-drop",
+    "dropDescription": "someDescription",
+    "numberOfNftsInDrop": 4,
+    "tags": "dtoc dtoc-drop",
+    "prizeMetadataCid": "bafybeiesaannapcmiztwkxmkmwpqsz6wt5kvebhjvdc5oao7eaiya2523i",
+    "prizes": 4
+  }
+]

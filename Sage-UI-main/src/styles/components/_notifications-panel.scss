@@ -1,0 +1,234 @@
+@use '@/styles/layout/layout' as l;
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.notifications-panel {
+}
+
+.notifications-panel__tab-list {
+  @include m.tabs-list;
+  //   @include m.theme() {
+  //     display: flex;
+  //     gap: 111px;
+  //     padding: 4px 0;
+  //     color: m.t(contrast);
+  //     border-bottom: 2px solid c.$grey;
+  //   }
+}
+
+.notifications-panel__tab-item {
+  @include m.tabs-tab;
+  //   @include m.theme() {
+  //     text-align: left;
+  //     color: m.t(contrast);
+  //     text-transform: uppercase;
+  //     font-style: normal;
+  //     font-size: 20px;
+  //     line-height: 26px;
+  //     font-weight: 600;
+  //     cursor: pointer;
+  //     background: transparent;
+  //   }
+}
+
+.notifications-panel__panels {
+  //   margin-top: 18px;
+  //   min-height: 1000px;
+  @include m.tabs-panels;
+}
+
+@mixin table {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  // margin-top: 18px;
+  //   min-height: 800px;
+}
+
+.notifications-panel__claim-panel {
+  @include table;
+}
+
+.notifications-panel__refunds-panel {
+  @include table;
+}
+
+@mixin claim-prizes-divisions {
+  width: 100%;
+  display: flex;
+
+  th:first-child,
+  td:first-child {
+    width: 50%;
+  }
+  th:nth-child(2),
+  td:nth-child(2) {
+    display: none;
+    @include b.min-width('small') {
+      display: flex;
+      width: 25%;
+    }
+  }
+  th:last-child,
+  td:last-child {
+    text-align: right;
+    width: 50%;
+    @include b.min-width('small') {
+      width: 25%;
+    }
+  }
+}
+
+.notifications-panel__th-row {
+  @include claim-prizes-divisions;
+  @include m.theme() {
+    color: m.t(contrast2);
+  }
+  //   padding: 4px 0;
+}
+
+.notifications-panel__th {
+  @include m.theme() {
+    font-style: normal;
+    font-weight: 400;
+    font-size: 10px;
+    line-height: 12px;
+    color: m.t(cotrast2);
+    text-align: left;
+  }
+}
+
+.notifications-panel__data-list {
+  //   padding: 0 10px;
+  flex: 1;
+  width: 100%;
+
+  @include m.theme() {
+    // background-color: m.t(contrast2);
+    tr {
+      //   border-bottom: 1px solid grey;
+    }
+  }
+}
+
+.notifications-panel__data-row {
+  @include m.theme() {
+    @include claim-prizes-divisions;
+    align-items: center;
+    padding: 5px 0;
+    color: m.t(contrast);
+  }
+}
+
+@mixin td {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 20px;
+  // font-style: normal;
+  // font-weight: 700;
+  // font-size: clamp(8px, 1vw, 14px);
+  // line-height: 18px;
+
+  font-style: normal;
+  font-weight: 400;
+  font-size: clamp(8px, 1vw, 12px);
+  line-height: 1.3em;
+  text-align: center;
+  letter-spacing: 0.1em;
+}
+
+.notifications-panel__td--creation {
+  @include td;
+}
+
+.notifications-panel__td--creation-name {
+  //flex: 0;
+  font-weight: 800;
+}
+
+.notifications-panel__td--date {
+  @include td;
+}
+
+.notifications-panel__td--interact {
+  @include td;
+  justify-content: end;
+  gap: 6px;
+  padding: 0 5px;
+}
+
+.notifications-panel__td--interact-check-svg {
+  @include m.theme() {
+    width: 15px;
+    height: 13px;
+  }
+  &[data-claimed='false'] {
+    * {
+      display: none;
+    }
+  }
+}
+
+.notifications-panel__td-media-container {
+  position: relative;
+  width: 93px;
+  //   height: 50px;
+  aspect-ratio: 93/40;
+  overflow: hidden;
+}
+
+.notifications-panel__interact-button {
+  @include m.theme() {
+    background-color: m.t(accent);
+    text-transform: uppercase;
+    color: m.t(base);
+
+    font-style: normal;
+    font-weight: 400;
+    font-size: clamp(8px, 1vw, 12px);
+    line-height: 136.6%;
+    text-align: center;
+    letter-spacing: 0.2em;
+
+    cursor: pointer;
+    aspect-ratio: 111/29;
+    width: 100px;
+    &:disabled {
+      background-color: m.t(base);
+      color: m.t(contrast);
+      cursor: default;
+    }
+  }
+}
+
+.notifications-panel__pagination {
+  height: 50px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  @include m.noselect;
+}
+
+.notifications-panel__pagination-page {
+  @include m.theme() {
+    background-color: m.t(accent);
+    color: m.t(base);
+    width: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    @include m.circle;
+    @include m.interact;
+  }
+}
+
+.notifications-panel__pagination-page-arrow {
+  padding: 2px;
+  @include m.theme() {
+    @include m.interact;
+    color: m.t(contrast);
+  }
+}

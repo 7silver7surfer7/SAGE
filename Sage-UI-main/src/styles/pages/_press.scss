@@ -1,0 +1,142 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.press-page {
+  @include m.page;
+  padding-bottom: 100px;
+  @include b.min-width(medium) {
+    padding-bottom: 200px;
+  }
+}
+
+.press-page__content {
+  @include m.mobile-width;
+  @include b.min-width('medium') {
+    @include m.desktop-width;
+  }
+}
+
+.press-page__header {
+  @include m.text-h1;
+  text-transform: uppercase;
+  font-weight: 600;
+  text-align: left;
+}
+
+.press-page__assets-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  @include b.min-width('medium') {
+    flex-direction: row;
+    gap: 20px;
+    margin-top: 100px;
+    margin-bottom: 100px;
+  }
+}
+
+.press-page__icons-container {
+  display: flex;
+  gap: 10px;
+  @include b.min-width(medium) {
+    gap: 20px;
+  }
+}
+
+.press-page__logotypes-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  @include b.min-width('medium') {
+    gap: 20px;
+    flex-direction: row;
+  }
+}
+
+@mixin icon-asset {
+  // aspect-ratio: 1/1;
+  width: 50%;
+  svg {
+    width: 100%;
+    height: 100%;
+  }
+  @include b.min-width('medium') {
+    width: 100px;
+  }
+}
+
+@mixin logotype-asset {
+  width: 100%;
+  @include b.min-width('medium') {
+    width: 400px;
+  }
+  aspect-ratio: 4/1;
+  svg {
+    width: 100%;
+    height: 100%;
+  }
+}
+
+.press-page__icon-white {
+  @include icon-asset;
+}
+
+.press-page__icon-black {
+  @include icon-asset;
+}
+
+.press-page__logotype-white {
+  @include logotype-asset;
+}
+
+.press-page__logotype-black {
+  @include logotype-asset;
+}
+.press-page__subheader {
+  margin-top: 30px;
+  text-transform: uppercase;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 130%;
+}
+
+.press-page__subheader-info {
+  margin-top: 10px;
+  max-width: 600px;
+  @include m.text-p1;
+  @include m.theme() {
+    color: m.t(contrast2);
+  }
+}
+
+.press-page__downloads-container {
+  margin-top: 60px;
+  display: flex;
+  gap: 30px;
+  flex-direction: column;
+}
+
+.press-page__download-button {
+  @include m.theme() {
+    @include m.button-base;
+    font-style: normal;
+    font-weight: 400;
+    font-size: 12px;
+    line-height: 14px;
+    text-align: center;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    aspect-ratio: 345/44;
+    background-color: m.t(base);
+    color: m.t(contrast);
+    border: 1px solid m.t(contrast);
+    @include m.transition-base;
+    @include m.interact() {
+      color: m.t(base);
+      background-color: m.t(accent);
+      border: 1px solid m.t(base);
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+    "status": "planned",
+    "lotteryId": 345,
+    "costPerTicketCoins": 1,
+    "costPerTicketPoints": 1,
+    "startTime": "1643050700",
+    "endTime": "1643054299",
+    "artistName": "meme",
+    "bannerImageName": "ummmm",
+    "dropName": "Memeverse Drop #2",
+    "dropDescription": "Drop #2 - 1 prize, 2 mints",
+    "numberOfNftsInDrop": 1,
+    "tags": "meme memeverse monkey laser eyes",
+    "nft1": {
+        "name": "MemeX - 002",
+        "description": "A card featuring a monkey with laser eyes",
+        "numberOfMints": 2,
+        "tags": "Memeverse monkey laser eyes"
+    },
+    "walletAddress": "0x544223D219154D647A4BE47d68820A9171A43e2E"
+}

@@ -1,0 +1,24 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.artist-display {
+  @include m.flex-row;
+  width: 100%;
+  align-items: center;
+  gap: 18px;
+}
+
+.artist-display__pfp-container {
+  @include m.pfp-container;
+  width: 25px;
+  height: 25px;
+}
+
+.artist-display__username {
+  font-size: 10px;
+  line-height: 12px;
+  color: white;
+  @include m.theme() {
+  }
+}

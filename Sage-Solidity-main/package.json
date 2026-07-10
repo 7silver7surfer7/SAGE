@@ -1,0 +1,36 @@
+{
+  "name": "sage",
+  "devDependencies": {
+    "@nomiclabs/hardhat-ethers": "^2.0.6",
+    "@nomiclabs/hardhat-etherscan": "^3.1.8",
+    "@nomiclabs/hardhat-solhint": "^2.0.1",
+    "@nomiclabs/hardhat-waffle": "^2.0.3",
+    "@nomiclabs/hardhat-web3-legacy": "^2.0.0",
+    "@openzeppelin/hardhat-upgrades": "^1.17.0",
+    "@typechain/ethers-v5": "^10.0.0",
+    "@typechain/hardhat": "^6.0.0",
+    "chai": "^4.3.6",
+    "ethereum-waffle": "^3.4.4",
+    "ethers": "^5.5.3",
+    "hardhat": "^2.11.0",
+    "hardhat-gas-reporter": "^1.0.8",
+    "prisma": "^4.4.0",
+    "typechain": "^8.0.0"
+  },
+  "dependencies": {
+    "@chainlink/contracts": "^0.4.1",
+    "@openzeppelin/contracts": "^4.7.3",
+    "@openzeppelin/contracts-upgradeable": "^4.7.3",
+    "@prisma/client": "^4.4.0",
+    "arweave": "^1.11.6",
+    "bignumber": "^1.1.0",
+    "dotenv": "^16.0.1",
+    "glob": "^8.0.3",
+    "jwk-rsa-compute-primes": "^1.0.1",
+    "keccak256": "^1.0.6",
+    "logdna-winston": "^4.0.1",
+    "merkletreejs": "^0.2.31",
+    "nodemailer": "^6.7.7",
+    "winston": "^3.7.2"
+  }
+}

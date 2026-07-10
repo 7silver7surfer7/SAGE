@@ -1,0 +1,39 @@
+@use "./layout" as l;
+.grid-page {
+  flex: 1;
+  padding: 45px l.$indent 0;
+  section#one {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #header {
+    font-weight: 600;
+    size: 19px;
+  }
+
+  #filter {
+    width: 135px;
+    height: 41px;
+    background: #131313;
+    border-radius: 9px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-around;
+    cursor: pointer;
+
+    span {
+      font-weight: 500;
+      font-size: 13px;
+      line-height: 19px;
+    }
+  }
+
+  section#grid {
+    margin-top: 28px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2%;
+  }
+}

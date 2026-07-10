@@ -1,0 +1,21 @@
+{
+  "status": "planned",
+  "lotteryId": 0,
+  "costPerTicketCoins": 1,
+  "costPerTicketPoints": 0.001,
+  "startTime": "1644354579",
+  "endTime": "1644361779",
+  "artistName": "dante",
+  "dropName": "stars",
+  "bannerImageName": "starssssss",
+  "dropDescription": "For my part, I know nothing with any certainty, but the sight of the stars makes me dream.",
+  "walletAddress": "0x58a26F4048CdFd3785aD2139AeD336595af22fF5",
+  "numberOfNftsInDrop": 1,
+  "tags": "stars",
+  "nft1": {
+    "name": "Stars",
+    "description": "A sky as pure as water bathed the stars and brought them out.",
+    "numberOfMints": 10,
+    "tags": "stars"
+  }
+}

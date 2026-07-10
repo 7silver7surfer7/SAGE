@@ -1,0 +1,10 @@
+# secrets must never enter the build context
+.env
+.env.*
+
+node_modules
+artifacts
+cache
+typechain-types
+*.log
+.DS_Store

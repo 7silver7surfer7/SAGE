@@ -1,0 +1,36 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.public-dashboard {
+  @include m.standard-width;
+  @include m.flex-col;
+  min-height: 400px;
+  gap: 40px;
+}
+
+.public-dashboard__action-group {
+  @include m.input-group;
+}
+
+.public-dashboard__input {
+  @include m.input-field;
+  @include m.standard-width;
+  max-width: 500px;
+  flex: none !important;
+}
+
+.public-dashboard__label {
+  @include m.input-label;
+  @include m.standard-width;
+}
+
+.public-dashboard__button {
+  @include m.button-base;
+  @include m.flex-center;
+  &[data-type='promote'] {
+    @include m.theme() {
+      background-color: m.t(accent);
+    }
+  }
+}

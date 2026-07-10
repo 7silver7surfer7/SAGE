@@ -1,0 +1,21 @@
+name: Node.js CI
+
+on:
+  [push]
+env:
+  ENV_FILE: ${{secrets.ENV_FILE}}
+jobs:
+  test:
+
+    runs-on: ubuntu-latest
+  
+    steps:
+    - uses: actions/checkout@v2
+    - run: echo "$ENV_FILE"  | base64 -d > .env
+    - name: Use Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: 16.x
+        cache: 'npm'
+    - run: npm install
+    - run: npx hardhat test --network hardhat

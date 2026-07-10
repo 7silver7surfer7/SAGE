@@ -1,0 +1,44 @@
+@use '@/styles/abstracts/colors' as c;
+
+.artist-tag {
+  display: flex;
+  background-color: c.$box-black;
+  border-radius: 1000px;
+  padding: 12px;
+  cursor: pointer;
+	width: min-content;
+	height: min-content;
+}
+
+.artist-tag__pfp {
+  position: relative;
+  border-radius: 100%;
+  overflow: hidden;
+  height: 40px;
+  aspect-ratio: 1/1;
+}
+
+.artist-tag__handles {
+  margin-left: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+}
+
+.artist-tag__name {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 17px;
+  color: #ffffff;
+}
+
+.artist-tag__username {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 17px;
+  /* identical to box height, or 131% */
+  /* Grey-60 */
+  color: rgba(196, 196, 196, 0.6);
+}

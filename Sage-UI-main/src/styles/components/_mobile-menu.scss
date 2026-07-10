@@ -1,0 +1,223 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+$menu-z: 996;
+$menu-toggle-z: $menu-z + 1;
+
+.mobile-menu {
+  overflow-y: auto;
+  position: absolute;
+  padding: 0px 10vw 0px;
+  width: 80vw;
+  height: 100vh;
+  z-index: $menu-z;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  @include m.theme() {
+    background-color: m.t(base);
+  }
+
+  transform: translateY(-100%);
+  &[data-is-open='true'] {
+    transform: translateY(0%);
+  }
+  transition-duration: 260ms;
+}
+
+.mobile-menu__logotype {
+  margin-top: 95px;
+  width: 100%;
+}
+
+.mobile-menu__nav {
+  width: 100%;
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+
+  @include m.theme() {
+    color: m.t(contrast2);
+  }
+}
+
+.mobile-menu__connect {
+  width: 100%;
+  margin-top: auto;
+  padding-top: 24px;
+  padding-bottom: 40px;
+  display: flex;
+  justify-content: flex-start;
+  @include m.theme() {
+    color: m.t(contrast);
+    border-top: 1px solid rgba(m.t(contrast), 0.15);
+  }
+}
+
+.mobile-menu__nav-item {
+  @include m.theme() {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 4px 0px;
+    font-style: normal;
+    font-weight: 400;
+    font-size: 24px;
+    text-transform: uppercase;
+    line-height: 30px;
+    letter-spacing: 0.1em;
+
+    position: relative;
+    color: m.t(contrast2);
+
+    &:after {
+      transition-duration: 200ms;
+      opacity: 0;
+      content: '';
+      width: 10px;
+      height: 10px;
+      @include m.circle;
+      background-color: m.t(accent);
+      position: absolute;
+      transform: translateX(-50%);
+      left: -5vw;
+    }
+
+    &[data-is-current='true'] {
+      &:after {
+        opacity: 1;
+        @include m.animate-pulse;
+      }
+    }
+
+    @include m.interact() {
+      background-color: m.t(base2);
+    }
+  }
+}
+
+// -------------------------------- Menu Toggle ---------------------------
+
+.mobile-menu__toggle {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  right: 40px;
+  top: 40px;
+  @include m.interact;
+  transition-duration: 1000ms;
+  z-index: $menu-toggle-z;
+}
+
+.mobile-menu__toggle-inner {
+  width: 20px;
+  height: 15px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+@mixin toggle-line {
+  transition-duration: 300ms;
+  transition-timing-function: ease-out;
+  position: absolute;
+  width: 20px;
+  height: 3px;
+  @include m.theme() {
+    background-color: m.t(contrast);
+  }
+  @include m.data-bg-color;
+}
+
+.mobile-menu__toggle-line1 {
+  @include toggle-line;
+  transition-delay: 80ms;
+  &[data-is-open='false'] {
+    transform: rotate(90deg);
+  }
+}
+
+.mobile-menu__toggle-line2 {
+  @include toggle-line;
+  transition-delay: 80ms;
+  top: 0;
+  &[data-is-open='false'] {
+    top: initial;
+    transform: rotate(90deg) translateY(-6px);
+  }
+}
+
+.mobile-menu__toggle-line3 {
+  @include toggle-line;
+  transition-delay: 60ms;
+  bottom: 0;
+  &[data-is-open='false'] {
+    bottom: initial;
+    transform: rotate(90deg) translateY(6px);
+  }
+}
+
+.mobile-menu__socials {
+  margin-top: auto;
+  gap: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-transform: uppercase;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+}
+
+.mobile-menu__socials-header {
+  font-size: 14px;
+  line-height: 17px;
+}
+
+.mobile-menu__socials-icons {
+}
+
+.mobile-menu__copyright {
+  margin-top: 4px;
+  margin-bottom: 16px;
+  font-weight: 400;
+  font-size: 5px;
+  line-height: 6px;
+
+  letter-spacing: 0.1em;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+  margin-bottom: 8vh;
+  @include b.min-width('small') {
+    // min-height: 20vh;
+    margin-bottom: 0;
+  }
+}
+
+.mobile-menu__ash-price-container-wrapper {
+  width: 100vw;
+  top: 40px;
+  position: relative;
+  @include m.mobile-width;
+}
+
+.mobile-menu__ash-price-container {
+  width: clamp(60px, 10vw, 100px);
+  // transform: translateX(-10%);
+  // left:vw;
+  position: absolute;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.3;
+  }
+}

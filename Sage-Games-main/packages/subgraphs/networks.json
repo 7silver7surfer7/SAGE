@@ -1,0 +1,13 @@
+{
+  "goerli": {
+    "lottery": {
+      "address": "0xa3219F75fb49F0Ee7376511e7104ca61db3bb974"
+    },
+    "auction": {
+      "address": "0x18e981161b2021392B3F2D844793eE50A52f8232"
+    },
+    "marketplace": {
+      "address": "0x40DC903878049BF2ca14E43eD422b9947c97bBD9"
+    }
+  }
+}

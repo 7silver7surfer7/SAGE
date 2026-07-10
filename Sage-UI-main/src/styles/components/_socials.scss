@@ -1,0 +1,14 @@
+@use '@/styles/abstracts/mixins' as m;
+
+.socials {
+  display: flex;
+  gap: 16px;
+}
+
+.socials__icon {
+  @include m.interact;
+  @include m.theme() {
+		color: m.t(contrast);
+  }
+	padding: 4px;
+}

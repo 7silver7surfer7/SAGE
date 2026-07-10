@@ -1,0 +1,238 @@
+@use '@/styles/layout/layout' as l;
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.game-page {
+  padding: 43px l.$indent;
+
+  .game__main {
+    display: flex;
+    gap: 60px;
+    flex-direction: column;
+    @include b.min-width('xl') {
+      flex-direction: row;
+    }
+  }
+
+  .game__nft-display {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 650/816;
+    border-radius: 1em;
+    overflow: hidden;
+    @include b.min-width('medium') {
+      aspect-ratio: 650/400;
+    }
+    @include b.min-width('xl') {
+      // width: max(300px, 30vw);
+			width: 550px;
+			height: 640px;
+      aspect-ratio: 650/816;
+    }
+  }
+
+  .game__content {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+    flex: 1;
+  }
+
+  .nft__header {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 0 0 10px;
+  }
+
+  .nft__name {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 25px;
+    line-height: 39px;
+    color: #ffffff;
+  }
+
+  .nft__subheader {
+    display: flex;
+    gap: 8px;
+  }
+
+  .nft__editions {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 19px;
+    color: c.$purple-light;
+  }
+
+  .nft__divider {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 19px;
+    color: #6f767e;
+  }
+
+  .nft__drop-name {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 19px;
+    color: #6f767e;
+  }
+
+  .game-info {
+    display: flex;
+    flex-direction: column;
+    padding: 30px;
+    background: #131314;
+    box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.2);
+    border-radius: 18px;
+  }
+
+  .game-info__tab-list {
+    display: flex;
+  }
+
+  .game-info__tab {
+    @include m.interact;
+    font-style: normal;
+    font-weight: 500;
+    font-size: 13px;
+    line-height: 29px;
+
+    padding: 0 10px;
+    height: 29px;
+    border-bottom: 2px solid gray;
+    color: #6f767e;
+    transition-duration: 200ms;
+    outline: none;
+
+    &--active {
+      color: #ffffff;
+      border-bottom: 2px solid white;
+    }
+  }
+
+  .game-info__tab-panels-container {
+    margin-top: 30px;
+  }
+
+  .game-info__tab-panel {
+    opacity: 0;
+    transition-duration: 200ms;
+
+    &--active {
+      opacity: 1;
+    }
+  }
+
+  .game-info__bid-history-table {
+    margin-top: 30px;
+    table-layout: fixed;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    text-align: left;
+    gap: 14px;
+  }
+
+  .game-info__bid-history-filters {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .game-info__bid-history-selections {
+    display: flex;
+  }
+
+  .game-info__bid-history-body {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  @mixin game-info__bid-history-row {
+    display: flex;
+    gap: 30px;
+    width: 100%;
+    //bid-history-table column widths
+
+    & * {
+      display: flex;
+      align-items: center;
+      &[data-col='time'] {
+        width: 40%;
+      }
+      &[data-col='bidder'] {
+        flex: 1;
+      }
+      &[data-col='amount'] {
+        width: 20%;
+        text-align: right;
+        display: flex;
+        justify-content: flex-end;
+      }
+    }
+  }
+
+  .game-info__bid-history-header {
+    @include game-info__bid-history-row;
+    border-bottom: 1px solid c.$bg-base;
+    padding-bottom: 12px;
+  }
+
+  .game-info__bid-history-item {
+    @include game-info__bid-history-row;
+    @include m.hover {
+      background-color: c.$bg-base;
+    }
+
+    &[data-animate-first='true'] {
+      &:nth-child(1) {
+        @include m.animate-highlight;
+      }
+    }
+
+    cursor: default;
+    padding: 10px 4px;
+  }
+
+  .game-info__about {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: 14px;
+  }
+
+  .game-info__about-drop-title {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 19px;
+    line-height: 29px;
+    /* identical to box height, or 153% */
+
+    color: #ffffff;
+  }
+
+  .game-info__about-drop-description {
+    font-style: normal;
+    font-weight: 400;
+    font-size: 13px;
+    line-height: 21px;
+
+    color: #6f767e;
+  }
+
+  .game-info__about-drop-link {
+    font-style: normal;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 17px;
+    color: #ffffff;
+    cursor: pointer;
+  }
+}

@@ -1,0 +1,33 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+$indent: max(1em, 10vw);
+
+.layout {
+  @include m.theme() {
+    display: flex;
+    flex-direction: column;
+    perspective: 10px;
+    height: 100vh;
+    width: 100vw;
+    overflow: overlay;
+    overflow-x: hidden;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
+    background-color: m.t('base');
+    // ambient brand glow — keeps large empty areas from feeling flat
+    background-image: radial-gradient(
+        ellipse 80% 50% at 20% -10%,
+        rgba(m.t('accent'), 0.08),
+        transparent 60%
+      ),
+      radial-gradient(ellipse 60% 40% at 90% 110%, rgba(m.t('accent'), 0.05), transparent 60%);
+    background-attachment: fixed;
+    color: m.t('contrast');
+    @include m.no-scrollbar;
+    @include b.min-width(medium) {
+      @include m.custom-scrollbar;
+    }
+  }
+}

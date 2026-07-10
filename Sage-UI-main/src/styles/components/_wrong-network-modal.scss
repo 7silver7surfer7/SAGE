@@ -1,0 +1,21 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+
+.wrong-network-modal {
+  padding: 20px;
+  gap: 20px;
+  @include m.flex-col;
+  @include m.flex-center;
+}
+
+.wrong-network-modal__button {
+  @include m.theme() {
+    @include m.button-base;
+    color: m.t(base);
+    background-color: m.t(accent);
+  }
+}
+
+.wrong-network-modal__text {
+  @include m.text-p4;
+}

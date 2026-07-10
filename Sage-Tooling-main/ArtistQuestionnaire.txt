@@ -1,0 +1,19 @@
+Instructions: Answers can be in a text file. 
+
+General:
+
+1) What is the artist's name?
+2) What is the drop's name?
+3) Please include the drop's banner image if there is one.
+4) How many days do you want the drop to be live?
+5) How many pinas should a ticket cost? (Default: 1)
+6) Which wallet address should we associate with the NFTs?
+
+For each NFT in drop:
+
+A) What is the NFT's name?
+B) What is the NFT's description?
+C) How many times can this NFT be minted?
+D) Image - please provide each NFT's image - .jpg, .png supported formats. .mp4s are also supported.
+
+Please title your nft images as nft1, nft2, etc, for the desired order.

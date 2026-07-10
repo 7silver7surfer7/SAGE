@@ -1,0 +1,227 @@
+@use '@/styles/layout/layout' as l;
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.profile-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 23px;
+  width: 100%;
+  @include b.min-width('medium') {
+    width: 800px;
+  }
+}
+
+.profile-panel__pfp-group {
+  @include m.input-group;
+  gap: 25px;
+}
+
+.profile-panel__pfp-label {
+  @include m.input-label;
+}
+
+.profile-panel__uploads {
+  align-items: flex-end;
+  @include m.flex-row;
+  gap: 51px;
+}
+
+.profile-panel__banner-group {
+  @include m.input-group;
+  gap: 25px;
+  width: 70%;
+  flex: 1;
+}
+
+.profile-panel__banner-container {
+  aspect-ratio: 739/345;
+  width: 100%;
+  // height: 245px;
+  // flex: 1;
+}
+
+.profile-panel__pfp-container {
+  //   width: 100px;
+  aspect-ratio: 1/1;
+  width: 100px;
+  height: 100px;
+  background-color: c.$grey;
+  @include m.pfp-container;
+}
+
+.profile-panel__pfp-label {
+  @include m.input-label;
+}
+
+.profile-panel__email-group {
+  @include m.input-group;
+}
+
+.profile-panel__email-label {
+  @include m.input-label;
+}
+.profile-panel__email-field {
+  @include m.input-field;
+}
+
+.profile-panel__country-group {
+  @include m.input-group;
+}
+
+.profile-panel__country-select {
+  @include m.input-select {
+  }
+}
+
+.profile-panel__state-group {
+  @include m.input-group;
+}
+
+.profile-panel__state-select {
+  @include m.input-select {
+  }
+}
+
+.profile-panel__username-group {
+  @include m.input-group;
+}
+
+.profile-panel__username-label {
+  @include m.input-label;
+}
+.profile-panel__username-field {
+  margin-top: 62px;
+  @include m.input-field;
+}
+
+.profile-panel__bio-group {
+  @include m.input-group;
+  flex: 1;
+}
+
+.profile-panel__bio-label {
+  @include m.input-label;
+}
+
+.profile-panel__bio-field {
+  @include m.theme {
+    background: transparent;
+    padding: 2px 10px;
+    color: m.t(contrast);
+    border: 1px solid #696969;
+    line-height: 1.6em;
+    display: flex;
+    flex: 1;
+    min-height: 211px;
+  }
+}
+
+.profile-panel__socials-group {
+  @include m.input-group;
+  flex-wrap: wrap;
+}
+
+.profile-panel__socials-label {
+  @include m.input-label;
+}
+
+.profile-panel__socials-field-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px 20px;
+}
+.profile-panel__socials-field {
+  @include m.theme() {
+    color: #696969;
+    width: 24px;
+    height: 24px;
+    @include m.interact;
+    &[data-linked='true'] {
+      color: m.t(accent);
+    }
+  }
+}
+
+.profile-panel__upload-artist-banner-container {
+  @include m.theme() {
+    position: relative;
+    border: 1px solid m.t(contrast2);
+    width: 100%;
+    aspect-ratio: 709/740;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.profile-panel__upload-artist-banner-input {
+  width: 100%;
+  height: 100%;
+  z-index: 999;
+  position: absolute;
+  cursor: pointer;
+}
+
+.profile-panel__upload-artist-banner-plus-svg {
+  @include m.theme() {
+    position: absolute;
+    color: m.t(contrast2);
+    width: 40px;
+    height: 40px;
+  }
+}
+
+.profile-panel__save-button {
+  margin: 60px 0;
+  @include m.button-base;
+  min-height: 40px;
+  @include m.theme() {
+    background-color: m.t(accent);
+    color: m.t(base2);
+  }
+}
+
+.profile-panel__file-upload-group {
+  @include m.input-group;
+}
+
+.profile-panel__file-upload-field-wrapper {
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition-duration: 200ms;
+  // width: 100%;
+  aspect-ratio: 851/420;
+  @include m.theme() {
+    background-color: m.t(base2);
+    border: 1px solid m.t(contrast2);
+  }
+  @include m.interact;
+}
+
+.profile-panel__file-upload-field {
+  @include m.interact;
+  height: 100%;
+  position: absolute;
+  z-index: 2;
+}
+
+.profile-panel__file-upload-plus-icon {
+  position: absolute;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+}
+
+.profile-panel__file-upload-label {
+  @include m.input-label;
+}
+
+//---------------------------Profile Panel--------------------------------

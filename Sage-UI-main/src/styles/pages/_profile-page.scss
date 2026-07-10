@@ -1,0 +1,327 @@
+@use '@/styles/layout/layout' as l;
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+// ------------------------ local mixins ----------------------------------
+@mixin group {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+@mixin balance-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@mixin balance-value {
+  font-style: normal;
+  font-weight: 400;
+  font-size: clamp(32px, 4vw, 60px);
+  // line-height: clamp(32px, 1em, 78px);
+
+  @include m.theme() {
+    color: m.t(contrast2);
+  }
+}
+
+@mixin balance-label {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 19px;
+  text-transform: capitalize;
+
+  @include m.theme() {
+    color: m.t(contrast2);
+  }
+}
+// ------------------------ local mixins ----------------------------------
+
+.profile-page {
+  // text-transform: uppercase;
+  @include m.page;
+  align-items: center;
+  flex: 1;
+}
+
+.profile-page__upper {
+  @include m.standard-width;
+  display: flex;
+  align-items: flex-start;
+  // flex-wrap: wrap;
+  gap: 50px;
+  flex-direction: column;
+  @include b.min-width('medium') {
+    flex-direction: row;
+  }
+}
+
+.profile-page__header {
+  @include m.text-h1;
+  @include m.standard-width;
+}
+
+.profile-page__main {
+  gap: 30px 0px;
+  @include m.standard-width;
+  flex-wrap: wrap;
+  margin-left: auto;
+  margin-right: auto;
+  flex-direction: row;
+  display: flex;
+}
+
+.profile-page__left {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  padding-right: 20px;
+  width: 100%;
+  @include b.min-width('medium') {
+    width: 250px;
+  }
+}
+
+.profile-page__logotype-container {
+  width: 25vw;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.profile-page__sage-logo-svg {
+  @include m.theme {
+    // width: 243px;
+    // height: 56px;
+    // @include m.interact;
+    // transition-duration: 200ms;
+    // @include b.min-width('medium') {
+    //   width: 25vw;
+    //   background-color: #696969;
+    //   display: flex;
+    //   justify-content: flex-start;
+    // }
+
+    color: m.t(contrast2);
+    height: 10vw;
+    width: 40vw;
+    @include m.data-color;
+    @include b.min-width('medium') {
+      height: 4.9vw;
+      width: min(19.6vw, 236px);
+    }
+  }
+}
+
+.profile-page__menu {
+  @include group;
+}
+
+.profile-page__pfp-container {
+  position: relative;
+  background-color: grey;
+  width: 40px;
+  overflow: hidden;
+  @include m.pfp-container;
+}
+
+.profile-page__pfp-section {
+  @include m.flex-row;
+  cursor: pointer;
+  @include m.theme() {
+    color: inherit;
+    gap: 10px;
+    align-items: center;
+  }
+}
+
+.profile-page__pfp-section-username {
+  @include m.text-h3;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.profile-page__pfp-section-role {
+  @include m.theme {
+    background-color: m.t(contrast);
+    color: m.t(base);
+    @include m.pill;
+    @include m.flex-row;
+    @include m.flex-center;
+    @include m.text-tag;
+    width: min-content;
+    text-align: center;
+    padding: 2px 8px;
+    text-transform: uppercase;
+  }
+}
+
+.profile-page__delete-profile-section {
+  margin-top: 100px;
+  display: flex;
+  align-items: center;
+}
+
+.profile-page__delete-profile-info {
+  width: 50%;
+  @include m.text-p4;
+}
+
+.profile-page__delete-profile-button {
+  @include m.theme() {
+    @include m.button-base;
+    // width: max-content;
+    background-color: transparent;
+    color: m.t(contrast);
+    // border: 1px solid m.t(contrast);
+    @include m.text-p4;
+  }
+}
+
+.profile-page__tabs {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  @include b.min-width('medium') {
+    width: 70%;
+  }
+}
+
+@mixin menu-tab {
+  padding: 0 8px;
+  @include m.text-p3;
+  display: flex;
+  gap: min(20px, 1.5vw);
+  text-transform: uppercase;
+  line-height: 30px;
+  transition-duration: 20ms;
+  outline: none;
+  text-align: left;
+  background-color: transparent;
+  align-items: center;
+  @include m.noselect;
+  position: relative;
+  @include m.interact;
+  @include b.min-width('medium') {
+    padding: 0px 16px;
+  }
+}
+
+.profile-page__tabs-tab {
+  @include menu-tab;
+  @include m.theme() {
+    color: m.t(contrast);
+    &--selected {
+      &:after {
+        content: '';
+        width: 10px;
+        height: 10px;
+        @include m.circle;
+        position: absolute;
+        background-color: m.t(accent);
+        left: -5%;
+        @include m.animate-pulse;
+      }
+    }
+  }
+}
+
+.profile-page__log-out-btn {
+  margin-top: 50px;
+  @include menu-tab;
+  color: #696969;
+  border: 1px solid #696969;
+  width: max-content;
+}
+
+.profile-page__tabs-tab-notifications-counter {
+  @include m.theme() {
+    flex: 0;
+    font-size: 12px;
+    color: m.t(base);
+    font-weight: 600;
+    border-radius: 1000px;
+    line-height: 1.2em;
+    padding: 0 10px;
+    background-color: m.t(accent);
+  }
+}
+
+.profile-page__main {
+  flex: 1;
+  display: flex;
+  // flex-direction: column;
+  gap: 60px;
+  margin-top: 213px;
+}
+
+.profile-page__right {
+  flex: 1;
+  display: flex;
+  // width: 100%;
+}
+
+.profile-page__balances {
+  // margin-top: 25px;
+  max-width: 80vw;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(20px, 5vw, 160px);
+  @include b.min-width('small') {
+    flex-direction: row;
+    width: 50vw;
+  }
+}
+
+.profile-page__balances-points {
+  flex: 1;
+  @include balance-group;
+}
+
+.profile-page__balances-points-value {
+  @include balance-value;
+}
+
+.profile-page__balances-points-label {
+  @include balance-label;
+}
+
+.profile-page__balances-token {
+  @include balance-group;
+}
+
+.profile-page__balances-token-value {
+  @include balance-value;
+}
+
+.profile-page__balances-token-label {
+  @include balance-label;
+}
+
+// .profile-page__tabs-panels {
+//   display: flex;
+//   max-width: 80vw;
+//   min-height: 50vh;
+//   background-color: red;
+// }
+
+.profile-page__tabs-panel {
+  display: flex;
+  min-height: 60vh;
+  flex-direction: column;
+  gap: 45px;
+  // max-width: 863px;
+  width: 0;
+  &--selected {
+    @include m.mobile-width;
+    @include b.min-width('medium') {
+      // width: 803px;
+    }
+  }
+}
+
+//---------------------------Profile Panel--------------------------------
+
+// ------------------------ notificattions panel ----------------------------------

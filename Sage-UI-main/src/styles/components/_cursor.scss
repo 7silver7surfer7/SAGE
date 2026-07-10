@@ -1,0 +1,28 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.cursor {
+  @include m.theme() {
+    pointer-events: none;
+    will-change: transform;
+    width: 16px;
+    aspect-ratio: 1/1;
+    position: absolute;
+    backdrop-filter: invert(100%);
+    border-radius: 100%;
+    z-index: 999;
+    border: 1px solid m.t(contrast);
+    transition-duration: 200ms;
+    transition-timing-function: ease-out;
+    background-color: m.t(base);
+    &[data='link'] {
+      width: 40px;
+    }
+
+    display: none;
+    @include b.min-width('medium') {
+      display: flex;
+    }
+  }
+}

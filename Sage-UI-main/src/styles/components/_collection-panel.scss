@@ -1,0 +1,288 @@
+@use '@/styles/layout/layout' as l;
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+//---------------------------Collection Panel--------------------------------
+
+.collection-panel__tabs {
+}
+
+.collection-panel__tabs-list {
+  @include m.tabs-list;
+}
+
+.collection-panel__tabs-tab {
+  @include m.tabs-tab;
+}
+
+.collection-panel__tabs-panels {
+  @include m.tabs-panels;
+}
+
+.collection-panel__tabs-tab {
+}
+
+.collection-panel__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 21px;
+  height: auto;
+  display: grid;
+
+  grid-template-columns: repeat(1, 1fr);
+  @include b.min-width('small') {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.collection-panel__tile {
+  @include m.theme() {
+    gap: 50px;
+    transition-duration: 200ms;
+    background-color: m.t(base);
+    width: 302px;
+    color: m.t(contrast);
+    border: 1px solid transparent;
+    @include m.flex-row;
+    @include m.interact() {
+      border: 1px solid m.t(contrast);
+      color: m.t(base);
+      background-color: m.t(contrast);
+    }
+  }
+}
+
+.collection-panel__img-container {
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 1/1;
+  width: 60px;
+}
+
+.collection-panel__img-src {
+  background-color: red;
+  width: 100%;
+  height: 100%;
+  height: 60px;
+}
+
+.collection-panel__tile-nft-info {
+  position: absolute;
+  // max-width: 50%;
+  width: max-content;
+  bottom: 10px;
+  left: 10px;
+}
+
+.collection-panel__tile-nft-name {
+  @include m.theme() {
+    @include m.text-h3;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+}
+
+.collection-panel__tile-artist-name {
+  @include m.theme() {
+    text-transform: uppercase;
+    color: m.t(accent);
+  }
+}
+
+.collection-panel__gallery {
+  //   width: 800px;
+  position: relative;
+}
+
+@mixin gallery-control-buttons {
+  width: 30px;
+  height: 30px;
+  z-index: 100;
+  position: absolute;
+  @include m.interact;
+  @include m.theme() {
+    color: m.t(accent);
+  }
+}
+
+.collection-panel__gallery-control-left {
+  @include gallery-control-buttons;
+  // left: -50px;
+}
+
+.collection-panel__gallery-control-right {
+  @include gallery-control-buttons;
+  // right: -160%;
+  right: 0;
+}
+
+.collection-panel__gallery-display {
+  @include m.flex-row;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  flex: 1;
+  position: relative;
+  margin-bottom: 25px;
+  perspective: 100px;
+  height: 400px;
+  @include b.min-width('medium') {
+    height: 799px;
+  }
+}
+
+.swiper {
+  // background-color: red;
+  // height: 700px;
+  gap: 30px;
+  // height: 700px;
+  @include b.min-width('medium') {
+    // height: 1200px;
+  }
+  overflow: visible !important;
+  // background-color: blue;
+}
+
+.swiper-wrapper {
+  display: flex !important;
+  align-items: center !important;
+}
+
+.swiper-pagination {
+  margin-top: 50px !important;
+  position: relative !important;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  @include b.min-width('medium') {
+    gap: 10px;
+    margin-top: 200px;
+  }
+}
+
+.swiper-pagination-bullet {
+  position: relative !important;
+  width: 50px !important;
+  height: 50px !important;
+  border-radius: 0px !important;
+  opacity: 1 !important;
+  display: flex !important;
+  align-items: center;
+  @include b.min-width('medium') {
+    width: 70px !important;
+    height: 70px !important;
+  }
+  border: 1px solid transparent;
+
+  &-active {
+    @include m.theme() {
+      border: 1px solid m.t(accent);
+    }
+  }
+}
+
+.bullet-src {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  @include m.interact;
+}
+
+.slide {
+  user-select: none;
+  @include m.flex-center;
+  align-items: center !important;
+  &[data-size='9x16'] {
+    width: 150px !important;
+    height: 260px !important;
+
+    @include b.min-width('medium') {
+      width: 400px !important;
+      height: 711px !important;
+    }
+  }
+  &[data-size='1x1'] {
+    width: 260px !important;
+    height: 260px !important;
+    @include b.min-width('medium') {
+      width: 603px !important;
+      height: 633px !important;
+    }
+  }
+  &[data-size='16x9'] {
+    width: 260px !important;
+    height: 150px !important;
+    @include b.min-width('medium') {
+      width: 533px !important;
+      height: 300px !important;
+    }
+  }
+}
+
+.slick-current {
+  transform: scale(1.1) translateZ(10px);
+}
+
+$main-height: 799px;
+
+@mixin display-item {
+  // aspect-ratio: 536/799;
+  @include m.media-container;
+  // position: absolute;
+  // width: 300px;
+  // height: 300px;
+  margin-top: auto;
+  position: absolute;
+  margin-bottom: auto;
+}
+
+.collection-panel__gallery-display-item {
+  @include display-item;
+  // @include m.transition-base;
+
+  &--first {
+    @include display-item;
+    z-index: 3;
+    // width: 300px;
+    // height: $main-height;
+    // aspect-ratio: 1/1;
+  }
+
+  &--second {
+    @include display-item;
+    left: 50%;
+    z-index: 2;
+    transform: scale(0.92);
+    filter: brightness(0.3);
+    // width: 200px;
+    // height: calc($main-height * 0.923);
+  }
+
+  &--third {
+    @include display-item;
+    width: 100px;
+    transform: scale(0.85);
+    z-index: 1;
+    filter: brightness(0.3);
+    left: 90%;
+    // height: calc($main-height * 0.923 * 0.923);
+  }
+}
+
+.collection-panel__gallery-grid {
+  margin-top: 58px;
+  // max-width: 863px;
+  gap: 13px;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.collection-panel__gallery-grid-item {
+  @include m.interact;
+  @include m.media-container;
+  aspect-ratio: 1/1;
+  width: 60px;
+  height: 60px;
+}

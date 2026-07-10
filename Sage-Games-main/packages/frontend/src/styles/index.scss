@@ -1,0 +1,7 @@
+/* Please read about the 7-1 architecture pattern for sass organization here: 
+https://sass-guidelin.es/#architecture */
+
+@use "./base/" as *;
+@use "./layout/" as *;
+@use "./pages/" as *;
+@use "./components/" as *;

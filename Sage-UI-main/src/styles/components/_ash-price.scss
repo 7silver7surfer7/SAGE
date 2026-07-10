@@ -1,0 +1,24 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.ash-price {
+  @include m.theme() {
+    @include m.interact;
+    @include m.pill;
+    width: 100%;
+    aspect-ratio: 49/14;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-style: normal;
+    font-weight: 600;
+    font-size: 8px;
+    line-height: 130%;
+    letter-spacing: 0.08em;
+    background-color: m.t(accent);
+    color: #0e1412;
+    box-shadow: 0 0 18px rgba(m.t(accent), 0.35);
+  }
+}

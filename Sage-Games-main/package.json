@@ -1,0 +1,11 @@
+{
+    "name": "URN-Games",
+    "version": "0.1.0",
+    "private": true,
+    "workspaces": {
+      "packages": [
+        "packages/*"
+      ]
+    },
+    "repository": "git@github.com:SageDAO/URN-Games.git"
+  }

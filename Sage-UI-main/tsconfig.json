@@ -1,0 +1,77 @@
+{
+  "compilerOptions": {
+    "target": "es5",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@/components/*": [
+        "./src/components/*"
+      ],
+      "@/prisma/*": [
+        "./src/prisma/*"
+      ],
+      "@/constants/*": [
+        "./src/constants/*"
+      ],
+      "@/styles/*": [
+        "./src/styles/*"
+      ],
+      "@/store/*": [
+        "./src/store/*"
+      ],
+      "@/utilities/*": [
+        "./src/utilities/*"
+      ],
+      "@/types/*": [
+        "./types/*"
+      ],
+      "@/hooks/*": [
+        "./src/hooks/*"
+      ],
+      "@/api/*": [
+        "./src/pages/api/*"
+      ],
+      "@/public/*": [
+        "./public/*"
+      ]
+    },
+    "types": [
+      "node",
+      "mocha",
+      "chai"
+    ],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": false,
+    "removeComments": true,
+    "esModuleInterop": true,
+    "declaration": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "noImplicitReturns": true,
+    "noImplicitAny": false,
+    "noFallthroughCasesInSwitch": true,
+    "typeRoots": [
+      "./additional.d.ts"
+    ],
+    "strict": false
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "cypress"
+  ]
+}

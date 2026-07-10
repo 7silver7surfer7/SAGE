@@ -1,0 +1,143 @@
+@use '@/styles/layout/layout' as l;
+@use '@/styles/abstracts/colors' as c;
+
+.game-page {
+  padding: 43px l.$indent;
+
+  .game__main {
+    display: flex;
+  }
+
+  .game__nft-display {
+    aspect-ratio: 650/816;
+    position: relative;
+    width: max(300px, 30vw);
+    border-radius: 1em;
+    overflow: hidden;
+  }
+
+  .game__content {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+    flex: 1;
+    margin-left: 60px;
+  }
+
+  .nft__header {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 0 0 10px;
+  }
+
+  .nft__name {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 25px;
+    line-height: 39px;
+    color: #ffffff;
+  }
+
+  .nft__subheader {
+    display: flex;
+    gap: 8px;
+  }
+
+  .nft__editions {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 19px;
+    color: c.$purple-light;
+  }
+
+  .nft__divider {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 19px;
+    color: #6f767e;
+  }
+
+  .nft__drop-name {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 19px;
+    color: #6f767e;
+  }
+
+  .game__info {
+    display: flex;
+    flex-direction: column;
+    padding: 30px;
+    background: #131314;
+    box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.2);
+    border-radius: 18px;
+  }
+
+  .game__info-nav {
+    display: flex;
+  }
+
+  .game__info-nav-item {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 13px;
+    line-height: 29px;
+
+    width: 99px;
+    height: 29px;
+    cursor: pointer;
+  }
+
+  .game__info-nav-item--inactive {
+    border-bottom: 2px solid gray;
+    color: #6f767e;
+  }
+
+  .game__info-nav-item--active {
+    color: #ffffff;
+    border-bottom: 2px solid white;
+  }
+
+  .game__info-content {
+    margin-top: 30px;
+  }
+
+  .game__info-about {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: 14px;
+  }
+
+  .game__info-about-drop-title {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 19px;
+    line-height: 29px;
+    /* identical to box height, or 153% */
+
+    color: #ffffff;
+  }
+
+  .game__info-about-drop-description {
+    font-style: normal;
+    font-weight: 400;
+    font-size: 13px;
+    line-height: 21px;
+
+    color: #6f767e;
+  }
+
+  .game__info-about-drop-link {
+    font-style: normal;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 17px;
+    color: #ffffff;
+    cursor: pointer;
+  }
+}

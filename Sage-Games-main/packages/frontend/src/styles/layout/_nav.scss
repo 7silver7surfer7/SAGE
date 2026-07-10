@@ -1,0 +1,54 @@
+@use "@/styles/abstracts/colors" as c;
+@use "@/styles/layout/layout" as l;
+.nav {
+  z-index: 999;
+  position: sticky;
+  top: 0;
+  background: rgba(22, 22, 25, 0.95);
+  backdrop-filter: blur(20px);
+  height: 87px;
+  align-items: center;
+  display: flex;
+  padding: 0 l.$indent;
+
+  .logo {
+    width: 124px;
+    height: 38px;
+    position: relative;
+  }
+  ul {
+    display: flex;
+    align-items: center;
+    flex: 1;
+  }
+
+  .nav-links {
+    text-decoration: none;
+    margin: 0 50px;
+    font-size: 14px;
+    height: 17px;
+    width: 42px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 14px;
+    color: #a7aeb8;
+    &.active {
+      color: white;
+    }
+  }
+
+  .rewards {
+    font-size: 14px;
+    width: 111px;
+    height: 63px;
+    margin: 0 25px;
+    cursor: pointer;
+
+    h1 {
+      display: flex;
+      width: 61px;
+      height: 60px;
+      align-items: center;
+    }
+  }
+}

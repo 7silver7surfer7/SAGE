@@ -1,0 +1,117 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+.searchform {
+  border-bottom: 1px solid c.$grey;
+  flex: 1;
+  height: 22px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding-bottom: 3px;
+
+  &__input {
+    @include m.theme() {
+      text-align: center;
+      width: 100%;
+      height: 100%;
+      outline: none;
+      border: none;
+      background: transparent;
+      color: m.t(contrast);
+      text-transform: uppercase;
+      font-style: italic;
+      font-size: 80%;
+      letter-spacing: 0.2em;
+      flex: 1;
+      position: absolute;
+      @include m.data-color;
+      font-weight: 300;
+    }
+  }
+
+  &__white_icon {
+    cursor: pointer;
+    right: 0;
+    position: absolute;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+    @include m.data-color;
+  }
+}
+
+.searchresults {
+  &__header {
+    position: relative;
+    margin-right: auto;
+    margin-left: auto;
+    @include m.standard-width;
+  }
+
+  &__right-dot {
+    margin-top: 10px;
+    margin-right: 5px;
+    border-radius: 100%;
+    width: 12px;
+    height: 12px;
+    @include m.animate-pulse;
+    @include m.theme() {
+      background-color: m.t('accent');
+    }
+  }
+
+  &__input {
+    outline: none;
+    border: none;
+    background: transparent;
+    @include m.theme() {
+      color: m.t('contrast');
+    }
+    text-transform: uppercase;
+    font-size: 60px;
+    line-height: 64px;
+    font-weight: bold;
+    @include m.text-h1;
+    // margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  &__term {
+    // text-transform: uppercase;
+    // font-family: Helvetica;
+    // font-size: 60px;
+    // line-height: 64px;
+    // font-weight: bold;
+    // display: flex;
+    // margin-top: clamp(24px, 10vw, 111px);
+  }
+
+  &__text {
+    // margin-left: 20px;
+    text-transform: capitalize;
+    font-style: normal;
+    font-weight: 400;
+    font-size: clamp(10px, 1.5vw, 16px);
+    line-height: 130%;
+    margin-bottom: clamp(10px, 5vw, 50px);
+    // text-transform: uppercase;
+    // font-family: Helvetica;
+    // font-size: 14px;
+    // line-height: 29px;
+    // letter-spacing: 0.05em;
+  }
+
+  &__button {
+    @include m.theme() {
+      margin-top: 50px;
+      margin-left: auto;
+      margin-right: auto;
+      @include m.button-base;
+      margin: 60px 0;
+      background: m.t(accent);
+      color: m.t(base);
+    }
+  }
+}

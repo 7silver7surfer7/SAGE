@@ -1,0 +1,21 @@
+{
+    "status": "planned",
+    "lotteryId": 345,
+    "costPerTicketCoins": 1,
+    "costPerTicketPoints": 1,
+    "startTime": "1643050700",
+    "endTime": "1643054299",
+    "artistName": "meme",
+    "bannerImageName": "ummmm",
+    "dropName": "Memeverse Drop #3",
+    "dropDescription": "Drop #3 - one prize, 3 mints",
+    "numberOfNftsInDrop": 1,
+    "tags": "meme memeverse cat gem stealing",
+    "nft1": {
+        "name": "MemeX - 003",
+        "description": "A card featuring a cat stealing a precious gem",
+        "numberOfMints": 3,
+        "tags": "cat gem stealing Memeverse"
+    },
+    "walletAddress": "0x544223D219154D647A4BE47d68820A9171A43e2E"
+}

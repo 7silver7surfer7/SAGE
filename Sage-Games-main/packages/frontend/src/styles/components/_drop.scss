@@ -1,0 +1,61 @@
+@use '@/styles/abstracts/colors' as c;
+
+.drop {
+  aspect-ratio: 448/357;
+  .details {
+    margin: 20px 0;
+    aspect-ratio: 448/40;
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .artist {
+    height: 100%;
+    display: flex;
+    align-items: center;
+  }
+  .artist-pfp {
+    background-color: gray;
+    margin-right: max(10px, 1.05vw);
+    position: relative;
+    height: max(25px, 2.2vw);
+    overflow: hidden;
+    border-radius: 50%;
+    aspect-ratio: 1/1;
+    cursor: pointer;
+  }
+  .artist-name {
+    font-weight: 600;
+    font-size: max(12px, 1.2vw);
+    line-height: 19px;
+  }
+}
+
+.drop__thumbnail {
+  border-radius: 9px;
+  background-color: c.$bg-dark;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 448/297;
+  position: relative;
+  cursor: pointer;
+}
+
+.drop__status {
+  display: flex;
+  align-items: center;
+  // font-size: max(14px, 1.2vw);
+  // background-color: #792e9c;
+  // padding: 4px 10px 4px 9px;
+
+  // border-radius: 999px;
+  &[data-status='drawn'],
+  &[data-status='upcoming'] {
+    font-style: normal;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 19px;
+    text-transform: uppercase;
+    color: rgba(196, 196, 196, 0.5);
+  }
+}

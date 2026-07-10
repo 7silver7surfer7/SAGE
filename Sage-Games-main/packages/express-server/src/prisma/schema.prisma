@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Artist {
+  id          Int      @id @default(autoincrement())
+  displayName String   @default("anon")
+  avatarURL   String?
+  Wallet      Wallet[]
+}
+
+model Crawler {
+  id              Int       @id @default(autoincrement())
+  name            String
+  lastBlockNumber Int       @default(0)
+  NftSale         NftSale[]
+}
+
+model NftSale {
+  id              Int     @id @default(autoincrement())
+  crawlerId       Int
+  txHash          String  @unique
+  blockNumber     Int
+  marketplace     String
+  contractAddress String
+  tokenId         String
+  sellerAddress   String
+  buyerAddress    String
+  price           Float
+  blockTimestamp  Int?
+  ownerAddress    String?
+  paymentToken    String
+  Crawler         Crawler @relation(fields: [crawlerId], references: [id])
+  Wallet          Wallet? @relation(fields: [ownerAddress], references: [address])
+
+  @@index([ownerAddress])
+}
+
+model Wallet {
+  artistId Int?
+  address  String    @id
+  Artist   Artist?   @relation(fields: [artistId], references: [id])
+  NftSale  NftSale[]
+
+  @@index([address])
+}

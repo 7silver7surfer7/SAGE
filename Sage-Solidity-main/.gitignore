@@ -1,0 +1,11 @@
+.history
+experiments/
+node_modules
+artifacts/
+cache/
+.openzeppelin/
+.env
+typechain-types/
+package-lock.json
+meme_tx.json
+package-lock.json

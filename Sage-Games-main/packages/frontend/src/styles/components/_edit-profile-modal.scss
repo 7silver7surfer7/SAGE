@@ -1,0 +1,10 @@
+.edit-profile-modal {
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  margin-top: 10px;
+  .field {
+    display: flex;
+    justify-content: space-between;
+  }
+}

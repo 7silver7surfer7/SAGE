@@ -1,0 +1,53 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+canvas {
+  background: transparent;
+}
+
+.profile-picture-modal {
+  @include m.theme() {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    text-align: center;
+    @include m.flex-center;
+    background-color: m.t(base);
+    padding: 40px;
+    width: 100vw;
+    @include m.standard-width;
+    @include b.min-width('medium') {
+      width: 600px;
+    }
+  }
+
+  &__btn-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    gap: 6px;
+    padding: 10px;
+  }
+
+  &__btn {
+    @include m.theme() {
+      @include m.button-base;
+      // cursor: pointer;
+      // color: m.t(contrast);
+      // text-transform: uppercase;
+      // border: 1px solid m.t(contrast);
+      // font-weight: 600;
+      // font-size: 12px;
+      // line-height: 19px;
+      // background-color: transparent;
+
+      color: m.t(base);
+      &[data-type='save'] {
+        color: m.t(base);
+        background-color: m.t(accent);
+      }
+    }
+  }
+}

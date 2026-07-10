@@ -1,0 +1,44 @@
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+.hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  justify-content: flex-end;
+  aspect-ratio: 322/329;
+  margin-top: 75px;
+  // @include m.header-margins;
+  // margin-bottom: 0;
+  @include m.standard-width;
+  @include b.min-width('medium') {
+    @include m.desktop-width;
+    aspect-ratio: 1495/909;
+  }
+}
+
+.hero__banner {
+  @include m.noselect;
+  @include m.interact;
+  overflow: hidden;
+  position: absolute;
+  transition-duration: 300ms;
+  width: 100%;
+  // aspect-ratio: 325/311;
+  @include b.min-width('medium') {
+    aspect-ratio: 1495/909;
+  }
+}
+
+.hero__svg {
+  height: 10vw;
+  // height: min(10vw, 128px);
+  width: max-content;
+  aspect-ratio: 400/96;
+  position: absolute;
+  // transform: translateY(-50%);
+  z-index: 999;
+  @include b.min-width('medium') {
+    height: 4.8vw;
+  }
+}

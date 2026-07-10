@@ -1,0 +1,11 @@
+@use '@/styles/abstracts/mixins' as m;
+.systems__svg {
+  width: 100%;
+  height: 100%;
+  @include m.theme() {
+    fill: m.t(accent);
+    color: m.t(base);
+  }
+  @include m.interact;
+
+}

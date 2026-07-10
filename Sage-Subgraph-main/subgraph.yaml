@@ -1,0 +1,63 @@
+specVersion: 0.0.5
+description: SAGE Game Events on Rinkeby
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: lottery
+    network: rinkeby
+    source:
+      address: "0x6B58aFB318B0FfF1f486BE534b2091952A2D98ca"
+      abi: LotteryContract
+      startBlock: 10739971
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      entities:
+        - LotteryStatusChanged
+        - PrizeClaimed
+        - Refunded
+        - TicketSold
+      abis:
+        - name: LotteryContract
+          file: ./abis/Lottery.json
+      eventHandlers:
+        - event: LotteryStatusChanged(indexed uint256,indexed uint8)
+          handler: handleLotteryStatusChanged
+        - event: PrizeClaimed(indexed uint256,indexed address,indexed uint256)
+          handler: handlePrizeClaimed
+        - event: Refunded(indexed uint256,indexed address,uint256)
+          handler: handleRefunded
+        - event: TicketSold(indexed uint256,uint256,indexed address)
+          handler: handleTicketSold
+      file: ./src/mapping-lottery.ts
+  - kind: ethereum
+    name: auction
+    network: rinkeby
+    source:
+      address: "0xb3a93b968147E2591e107c2Ba3dcEEcFD9c78532"
+      abi: AuctionContract
+      startBlock: 10739975
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      entities:
+        - AuctionCreated
+        - AuctionSettled
+        - AuctionCancelled
+        - BidPlaced
+      abis:
+        - name: AuctionContract
+          file: ./abis/Auction.json
+      eventHandlers:
+        - event: AuctionCreated(indexed uint256,uint256,uint256)
+          handler: handleAuctionCreated
+        - event: AuctionSettled(indexed uint256,indexed address,uint256)
+          handler: handleAuctionSettled
+        - event: AuctionCancelled(uint256)
+          handler: handleAuctionCancelled
+        - event: BidPlaced(indexed uint256,indexed address,uint256,uint256)
+          handler: handleBidPlaced
+      file: ./src/mapping-auction.ts

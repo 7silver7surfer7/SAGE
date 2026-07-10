@@ -1,0 +1,324 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+
+.games-modal {
+  width: 100%;
+}
+
+.games-modal__header {
+  display: flex;
+  width: max-content;
+  margin-top: 5px;
+  gap: 0 25px;
+  justify-content: center;
+}
+
+.games-modal__header-right {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.games-modal__header-nft-img {
+  @include m.img-container;
+  aspect-ratio: 1/1;
+  height: 100px;
+  border-radius: 16px;
+}
+
+.games-modal__header-artist {
+  display: flex;
+  gap: 0 7px;
+}
+
+.games-modal__header-artist-pfp {
+  @include m.img-container;
+  @include m.circle;
+  height: 20px;
+  width: 20px;
+}
+
+.games-modal__header-artist-name {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 17px;
+  color: c.$text-gray-2;
+}
+
+.games-modal__header-nft-name {
+  margin-top: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 21px;
+  color: c.$white;
+}
+.games-modal__header-nft-editions {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 19px;
+  color: #b47dbd;
+}
+
+.games-modal__rules {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 15px 13px;
+  gap: 8px;
+  background: c.$box-black;
+  border-radius: 9px;
+}
+
+.games-modal__rules-item {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+}
+
+.games-modal__rules-item-label {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 17px;
+  color: c.$text-gray-2;
+}
+
+.games-modal__rules-item-value {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 17px;
+  color: c.$white;
+}
+
+.games-modal__rules-divider-container {
+  height: 7px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.games-modal__rules-divider-rectangle {
+  height: 1px;
+  width: 100%;
+  background: rgba(196, 196, 196, 0.1);
+  border-radius: 1px;
+}
+
+.games-modal__heading {
+  margin-top: 20px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.games-modal__heading-label {
+  display: flex;
+  align-items: center;
+  font-style: normal;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 17px;
+  color: c.$white;
+}
+
+.games-modal__heading-value {
+  @include m.pill;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  padding: 3px 10px 4px 9px;
+  gap: 7px;
+  background: c.$blue;
+
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 17px;
+  color: c.$white;
+  &--blue {
+    background-color: c.$blue;
+  }
+  &--green {
+    background-color: c.$green;
+  }
+}
+
+.games-modal__btn-container {
+  height: 46px;
+}
+
+.games-modal__bid-section {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.games-modal__bid-controls {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 13.5px 15px;
+  gap: 10px;
+  border: 1px solid rgba(111, 118, 126, 0.2);
+  border-radius: 7px;
+}
+
+.games-modal__bid-input {
+  display: flex;
+  flex: 1;
+  background-color: transparent;
+  color: c.$white;
+}
+
+.games-modal__bid-unit {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 17px;
+  display: flex;
+  align-items: center;
+  color: #8e969f;
+}
+
+.games-modal__bid-min-max-btn {
+  @include m.btn;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  padding: 3px 8px 3px 9px;
+  gap: 7px;
+  background: #2c2c2d;
+  border-radius: 14px;
+
+  font-style: normal;
+  font-weight: 600;
+  font-size: 10px;
+  line-height: 17px;
+  letter-spacing: 1px;
+  color: rgba(196, 196, 196, 0.6);
+}
+
+.games-modal__place-bid-btn {
+  @include m.btn;
+  @include m.pill;
+  background: c.$purple-button;
+  margin-top: 15px;
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  padding: 15px 20px;
+  gap: 8px;
+
+  font-style: normal;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 16px;
+  color: c.$white;
+}
+
+.games-modal__status-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 15px;
+}
+
+.games-modal__tickets-section {
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+  flex-direction: column;
+  gap: 25px;
+}
+
+.games-modal__tickets-inner {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.games-modal__tickets-controls {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+}
+
+.games-modal__tickets-input {
+  display: flex;
+  width: 75px;
+  justify-content: center;
+  font-style: normal;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 27px;
+  color: c.$white;
+  background: transparent;
+  text-align: center;
+}
+
+.games-modal__tickets-sub,
+.games-modal__tickets-add {
+  @include m.circle;
+  @include m.btn;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  padding: 0px;
+  gap: 10px;
+  height: 34px;
+  border: 1.5px solid #c4c4c4;
+  border-radius: 22px;
+  background-color: transparent;
+
+  text-align: center;
+  font-style: normal;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.games-modal__tickets-total {
+  display: flex;
+  justify-content: center;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 17px;
+  color: c.$white;
+  gap: 5px;
+}
+
+.games-modal__tickets-total-label {
+  display: flex;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 17px;
+  color: c.$text-gray-2;
+}
+
+.games-modal__tickets-buy-btn {
+  @include m.btn;
+  @include m.pill;
+  margin-top: 5px;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  padding: 15px 20px;
+  gap: 7px;
+  background: #792e9c;
+
+  color: c.$white;
+  font-style: normal;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 16px;
+  text-align: center;
+}
