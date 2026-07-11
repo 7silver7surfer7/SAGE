@@ -31,6 +31,11 @@
   // NOT align-items: center — flex-centering a too-tall child pushes its top
   // edge above the scroll area where it can never be reached.
   overflow-y: auto;
+  // breathing room above/below a tall modal so scrolling doesn't stop dead at
+  // the card's edges; desktop-only — mobile modals are full-bleed
+  @include b.min-width('medium') {
+    padding: 48px 0;
+  }
 }
 
 .modal__panel {
