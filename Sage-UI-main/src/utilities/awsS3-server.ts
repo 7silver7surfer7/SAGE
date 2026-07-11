@@ -21,7 +21,10 @@ export function createS3SignedUrl(folder: string, filename: string) {
     Bucket: `${process.env.S3_BUCKET}/${folder}`,
     Key: filename,
     Expires: 60,
-    ACL: 'public-read',
+    // No ACL: the bucket (sageart-media-mirror) runs with ACLs disabled
+    // (BucketOwnerEnforced — the modern S3 default); public READ comes from
+    // its bucket policy instead. Signing an x-amz-acl header here would make
+    // every PUT fail with AccessControlListNotSupported.
   };
   const uploadUrl = s3.getSignedUrl('putObject', params);
   const getUrl = `https://${process.env.S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${folder}/${filename}`;
