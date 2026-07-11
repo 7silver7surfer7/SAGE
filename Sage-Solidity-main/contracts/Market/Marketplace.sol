@@ -12,6 +12,10 @@ contract Marketplace {
     IERC20 public token;
     ISageStorage immutable sageStorage;
     uint256 private constant ARTIST_SHARE = 8000;
+    // SageStorage key holding the platform's royalty receiver; when unset the
+    // platform's royalty cut falls back to the multisig.
+    bytes32 private constant PLATFORM_ROYALTY_KEY =
+        keccak256(abi.encodePacked("address.royalty"));
 
     mapping(bytes32 => bool) private cancelledOrders;
 
@@ -101,6 +105,14 @@ contract Marketplace {
      *   probe reverts) keep the old behavior: royalty to the contract, later
      *   split by withdraw(). External 2981 receivers are paid directly.
      */
+    /** Platform's royalty receiver: the address.royalty storage key, or the
+     *  multisig while the key is unset. Applies to ROYALTY cuts only —
+     *  primary-sale platform cuts keep going to the multisig. */
+    function _platformRoyaltyDest() internal view returns (address) {
+        address dest = sageStorage.getAddress(PLATFORM_ROYALTY_KEY);
+        return dest == address(0) ? sageStorage.multisig() : dest;
+    }
+
     function _settleSale(
         address payer,
         address seller,
@@ -126,7 +138,7 @@ contract Marketplace {
                     token.transferFrom(payer, artist, toArtist);
                     token.transferFrom(
                         payer,
-                        sageStorage.multisig(),
+                        _platformRoyaltyDest(),
                         royaltyValue - toArtist
                     );
                 } catch {

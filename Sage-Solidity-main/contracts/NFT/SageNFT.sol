@@ -163,12 +163,22 @@ contract SageNFT is
         artistShare = _artistShare;
     }
 
+    /** Platform's royalty receiver (funds pooling here ARE royalties — from
+     *  third-party EIP-2981 marketplaces): the address.royalty storage key,
+     *  or the multisig while the key is unset. */
+    function _platformRoyaltyDest() internal view returns (address) {
+        address dest = sageStorage.getAddress(
+            keccak256(abi.encodePacked("address.royalty"))
+        );
+        return dest == address(0) ? sageStorage.multisig() : dest;
+    }
+
     function withdrawERC20(address erc20) public {
         IERC20 token = IERC20(erc20);
         uint256 balance = token.balanceOf(address(this));
         uint256 _artist = (balance * artistShare) / 10000;
         token.transfer(artist, _artist);
-        token.transfer(sageStorage.multisig(), balance - _artist);
+        token.transfer(_platformRoyaltyDest(), balance - _artist);
     }
 
     function withdraw() public {
@@ -178,7 +188,7 @@ contract SageNFT is
         if (!sent) {
             revert();
         }
-        (sent, ) = sageStorage.multisig().call{value: balance - _share}("");
+        (sent, ) = _platformRoyaltyDest().call{value: balance - _share}("");
         if (!sent) {
             revert();
         }

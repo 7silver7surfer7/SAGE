@@ -13,8 +13,9 @@ const timer = ms => new Promise(res => setTimeout(res, ms));
 function shouldDeployContract(name) {
     // Fresh Robinhood Chain deploy: deploy the full suite. Flip individual
     // entries to false to re-run against an already-deployed contract.
-    // (2026-07-11: Factory+Marketplace were redeployed alone for the
-    // per-token royalty rollout by temporarily setting the others false.)
+    // (2026-07-11: Factory+Marketplace were redeployed alone twice — royalty
+    // rollout, then platform-royalty-address — by temporarily flipping the
+    // others to false.)
     switch (name) {
         case "Whitelist":
             return true;

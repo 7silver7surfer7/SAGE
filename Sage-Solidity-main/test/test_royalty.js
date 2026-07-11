@@ -186,6 +186,68 @@ describe("Per-token royalties", () => {
         );
     });
 
+    it("Should pay the platform royalty address when set, multisig when unset", async function() {
+        const ROYALTY_KEY = ethers.utils.solidityKeccak256(["string"], ["address.royalty"]);
+        const platform = addrs[0];
+        await nft.connect(artist).artistMint(uri); // t1 @ 1200
+
+        // key UNSET: royalty platform cut falls back to multisig
+        await mockERC20.connect(addr1).approve(market.address, ONE);
+        await buyFromSellOffer(market, addr1, artist, nftContractAddress, ONE, 1);
+        await mockERC20.connect(addr2).approve(market.address, ONE);
+        let m = await mockERC20.balanceOf(multisig.address);
+        await buyFromSellOffer(market, addr2, addr1, nftContractAddress, ONE, 1);
+        expect((await mockERC20.balanceOf(multisig.address)).sub(m)).to.equal(
+            ethers.utils.parseEther("0.024")
+        );
+
+        // key SET: royalty platform cut goes to the platform address instead
+        await sageStorage.setAddress(ROYALTY_KEY, platform.address);
+        await mockERC20.mint(addr1.address, ONE);
+        await mockERC20.connect(addr1).approve(market.address, ONE);
+        m = await mockERC20.balanceOf(multisig.address);
+        const a = await mockERC20.balanceOf(artist.address);
+        await buyFromSellOffer(market, addr1, addr2, nftContractAddress, ONE, 1);
+        expect(await mockERC20.balanceOf(platform.address)).to.equal(
+            ethers.utils.parseEther("0.024")
+        );
+        expect((await mockERC20.balanceOf(multisig.address)).sub(m)).to.equal(0);
+        // artist royalty cut unchanged
+        expect((await mockERC20.balanceOf(artist.address)).sub(a)).to.equal(
+            ethers.utils.parseEther("0.096")
+        );
+    });
+
+    it("Should keep primary-sale platform cut on the multisig even when key set", async function() {
+        const ROYALTY_KEY = ethers.utils.solidityKeccak256(["string"], ["address.royalty"]);
+        const platform = addrs[0];
+        await sageStorage.setAddress(ROYALTY_KEY, platform.address);
+        await nft.connect(artist).artistMint(uri);
+        await mockERC20.connect(addr1).approve(market.address, ONE);
+        const m = await mockERC20.balanceOf(multisig.address);
+        await buyFromSellOffer(market, addr1, artist, nftContractAddress, ONE, 1);
+        // primary 20% still to multisig; platform royalty address untouched
+        expect((await mockERC20.balanceOf(multisig.address)).sub(m)).to.equal(
+            ethers.utils.parseEther("0.2")
+        );
+        expect(await mockERC20.balanceOf(platform.address)).to.equal(0);
+    });
+
+    it("Should honor the platform royalty address in withdrawERC20", async function() {
+        const ROYALTY_KEY = ethers.utils.solidityKeccak256(["string"], ["address.royalty"]);
+        const platform = addrs[0];
+        await sageStorage.setAddress(ROYALTY_KEY, platform.address);
+        await mockERC20.mint(nft.address, ethers.utils.parseEther("1"));
+        const a = await mockERC20.balanceOf(artist.address);
+        await nft.withdrawERC20(mockERC20.address);
+        expect((await mockERC20.balanceOf(artist.address)).sub(a)).to.equal(
+            ethers.utils.parseEther("0.8")
+        );
+        expect(await mockERC20.balanceOf(platform.address)).to.equal(
+            ethers.utils.parseEther("0.2")
+        );
+    });
+
     it("Should keep withdrawERC20 as backstop on new contracts", async function() {
         // third-party 2981 marketplaces pay address(this); withdraw still splits
         await mockERC20.mint(nft.address, ethers.utils.parseEther("1"));

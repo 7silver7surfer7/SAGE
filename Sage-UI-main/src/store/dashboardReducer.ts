@@ -1,4 +1,4 @@
-import { getStorageContract } from '@/utilities/contracts';
+import { extractErrorMessage, getStorageContract } from '@/utilities/contracts';
 import { User_include_EarnedPointsAndNftContracts } from '@/prisma/types';
 import { ethers, Signer } from 'ethers';
 import { toast } from 'react-toastify';
@@ -34,6 +34,12 @@ async function grantOnChainRole(role: string, walletAddress: string, signer: Sig
     return false;
   }
 }
+
+// SageStorage key holding the platform's royalty receiver. When unset (zero),
+// contracts fall back to the multisig. The dashboard writes this key directly
+// on-chain from the connected admin wallet — there is no DB copy.
+const PLATFORM_ROYALTY_KEY = ethers.utils.solidityKeccak256(['string'], ['address.royalty']);
+export const DEFAULT_PLATFORM_ROYALTY_ADDRESS = '0x3E099aF007CaB8233D44782D8E6fe80FECDC321e';
 
 const dashboardApi = baseApi.injectEndpoints({
   overrideExisting: true,
@@ -86,6 +92,34 @@ const dashboardApi = baseApi.injectEndpoints({
       },
       invalidatesTags: ['AllUsers'],
     }),
+    getPlatformRoyaltyAddress: builder.query<string, void>({
+      queryFn: async () => {
+        try {
+          const contract = await getStorageContract();
+          const value = await contract.getAddress(PLATFORM_ROYALTY_KEY);
+          return { data: value as string };
+        } catch (e) {
+          console.error('getPlatformRoyaltyAddress failed', e);
+          return { data: ethers.constants.AddressZero };
+        }
+      },
+      providesTags: ['PlatformRoyaltyAddress'],
+    }),
+    setPlatformRoyaltyAddress: builder.mutation<boolean, { address: string; signer: Signer }>({
+      queryFn: async ({ address, signer }) => {
+        try {
+          const contract = await getStorageContract(signer);
+          const tx = await contract.setAddress(PLATFORM_ROYALTY_KEY, address);
+          await tx.wait();
+          toast.success('Platform royalty address updated on-chain.');
+          return { data: true };
+        } catch (e) {
+          toast.error(`Failed to update: ${extractErrorMessage(e)}`);
+          return { data: false };
+        }
+      },
+      invalidatesTags: ['PlatformRoyaltyAddress'],
+    }),
     updateConfig: builder.mutation<null, { featuredDropId: Number; welcomeMessage: string }>({
       queryFn: async ({ featuredDropId, welcomeMessage }, {}, _, fetchWithBQ) => {
         await fetchWithBQ({
@@ -103,8 +137,10 @@ const dashboardApi = baseApi.injectEndpoints({
 export const {
   useGetAllUsersAndEarnedPointsQuery,
   useGetConfigQuery,
+  useGetPlatformRoyaltyAddressQuery,
   useGetSalesEventsQuery,
   usePromoteUserToAdminMutation,
   usePromoteUserToArtistMutation,
+  useSetPlatformRoyaltyAddressMutation,
   useUpdateConfigMutation,
 } = dashboardApi;
