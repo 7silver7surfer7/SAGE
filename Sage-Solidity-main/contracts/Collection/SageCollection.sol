@@ -33,7 +33,7 @@ contract SageCollection is Pausable {
 
     struct Collection {
         uint32 startTime; // Timestamp when minting opens
-        uint32 closeTime; // Timestamp when minting ends
+        uint32 closeTime; // Timestamp when minting ends; 0 = NO deadline, open until sold out
         uint32 maxSupply; // Number of unique images == hard mint cap
         uint32 mintCount; // Number minted so far (next token gets index mintCount+1)
         uint32 limitPerUser; // Max mints per wallet (0 = unlimited)
@@ -100,7 +100,8 @@ contract SageCollection is Pausable {
 
     function createCollection(Collection calldata c) public onlyAdmin {
         require(
-            c.startTime > 0 && c.closeTime > c.startTime,
+            c.startTime > 0 &&
+                (c.closeTime == 0 || c.closeTime > c.startTime),
             "Invalid times"
         );
         require(c.maxSupply > 0, "Invalid supply");
@@ -141,8 +142,11 @@ contract SageCollection is Pausable {
     function mint(uint256 _id, uint256 _amount) public whenNotPaused {
         require(_amount > 0, "Can't mint 0");
         Collection storage c = collections[_id];
+        // closeTime 0 = no deadline: the mint stays open until the supply cap
+        // below closes it naturally (sell-out IS the closing condition)
         require(
-            c.startTime <= block.timestamp && c.closeTime > block.timestamp,
+            c.startTime <= block.timestamp &&
+                (c.closeTime == 0 || c.closeTime > block.timestamp),
             "Not open"
         );
         require(

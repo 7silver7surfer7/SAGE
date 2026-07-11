@@ -30,7 +30,7 @@ CONTRACTS = {
         factoryAddress: "0x21e8Bb18193Db10ddecACE141EDE66882c08D991",
         lotteryAddress: "0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E",
         openEditionAddress: "0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9",
-        collectionAddress: "0xFdcdd3a9150a79bC2F44f33e6EdA3C1B34a7366A",
+        collectionAddress: "0x27A18bAC34e61F42519D9E3B264511673D917595",
         randomnessAddress: "0xB438593B6ceea256A65dE8E722f8F1718f963773",
         rewardsAddress: "0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC",
         auctionAddress: "0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD",

@@ -593,7 +593,8 @@ async function insertCollectionMint(data: any, response: NextApiResponse) {
         // maxSupply = image count, known only after the zip is processed
         maxSupply: 0,
         startTime: new Date(Number(data.startDate) * 1000),
-        endTime: new Date(Number(data.endDate) * 1000),
+        // null endDate = NO deadline: the mint stays open until sold out
+        endTime: data.endDate ? new Date(Number(data.endDate) * 1000) : null,
         status: 'staging',
       },
     });

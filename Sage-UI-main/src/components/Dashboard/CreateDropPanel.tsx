@@ -41,6 +41,8 @@ export default function CreateDropPanel() {
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [collectionPrice, setCollectionPrice] = useState(1);
   const [collectionLimitPerUser, setCollectionLimitPerUser] = useState(0);
+  // 0 = no deadline (the default): mint stays open until the collection sells out
+  const [collectionDurationHours, setCollectionDurationHours] = useState(0);
   const [durationHours, setDurationHours] = useState(24);
   const [approveNow, setApproveNow] = useState(true);
   const [allowlistEnabled, setAllowlistEnabled] = useState(false);
@@ -203,6 +205,7 @@ export default function CreateDropPanel() {
               zipFile: zipFile as File,
               costTokens: collectionPrice,
               limitPerUser: collectionLimitPerUser,
+              durationHours: collectionDurationHours,
             }
           : undefined,
     });
@@ -392,7 +395,26 @@ export default function CreateDropPanel() {
                   onChange={(e) => setCollectionLimitPerUser(Number(e.target.value))}
                 />
               </label>
+              <label className='create-drop-panel__param'>
+                mint window
+                <select
+                  className='create-drop-panel__input'
+                  value={collectionDurationHours}
+                  onChange={(e) => setCollectionDurationHours(Number(e.target.value))}
+                >
+                  <option value={0}>until sold out (no time limit)</option>
+                  <option value={24}>1 day</option>
+                  <option value={72}>3 days</option>
+                  <option value={168}>1 week</option>
+                </select>
+              </label>
             </div>
+            {collectionDurationHours === 0 && (
+              <em className='create-drop-panel__section-hint'>
+                No deadline — minting stays open until every piece is minted. Selling out is
+                what closes the window.
+              </em>
+            )}
           </div>
         )}
         {dropStyle === 'standard' && (

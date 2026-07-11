@@ -16,13 +16,16 @@ interface Props {
 export default function CollectionMintTile({ artist, dropName, collection, className }: Props) {
   const { isOpen, closeModal, openModal } = useModal();
   const startTime = new Date(collection.startTime).getTime();
-  const endTime = new Date(collection.endTime).getTime();
+  // null endTime = no deadline — the mint stays open until it sells out
+  const endTime = collection.endTime ? new Date(collection.endTime).getTime() : null;
   const now = Date.now();
   const isStarted = now >= startTime;
-  const isEnded = now > endTime;
+  const isEnded = endTime != null && now > endTime;
 
   const { displayValue: countdownUntilOpen } = useCountdown({ targetDate: startTime });
-  const { displayValue: countdownUntilClose } = useCountdown({ targetDate: endTime });
+  const { displayValue: countdownUntilClose } = useCountdown({
+    targetDate: endTime ?? Number.MAX_SAFE_INTEGER,
+  });
 
   const { data: liveMintCount } = useGetCollectionMintCountQuery(collection.collectionId!, {
     skip: collection.collectionId == null,
@@ -60,7 +63,9 @@ export default function CollectionMintTile({ artist, dropName, collection, class
             <div className='drop-page__grid-item-info-countdown'>{countdownUntilOpen}</div>
           )}
           {isStarted && !isEnded && !isSoldOut && (
-            <div className='drop-page__grid-item-info-countdown'>{countdownUntilClose}</div>
+            <div className='drop-page__grid-item-info-countdown'>
+              {endTime != null ? countdownUntilClose : 'Open until sold out'}
+            </div>
           )}
           {isSoldOut && <div className='drop-page__grid-item-info-countdown'>Sold out</div>}
           {isEnded && !isSoldOut && <div className='drop-page__grid-item-info-countdown'>Ended</div>}

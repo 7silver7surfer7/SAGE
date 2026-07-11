@@ -167,6 +167,33 @@ describe("SageCollection Contract", function () {
         );
     });
 
+    it("Should stay open with no deadline (closeTime 0) until sold out", async function () {
+        // snapshot/revert: this test jumps chain time a full YEAR, which would
+        // otherwise leak into later suites and expire their signed offers
+        // (hardhat time pollution persists across test files in one run)
+        const snapshot = await ethers.provider.send("evm_snapshot", []);
+        try {
+            await collection.createCollection({
+                ...collectionInfo,
+                id: 7,
+                closeTime: 0,
+                maxSupply: 2,
+            });
+            // way past any normal window — still mintable (no deadline)
+            await ethers.provider.send("evm_increaseTime", [365 * 86400]);
+            await ethers.provider.send("evm_mine", []);
+            await collection.connect(addr2).mint(7, 1);
+            await collection.connect(addr3).mint(7, 1);
+            // sold out IS the close: further mints revert on supply, not time
+            await expect(collection.connect(addr2).mint(7, 1)).to.be.revertedWith(
+                "Not enough supply left"
+            );
+            expect(await collection.getMintCount(7)).to.equal(2);
+        } finally {
+            await ethers.provider.send("evm_revert", [snapshot]);
+        }
+    });
+
     it("Should gate createCollection to admins", async function () {
         await expect(
             collection.connect(addr2).createCollection({ ...collectionInfo, id: 6 })

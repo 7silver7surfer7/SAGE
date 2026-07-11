@@ -61,7 +61,9 @@ export default function MintCollectionModal({
 
   const now = Date.now();
   const isStarted = now >= new Date(collection.startTime).getTime();
-  const isEnded = now > new Date(collection.endTime).getTime();
+  // null endTime = no deadline — selling out is the only closing condition
+  const hasDeadline = collection.endTime != null;
+  const isEnded = hasDeadline && now > new Date(collection.endTime as any).getTime();
   const mintedCount = liveMintCount ?? collection.mintCount;
   const remaining = Math.max(0, collection.maxSupply - mintedCount);
   const isSoldOut = remaining === 0;
@@ -74,6 +76,9 @@ export default function MintCollectionModal({
   const gameInfo =
     `A collection of ${collection.maxSupply} unique artworks minted in order — every mint ` +
     `receives the next piece in the series at a fixed price.` +
+    (hasDeadline
+      ? ''
+      : ' Minting stays open until the collection sells out — no time limit.') +
     (maxPerUser > 0 ? ` Each wallet can mint up to ${maxPerUser}.` : '');
 
   function validateQuantity() {
@@ -179,9 +184,9 @@ export default function MintCollectionModal({
                 isZoomable={true}
                 fit='contain'
               />
-              {isLive && (
+              {isLive && hasDeadline && (
                 <Countdown
-                  endTime={collection.endTime}
+                  endTime={collection.endTime as any}
                   className='games-modal__countdown--float'
                 ></Countdown>
               )}

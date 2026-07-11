@@ -81,6 +81,9 @@ export interface CreateDropRequest {
     zipFile: File;
     costTokens: number;
     limitPerUser: number;
+    /** hours the mint stays open; 0/undefined = NO deadline — the default:
+     *  the mint stays open until the collection sells out */
+    durationHours?: number;
   };
 }
 
@@ -820,7 +823,8 @@ async function runCollectionPipeline(
         costTokens: c.costTokens,
         limitPerUser: c.limitPerUser,
         startDate,
-        endDate,
+        // no duration = no deadline: the mint stays open until sold out
+        endDate: c.durationHours ? startDate + c.durationHours * 3600 : null,
       },
     })
   );
@@ -904,7 +908,8 @@ async function deployCollectionMints(
     }
     const tx = await contract.createCollection({
       startTime: Math.floor(new Date(cm.startTime).getTime() / 1000),
-      closeTime: Math.floor(new Date(cm.endTime).getTime() / 1000),
+      // null endTime -> closeTime 0 = no deadline, open until sold out
+      closeTime: cm.endTime ? Math.floor(new Date(cm.endTime).getTime() / 1000) : 0,
       maxSupply: cm.maxSupply,
       mintCount: 0,
       limitPerUser: cm.limitPerUser,

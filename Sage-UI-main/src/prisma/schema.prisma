@@ -63,7 +63,7 @@ model CollectionMint {
   mintCount        Int       @default(0) // cached on-chain mint count
   isLive           Boolean   @default(false)
   startTime        DateTime
-  endTime          DateTime
+  endTime          DateTime? // null = NO deadline — mint stays open until sold out
   manifestId       String? // Arweave path-manifest txid (set when processing completes)
   baseUri          String? // https://arweave.net/{manifestId}/ — token i's metadata at {i}.json
   previewImagePath String? // first image's URL, for tiles/cards
