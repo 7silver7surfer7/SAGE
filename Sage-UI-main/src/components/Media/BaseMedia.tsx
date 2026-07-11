@@ -4,7 +4,7 @@ import Image, { ImageProps } from 'next/image';
 import Zoom from 'react-medium-image-zoom';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useState } from 'react';
-import { isVideoSrc, videoPlaybackSrc, videoPosterSrc } from '@/utilities/media';
+import { arweaveProxySrc, isVideoSrc, videoPlaybackSrc, videoPosterSrc } from '@/utilities/media';
 // video.js is ~200 kB minified; load it only when a video actually renders
 const VideoJS = dynamic(() => import('./VideoJS'), { ssr: false });
 
@@ -68,7 +68,10 @@ function BaseMedia({
   fit = 'cover',
 }: BaseMediaProps) {
   const isVideo = (): boolean => isVideoSrc(src);
-  const retryable = useRetryableSrc(src);
+  // Images route through the same resilient /api/media proxy as video (gateway
+  // retries + caching) — a banner or artwork image can 404 for hours on a
+  // stale Arweave edge node exactly like an unpatched video used to.
+  const retryable = useRetryableSrc(arweaveProxySrc(src));
 
   const videoMustStartMuted = () => {
     if (typeof window !== 'undefined') {
@@ -174,7 +177,7 @@ interface PfpImageProps {
 }
 
 function PfpImage({ src, className }: PfpImageProps) {
-  const retryable = useRetryableSrc(src);
+  const retryable = useRetryableSrc(arweaveProxySrc(src));
   if (!src) {
     // return <Image src={DEFAULT_PROFILE_PICTURE} className={className || 'default-pfp-src'} layout='fill' objectFit='cover' />;
     return (

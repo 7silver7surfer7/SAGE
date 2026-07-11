@@ -626,6 +626,11 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   // deploy (the drop already succeeded on-chain), so it's awaited but its
   // errors are swallowed.
   await prewarmDropVideos(drop);
+  // Same reasoning applies to plain images (banner, tile, artist icon): an
+  // Arweave edge node that hasn't propagated a fresh upload yet 404s it just
+  // like an unwarmed video would. Warming here means the FIRST real visitor —
+  // not just mobile viewers — gets a cache hit instead of hitting the gap live.
+  await prewarmDropImages(drop);
 }
 
 /**
@@ -840,6 +845,45 @@ async function prewarmDropVideos(drop: DropFull) {
     await Promise.allSettled(videos.map(prewarmOneVideo));
   } catch (e) {
     console.log('prewarmDropVideos() skipped', e);
+  }
+}
+
+/**
+ * Warms the drop's plain images (banner/tile/featured/mobile-cover + the
+ * artist's icon) through the media proxy. Unlike video, these never need a
+ * transcode — the prewarm just forces the proxy's gateway-retry-with-backoff
+ * to run server-side, ahead of any real visitor. Silent best-effort: an image
+ * still propagating just means a (rare, temporary) broken image on first
+ * view, not a failed deploy — no dropProgress step, to avoid alarming the
+ * admin over something that self-heals.
+ */
+async function prewarmDropImages(drop: DropFull) {
+  try {
+    const candidates = [
+      drop.bannerImageS3Path,
+      drop.tileImageS3Path,
+      drop.featuredMediaS3Path,
+      drop.mobileCoverS3Path,
+      drop.NftContract?.Artist?.profilePicture,
+    ];
+    const seen = new Set<string>();
+    const txids: string[] = [];
+    for (const src of candidates) {
+      const m = src && /arweave\.net\/([A-Za-z0-9_-]{43})/.exec(src);
+      if (m && !seen.has(m[1])) {
+        seen.add(m[1]);
+        txids.push(m[1]);
+      }
+    }
+    await Promise.allSettled(
+      txids.map((txid) =>
+        fetch(`/api/media/${txid}/?prewarm=1`).catch(() => {
+          /* proxy will retry again on first real view */
+        })
+      )
+    );
+  } catch (e) {
+    console.log('prewarmDropImages() skipped', e);
   }
 }
 
