@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { once } from 'events';
+import { s3MirrorUrl } from '@/utilities/s3Mirror';
 
 /**
  * Range-capable transcoding proxy for Arweave media.
@@ -125,6 +126,19 @@ async function fetchFromGateway(txid: string): Promise<Response> {
       console.warn(`media proxy [${txid}]: gateway attempt ${i + 1} failed (${last}), retrying…`);
       await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
     }
+  }
+  // Every Arweave gateway retry failed — before giving up, try the S3 mirror
+  // (display-only backup; a GET here is a plain public request, no signing).
+  // A txid that was never mirrored (e.g. metadata) just 404s here too, and
+  // the original Arweave error below is what actually gets thrown/reported.
+  try {
+    const s3res = await fetch(s3MirrorUrl(txid));
+    if (s3res.ok && s3res.body) {
+      console.log(`media proxy [${txid}]: Arweave gateway exhausted, served from S3 mirror`);
+      return s3res;
+    }
+  } catch {
+    /* no mirror available — fall through to the real error */
   }
   throw new Error(`gateway did not serve data after retries (${last})`);
 }

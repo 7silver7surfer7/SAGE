@@ -6,6 +6,7 @@ import { Role } from '@prisma/client';
 import { OPTIMIZED_IMAGE_WIDTH } from '@/constants/config';
 import { arweaveUrl, sendArweaveTransaction } from '@/utilities/arweave-server';
 import { requireRole } from '@/utilities/apiAuth';
+import { mirrorToS3 } from '@/utilities/s3Mirror';
 
 export const config = { api: { bodyParser: false } };
 
@@ -49,6 +50,15 @@ async function handler(req: RequestWithFile, res: NextApiResponse) {
     // migration off S3 (S3 paths kept their real .mp4 extension).
     const isVideo = mimeType === 'video/mp4';
     const url = arweaveUrl(tx.id) + (isVideo ? '?filetype=mp4' : '');
+    // Display-only backup: mirror the bytes to S3 keyed by txid, so the media
+    // proxy has an instant fallback when a fresh Arweave upload hasn't
+    // propagated to a viewer's gateway node yet. Best-effort (mirrorToS3
+    // never throws) — Arweave is already the permanent record; a mirror
+    // failure must never fail the upload. Awaited (not fire-and-forget):
+    // Cloud Run can freeze the instance right after the response is sent,
+    // which would kill an un-awaited background upload mid-flight. NOT done
+    // for NFT metadata (a separate upload path).
+    await mirrorToS3(tx.id, mimeType, buffer);
 
     // Produce a resized JPEG for display, when the format benefits from it.
     let optimizedUrl = url;
@@ -63,6 +73,7 @@ async function handler(req: RequestWithFile, res: NextApiResponse) {
         'image/jpeg'
       );
       optimizedUrl = arweaveUrl(optimizedTx.id);
+      await mirrorToS3(optimizedTx.id, 'image/jpeg', jpegBuffer);
     }
 
     res.json({ url, optimizedUrl });

@@ -631,6 +631,9 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   // like an unwarmed video would. Warming here means the FIRST real visitor —
   // not just mobile viewers — gets a cache hit instead of hitting the gap live.
   await prewarmDropImages(drop);
+  // Backstop for the S3 display-mirror (upload time already tried this; this
+  // catches any that failed then, e.g. a transient network blip).
+  await syncMissingS3Mirrors(drop, fetchWithBQ);
 }
 
 /**
@@ -884,6 +887,45 @@ async function prewarmDropImages(drop: DropFull) {
     );
   } catch (e) {
     console.log('prewarmDropImages() skipped', e);
+  }
+}
+
+/**
+ * Deploy-time backstop for the S3 display-mirror (src/utilities/s3Mirror.ts):
+ * re-syncs any video/image whose upload-time mirror write failed, over the
+ * same txid set prewarmDropVideos/prewarmDropImages already warm. Silent
+ * best-effort, exactly like prewarmDropImages — a missing mirror doesn't
+ * block or alarm over a deploy that already succeeded on-chain.
+ */
+async function syncMissingS3Mirrors(drop: DropFull, fetchWithBQ: any) {
+  try {
+    const nfts = [
+      ...drop.Auctions.map((a) => a.Nft),
+      ...drop.Lotteries.flatMap((l) => l.Nfts),
+      ...drop.OpenEditions.map((oe) => oe.Nft),
+    ];
+    const candidates = [
+      ...nfts.map((nft) => nft?.s3PathOptimized),
+      drop.bannerImageS3Path,
+      drop.tileImageS3Path,
+      drop.featuredMediaS3Path,
+      drop.mobileCoverS3Path,
+      drop.NftContract?.Artist?.profilePicture,
+    ];
+    const seen = new Set<string>();
+    const txids: string[] = [];
+    for (const src of candidates) {
+      const txid = arweaveTxid(src);
+      if (txid && !seen.has(txid)) {
+        seen.add(txid);
+        txids.push(txid);
+      }
+    }
+    await Promise.allSettled(
+      txids.map((txid) => fetchWithBQ(`endpoints/dropUpload?action=EnsureS3Mirror&txid=${txid}`))
+    );
+  } catch (e) {
+    console.log('syncMissingS3Mirrors() skipped', e);
   }
 }
 

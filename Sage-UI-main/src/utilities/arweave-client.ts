@@ -1,6 +1,9 @@
 import { buildNftMetadata } from './nftMetadata';
+import { uploadFileToS3 } from './awsS3-client';
 
 const ARWEAVE_UPLOAD_ENDPOINT = '/api/endpoints/arweaveUpload/';
+const DROP_UPLOAD_ENDPOINT = '/api/endpoints/dropUpload/';
+const S3_MIRROR_FOLDER = 'arweave-mirror';
 
 // Cloud Run rejects request bodies over 32MB at Google's edge (hard HTTP/1
 // limit — the request never reaches the app, so the server upload endpoint
@@ -128,6 +131,19 @@ async function uploadLargeFileToArweave(
     );
   } else {
     console.log(`uploadLargeFileToArweave() :: ${signedTx.id} readable`);
+  }
+
+  // Display-only backup: mirror the same bytes to S3 keyed by txid, so the
+  // media proxy has an instant fallback if this viewer's Arweave gateway node
+  // hasn't propagated the upload yet — exactly the failure mode above (the
+  // whole reason for the isArweaveDataRetrievable dance). The server never
+  // saw these bytes (only a signed header), so this mirror has to happen
+  // browser-side too. Best-effort: Arweave already has the permanent copy,
+  // so a mirror failure must never fail the upload.
+  try {
+    await uploadFileToS3(DROP_UPLOAD_ENDPOINT, S3_MIRROR_FOLDER, signedTx.id, file);
+  } catch (e: any) {
+    console.warn(`uploadLargeFileToArweave() :: S3 mirror failed (non-fatal):`, e?.message || e);
   }
 
   const isVideo = file.type === 'video/mp4';

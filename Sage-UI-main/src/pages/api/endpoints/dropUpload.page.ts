@@ -5,6 +5,7 @@ import prisma from '@/prisma/client';
 import { Role } from '@prisma/client';
 import { createS3SignedUrl } from '@/utilities/awsS3-server';
 import { sendArweaveTransaction, signChunkedUploadTx } from '@/utilities/arweave-server';
+import { mirrorToS3, s3MirrorUrl } from '@/utilities/s3Mirror';
 import { getRequester, requireRole, Requester } from '@/utilities/apiAuth';
 import { parameters } from '@/constants/config';
 import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SAGEOpenEdition.json';
@@ -17,8 +18,14 @@ import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SA
 // writing anything, so a plain USER role here isn't a trust concession.
 const ACTION_ROLES: Record<string, Role[]> = {
   GetArtistNftContractAddress: [Role.ARTIST, Role.ADMIN],
-  CreateS3SignedUrl: [Role.ADMIN], // legacy S3 path, unused by current UI
+  // also used by uploadLargeFileToArweave's browser-direct S3 mirror step —
+  // the server never sees bytes for >25MB uploads, so the signed-PUT dance
+  // this action provides is how the browser mirrors those bytes to S3 too
+  CreateS3SignedUrl: [Role.ADMIN],
   CopyFromS3toArweave: [Role.ADMIN], // legacy S3 path, unused by current UI
+  // deploy-time backstop: pushes a display-only S3 mirror for a txid whose
+  // upload-time mirror write failed (see src/utilities/s3Mirror.ts)
+  EnsureS3Mirror: [Role.ADMIN],
   UploadNftMetadataToArweave: [Role.ARTIST, Role.ADMIN],
   InsertDrop: [Role.ADMIN],
   InsertAuction: [Role.ADMIN],
@@ -62,6 +69,9 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       break;
     case 'CopyFromS3toArweave':
       await copyFromS3toArweave(String(request.query.s3Path), response);
+      break;
+    case 'EnsureS3Mirror':
+      await ensureS3Mirror(String(request.query.txid), response);
       break;
     case 'UploadNftMetadataToArweave':
       await uploadNftMetadataToArweave(request.body, response);
@@ -164,6 +174,43 @@ async function copyFromS3toArweave(s3Path: string, response: NextApiResponse) {
   } catch (e: any) {
     console.log(e);
     response.json({ error: (e as Error).message, balance });
+  }
+}
+
+const TXID_RE = /^[A-Za-z0-9_-]{43}$/; // base64url tx id — also SSRF guard
+
+/**
+ * Deploy-time backstop for the S3 display-mirror: if a txid's upload-time
+ * mirror write failed (network blip, etc.), re-derive it here by fetching
+ * the bytes straight from Arweave — by the time this runs in deployDrop, the
+ * pre-mint gate has just confirmed the txid IS retrievable from Arweave — and
+ * pushing them to S3. Best-effort: always responds 200 with a `mirrored`
+ * flag rather than an HTTP error, so a failure here never blocks a deploy
+ * that already succeeded on-chain.
+ */
+async function ensureS3Mirror(txid: string, response: NextApiResponse) {
+  if (!TXID_RE.test(txid)) {
+    response.status(400).json({ error: 'invalid transaction id' });
+    return;
+  }
+  try {
+    const head = await fetch(s3MirrorUrl(txid), { method: 'HEAD' });
+    if (head.ok) {
+      response.json({ mirrored: true, alreadyExisted: true });
+      return;
+    }
+    const arRes = await fetch(`https://arweave.net/${txid}`);
+    if (!arRes.ok || !arRes.body) {
+      response.json({ mirrored: false, error: `Arweave fetch failed (${arRes.status})` });
+      return;
+    }
+    const contentType = arRes.headers.get('content-type') || 'application/octet-stream';
+    const buffer = Buffer.from(await arRes.arrayBuffer());
+    await mirrorToS3(txid, contentType, buffer);
+    response.json({ mirrored: true, alreadyExisted: false });
+  } catch (e: any) {
+    console.log(e);
+    response.json({ mirrored: false, error: (e as Error).message });
   }
 }
 
