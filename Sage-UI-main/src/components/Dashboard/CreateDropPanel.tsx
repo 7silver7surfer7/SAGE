@@ -6,6 +6,7 @@ import {
   useCreateDropWithUploadsMutation,
 } from '@/store/dropsReducer';
 import { useGetUserDisplayInfoQuery } from '@/store/usersReducer';
+import { useGetPrimaryPlatformCutQuery } from '@/store/dashboardReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import shortenAddress from '@/utilities/shortenAddress';
 import { parseAddressList, ALLOWLIST_MAX_ADDRESSES } from '@/utilities/allowlist';
@@ -22,6 +23,9 @@ interface ArtworkRow extends NewDropArtwork {
 
 export default function CreateDropPanel() {
   const { walletAddress, signer } = useSAGEAccount();
+  // current global platform primary-sale cut — shown so the admin knows what
+  // this drop will LOCK at deploy (the dial itself lives in the Config tab)
+  const { data: primaryPlatformCut } = useGetPrimaryPlatformCutQuery();
   const [createDrop, { isLoading: isCreating }] = useCreateDropWithUploadsMutation();
   const [artistWallet, setArtistWallet] = useState('');
   const [artistDisplayName, setArtistDisplayName] = useState('');
@@ -490,6 +494,11 @@ export default function CreateDropPanel() {
             <em className='create-drop-panel__section-hint'>
               Applies to marketplace re-sales of this drop&apos;s NFTs only — stamped permanently
               on each NFT at mint. Primary-sale splits are unaffected.
+            </em>
+            <em className='create-drop-panel__section-hint'>
+              PRIMARY-sale split for this drop: artist {100 - (primaryPlatformCut ?? 20)}% /
+              platform {primaryPlatformCut ?? 20}% — locked at deploy. Change the platform cut
+              in the Config tab before deploying.
             </em>
           </label>
           <label className='create-drop-panel__label'>
