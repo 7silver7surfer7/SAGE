@@ -121,6 +121,21 @@ function BaseMedia({
             }}
           >
             <VideoJS options={videoJsOptions} onReady={() => {}} fit={fit} />
+            {/* video.js preventDefault()s a tap's touchend ("Don't let browser
+                turn this into a click"), so on touch devices taps on the video
+                never become clicks and ancestor onClick handlers (artwork tiles
+                routing to a drop) never fire. This transparent layer catches
+                the tap instead — video.js's listeners aren't in its event path
+                — and the browser synthesizes a normal bubbling click. Our
+                videos never show controls, so covering them costs nothing.
+                NOTE: it anchors to the nearest positioned ancestor (the tile),
+                same as the absolutely-positioned <video> itself — do not make
+                the wrapper above position:relative or both will clip to its
+                zero-height box. */}
+            <div
+              onClick={onClickHandler}
+              style={{ position: 'absolute', inset: 0 }}
+            />
           </div>
         ) : isZoomable ? (
           <img
