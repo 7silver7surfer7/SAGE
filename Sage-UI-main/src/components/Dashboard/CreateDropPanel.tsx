@@ -235,7 +235,8 @@ export default function CreateDropPanel() {
             </label>
             <em className='create-drop-panel__section-hint'>
               Becomes the artist&apos;s profile icon, shown next to their name on drops and the
-              storefront instead of the default SAGE icon. Leave empty to keep their current one.
+              storefront. If the artist has no uploaded icon, no icon is shown at all. Leave
+              empty to keep their current one.
             </em>
             {artistIconFile && (
               <button

@@ -14,6 +14,9 @@ export default function LatestArtists({ latestArtists }: Props) {
       </p>
       <div className='home-page__latest-artists-flex-container'>
         {latestArtists.map((a) => {
+          // the strip is icons-only: artists without an uploaded icon are
+          // skipped entirely (never the default SAGE mark)
+          if (!a.profilePicture) return null;
           return (
             <div key={a.username} className='home-page__latest-artists-item'>
               <PfpImage src={a.profilePicture}></PfpImage>

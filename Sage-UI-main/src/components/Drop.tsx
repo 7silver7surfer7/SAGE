@@ -53,9 +53,12 @@ export default function Drop({ drop }: Props) {
 
       <div className='details'>
         <div className='artist'>
-          <div className='artist-pfp'>
-            <PfpImage src={drop.NftContract.Artist.profilePicture || undefined} />
-          </div>
+          {/* no uploaded icon -> no icon at all (never the default SAGE mark) */}
+          {drop.NftContract.Artist.profilePicture && (
+            <div className='artist-pfp'>
+              <PfpImage src={drop.NftContract.Artist.profilePicture} />
+            </div>
+          )}
           <h1 className='artist-name'>
             {drop.NftContract.Artist.username || shortenAddress(drop.NftContract.artistAddress)}
           </h1>

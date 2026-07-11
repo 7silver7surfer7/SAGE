@@ -167,14 +167,17 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, g
         <section className='drop-page__content'>
           <div className='drop-page__drop-info'>
             <div className='drop-page__artist'>
-              <div
-                onClick={() => {
-                  pushToCreators(artistName);
-                }}
-                className='drop-page__artist-pfp'
-              >
-                <PfpImage src={artist.profilePicture}></PfpImage>
-              </div>
+              {/* no uploaded icon -> no icon at all (never the default SAGE mark) */}
+              {artist.profilePicture && (
+                <div
+                  onClick={() => {
+                    pushToCreators(artistName);
+                  }}
+                  className='drop-page__artist-pfp'
+                >
+                  <PfpImage src={artist.profilePicture}></PfpImage>
+                </div>
+              )}
               <div className='drop-page__artist-info'>
                 <p className='drop-page__artist-name'>{artist.username}</p>
                 {state && country && (

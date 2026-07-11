@@ -18,9 +18,12 @@ export default function GamesModalHeader({ src, isVideo, artist, nftEditions, nf
       </div>
       <div className='games-modal__header-right'>
         <div className='games-modal__header-artist'>
-          <div className='games-modal__header-artist-pfp'>
-            <PfpImage src={artist.profilePicture} />
-          </div>
+          {/* no uploaded icon -> no icon at all (never the default SAGE mark) */}
+          {artist.profilePicture && (
+            <div className='games-modal__header-artist-pfp'>
+              <PfpImage src={artist.profilePicture} />
+            </div>
+          )}
           <div className='games-modal__header-artist-name'>
             {artist.username || 'username'}
           </div>

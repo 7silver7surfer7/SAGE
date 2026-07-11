@@ -21,12 +21,15 @@ function FeaturedDrop({ drop, artist, Lotteries, Auctions, OpenEditions }: Props
       <Hero bannerOnClick={goToDropOnClick} imgSrc={bannerImgSrc} />
       <div className='home-page__featured-drop-tag-section'>
         <div className='home-page__featured-drop-tag-info'>
-          <div
-            className='home-page__featured-drop-pfp'
-            onClick={() => pushToCreators(artist.username)}
-          >
-            <PfpImage src={artist.profilePicture}></PfpImage>
-          </div>
+          {/* no uploaded icon -> no icon at all (never the default SAGE mark) */}
+          {artist.profilePicture && (
+            <div
+              className='home-page__featured-drop-pfp'
+              onClick={() => pushToCreators(artist.username)}
+            >
+              <PfpImage src={artist.profilePicture}></PfpImage>
+            </div>
+          )}
           <span className='home-page__featured-drop-tag-label' onClick={goToArtistOnClick}>
             {dropName} by {artistName}
           </span>
