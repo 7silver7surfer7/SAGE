@@ -25,11 +25,18 @@
   position: fixed;
   inset: 0;
   display: flex;
-  align-items: center;
   justify-content: center;
+  // When the panel outgrows the viewport (e.g. bid modal with history open),
+  // the whole modal scrolls. Centering comes from the panel's auto margins,
+  // NOT align-items: center — flex-centering a too-tall child pushes its top
+  // edge above the scroll area where it can never be reached.
+  overflow-y: auto;
 }
 
 .modal__panel {
+  // vertically centers when shorter than the viewport, collapses to 0 when
+  // taller so the top stays reachable by scrolling (see .modal__container)
+  margin: auto 0;
   @include m.theme() {
     position: relative;
     display: flex;
