@@ -1140,7 +1140,11 @@ async function updateDbApprovedDateAndIsLiveFlags(drop: DropFull, fetchWithBQ: a
   let lastErr = '';
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetchWithBQ(`drops?action=UpdateApprovedDateAndIsLiveFlags&id=${drop.id}`);
-    if (res?.data?.approvedAt) return res.data.approvedAt;
+    // accept both response shapes: { approvedAt } (current) and the bare date
+    // (pre-rev-31 servers) — the mismatch once made SUCCESSFUL approvals look
+    // failed and surfaced a bogus "re-approve" error after a clean deploy
+    const approvedAt = res?.data?.approvedAt ?? (typeof res?.data === 'string' ? res.data : null);
+    if (approvedAt) return approvedAt;
     lastErr = (res?.error && JSON.stringify(res.error)) || 'no approvedAt returned';
     console.warn(`approval-flags attempt ${attempt + 1} failed (${lastErr}), retrying…`);
     await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));

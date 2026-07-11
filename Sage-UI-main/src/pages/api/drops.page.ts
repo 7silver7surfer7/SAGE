@@ -407,7 +407,9 @@ async function updateApprovedDateAndIsLiveFlags(
       where: { dropId: Number(id) },
       data: { isLive: true, contractAddress: parameters.OPENEDITION_ADDRESS },
     });
-    response.json(approvedAt);
+    // object shape — the deploy flow's retry check reads res.data.approvedAt
+    // (returning the bare date here made every successful call look failed)
+    response.json({ approvedAt });
   } catch (e) {
     console.log(e);
     response.status(500);
