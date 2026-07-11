@@ -126,19 +126,31 @@ describe("OpenEdition Contract", function() {
         expect(await openEdition.getMintCount(2)).to.equal(10);
     });
 
-    it("Should honor SageConfig platform cut on token mints", async function() {
+    it("Should freeze the platform cut per edition at creation", async function() {
         const CONFIG_KEY = ethers.utils.solidityKeccak256(["string"], ["address.config"]);
         const SHARE_KEY = ethers.utils.solidityKeccak256(["string"], ["share.primaryArtist"]);
         const SageConfig = await ethers.getContractFactory("SageConfig");
         const sageConfig = await SageConfig.deploy(sageStorage.address);
         await sageStorage.setAddress(CONFIG_KEY, sageConfig.address);
-        await sageConfig.setUint(SHARE_KEY, 7000); // artist 70 / platform 30
+
+        // fixture editions were created before the config existed -> frozen 8000
+        expect(await openEdition.editionArtistShare(2)).to.equal(8000);
+        // set the dial to 70/30 and create a NEW edition -> frozen 7000
+        await sageConfig.setUint(SHARE_KEY, 7000);
+        await openEdition.createOpenEdition({ ...openEditionInfo, id: 99 });
+        expect(await openEdition.editionArtistShare(99)).to.equal(7000);
+        // change the dial again -> edition 99 must NOT move
+        await sageConfig.setUint(SHARE_KEY, 5000);
 
         const artistBefore = await mockERC20.balanceOf(artist.address);
         const multisigBefore = await mockERC20.balanceOf(multisig.address);
-        await openEdition.connect(addr2).batchMint(2, 10); // cost 10 tokens each = 100
+        await openEdition.connect(addr2).batchMint(99, 10); // cost 10 tokens each = 100
         expect(await mockERC20.balanceOf(artist.address)).to.equal(artistBefore.add(70));
         expect(await mockERC20.balanceOf(multisig.address)).to.equal(multisigBefore.add(30));
+        // edition 2 (frozen 8000) still pays 80/20 despite the dial at 5000
+        const a2 = await mockERC20.balanceOf(artist.address);
+        await openEdition.connect(addr2).batchMint(2, 10);
+        expect((await mockERC20.balanceOf(artist.address)).sub(a2)).to.equal(80);
     });
 
     it("Should throw if minting more than user limit", async function() {

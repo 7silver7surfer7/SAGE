@@ -44,6 +44,11 @@ contract SAGEOpenEdition is Pausable {
     // mapping openEditionId => OpenEdition
     mapping(uint256 => OpenEdition) public openEditions;
 
+    // Artist share (bps) FROZEN per edition at creation, so a drop's split
+    // can never shift mid-sale when the dashboard dial changes. 0 = falls
+    // back to the live SageConfig value.
+    mapping(uint256 => uint256) public editionArtistShare;
+
     modifier onlyMultisig() {
         require(sageStorage.multisig() == msg.sender, "Admin calls only");
         _;
@@ -132,6 +137,19 @@ contract SAGEOpenEdition is Pausable {
             "Invalid times"
         );
         openEditions[oe.id] = oe;
+        // freeze the platform split for this edition at its creation-time value
+        editionArtistShare[oe.id] = _primaryArtistShare();
+    }
+
+    /** Corrective/backfill setter for an edition's frozen artist share.
+     *  0 resets the edition to follow the live SageConfig value. */
+    function setEditionArtistShare(uint256 _id, uint256 _shareBps)
+        external
+        onlyAdmin
+    {
+        require(_shareBps <= 10000, "Invalid share");
+        require(openEditions[_id].startTime > 0, "Edition doesn't exist");
+        editionArtistShare[_id] = _shareBps;
     }
 
     function setWhitelist(uint256 _id, address _whitelist) public onlyAdmin {
@@ -181,8 +199,9 @@ contract SAGEOpenEdition is Pausable {
         uint256 totalCostInTokens = oe.costTokens * _amount;
 
         if (totalCostInTokens > 0) {
-            uint256 artistShare = (totalCostInTokens * _primaryArtistShare()) /
-                10000;
+            uint256 share = editionArtistShare[_id];
+            if (share == 0) share = _primaryArtistShare();
+            uint256 artistShare = (totalCostInTokens * share) / 10000;
             token.transferFrom(
                 msg.sender,
                 oe.nftContract.artist(),

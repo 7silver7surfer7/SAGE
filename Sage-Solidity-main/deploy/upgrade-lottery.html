@@ -30,14 +30,14 @@
 </head>
 <body>
   <h1>Upgrade Lottery Contract 🎟️</h1>
-  <p class="sub">Points the Lottery proxy at the new implementation (configurable
-  platform primary-sale cut). Must be signed by the CURRENT multisig wallet.
+  <p class="sub">Points the Lottery proxy at the new implementation (platform cut now
+  FROZEN per drawing at creation). Must be signed by the CURRENT multisig wallet.
   All live lottery state is preserved — this only swaps the code.</p>
 
   <div class="card">
     <div class="row"><span>Network</span><b>Robinhood Chain testnet (46630)</b></div>
     <div class="row"><span>Lottery proxy</span><code>0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E</code></div>
-    <div class="row"><span>New implementation</span><code>0xcC751493280D8F4668Dc1009B05C38c7787808bA</code></div>
+    <div class="row"><span>New implementation</span><code>0xB5A1D86aED9FB8E7CbD28a76606A4c98e4961DEA</code></div>
     <div class="row"><span>Required signer (current multisig)</span><code id="multisig">—</code></div>
     <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
   </div>
@@ -49,7 +49,7 @@
 (async function () {
   const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
   const LOTTERY_PROXY = '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E';
-  const NEW_IMPL = '0xcc751493280d8f4668dc1009b05c38c7787808ba';
+  const NEW_IMPL = '0xb5a1d86aed9fb8e7cbd28a76606a4c98e4961dea';
   const CHAIN_ID = '0xb626'; // 46630
   const SEL_MULTISIG = '0x4783c35b';   // multisig()
   const SEL_UPGRADE_TO = '0x3659cfe6'; // upgradeTo(address)

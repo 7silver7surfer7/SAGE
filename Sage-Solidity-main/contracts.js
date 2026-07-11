@@ -28,7 +28,7 @@ CONTRACTS = {
         storageAddress: "0x43E26D8B5c559DECb09d65F325e1405589775BA2",
         factoryAddress: "0x21e8Bb18193Db10ddecACE141EDE66882c08D991",
         lotteryAddress: "0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E",
-        openEditionAddress: "0x2e07Bf3E70958998B73126F1E13Ab9163f58547c",
+        openEditionAddress: "0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9",
         randomnessAddress: "0xB438593B6ceea256A65dE8E722f8F1718f963773",
         rewardsAddress: "0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC",
         auctionAddress: "0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD",

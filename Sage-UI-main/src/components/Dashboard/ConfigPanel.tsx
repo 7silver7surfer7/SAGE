@@ -191,10 +191,11 @@ export function ConfigPanel() {
           className='creations-panel__file-input-field'
         />
         <em style={{ display: 'block', fontSize: '0.75em', opacity: 0.7, marginTop: '4px' }}>
-          Platform&apos;s share of PRIMARY sales (auctions, drawings, open editions, and first
-          marketplace sales). The artist receives the rest. Applies to all future payouts,
-          including games already live. Saving sends a transaction from the connected admin
-          wallet. Leave blank for the default.
+          Platform&apos;s share of PRIMARY sales (auctions, drawings, open editions). The artist
+          receives the rest. Each drop LOCKS this value at deploy time — changing it here only
+          affects drops deployed afterwards, never live or past sales. (First marketplace
+          listings use the live value at sale time.) Saving sends a transaction from the
+          connected admin wallet. Leave blank for the default.
         </em>
         <button
           disabled={isSavingPrimaryCut}

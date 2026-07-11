@@ -483,13 +483,25 @@ describe("Lottery Contract", function() {
             expect(await lottery.prizeClaimed(2, 3)).to.equal(true);
         });
 
-        it("Should honor SageConfig platform cut on prize claim", async function() {
+        it("Should freeze the platform cut per lottery at creation", async function() {
             const CONFIG_KEY = ethers.utils.solidityKeccak256(["string"], ["address.config"]);
             const SHARE_KEY = ethers.utils.solidityKeccak256(["string"], ["share.primaryArtist"]);
             const SageConfig = await ethers.getContractFactory("SageConfig");
             const sageConfig = await SageConfig.deploy(sageStorage.address);
             await sageStorage.setAddress(CONFIG_KEY, sageConfig.address);
-            await sageConfig.setUint(SHARE_KEY, 7000); // artist 70 / platform 30
+
+            // fixture lottery 2 was created before the config existed -> frozen 8000
+            expect(await lottery.lotteryArtistShare(2)).to.equal(8000);
+            // new lottery created with the dial at 70/30 stamps 7000
+            await sageConfig.setUint(SHARE_KEY, 7000);
+            await lottery.createLottery({ ...lotteryInfo, lotteryID: 77 });
+            expect(await lottery.lotteryArtistShare(77)).to.equal(7000);
+
+            // corrective setter re-stamps lottery 2, and the payout honors it
+            await lottery.setLotteryArtistShare(2, 7000);
+            await expect(
+                lottery.connect(addr1).setLotteryArtistShare(2, 1)
+            ).to.be.revertedWith("Admin calls only");
 
             await lottery.connect(addr1).buyTickets(2, 1); // ticketCostTokens = 10
             const multisigBefore = await mockERC20.balanceOf(multisig.address);

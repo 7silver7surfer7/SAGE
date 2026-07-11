@@ -32,6 +32,13 @@ contract Auction is
         keccak256(abi.encodePacked("share.primaryArtist"));
 
     IERC20 public token;
+
+    // Artist share (bps) FROZEN per auction at creation, so a drop's split
+    // can never shift mid-sale when the dashboard dial changes. 0 = created
+    // before this feature -> falls back to the live SageConfig value.
+    // APPEND-ONLY: declared after all pre-existing state vars (UUPS layout).
+    mapping(uint256 => uint256) public auctionArtistShare;
+
     struct AuctionInfo {
         address highestBidder;
         INFT nftContract;
@@ -118,11 +125,24 @@ contract Auction is
             "Auction already exists"
         );
         auctions[_auctionInfo.auctionId] = _auctionInfo;
+        // freeze the platform split for this auction at its creation-time value
+        auctionArtistShare[_auctionInfo.auctionId] = _primaryArtistShare();
 
         emit AuctionCreated(
             _auctionInfo.auctionId,
             address(_auctionInfo.nftContract)
         );
+    }
+
+    /** Corrective/backfill setter for a game's frozen artist share.
+     *  0 resets the game to follow the live SageConfig value. */
+    function setAuctionArtistShare(uint256 _auctionId, uint256 _shareBps)
+        external
+        onlyAdmin
+    {
+        require(_shareBps <= 10000, "Invalid share");
+        require(auctions[_auctionId].startTime > 0, "Auction doesn't exist");
+        auctionArtistShare[_auctionId] = _shareBps;
     }
 
     function createAuctionBatch(AuctionInfo[] calldata _auctions)
@@ -149,7 +169,9 @@ contract Auction is
         auction.settled = true;
         if (highestBidder != address(0)) {
             auction.nftContract.safeMint(highestBidder, auction.nftUri);
-            uint256 artistShare = (highestBid * _primaryArtistShare()) / 10000;
+            uint256 share = auctionArtistShare[_auctionId];
+            if (share == 0) share = _primaryArtistShare();
+            uint256 artistShare = (highestBid * share) / 10000;
             token.transfer(auction.nftContract.artist(), artistShare);
             token.transfer(sageStorage.multisig(), highestBid - artistShare);
         }

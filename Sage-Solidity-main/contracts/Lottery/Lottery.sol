@@ -69,6 +69,12 @@ contract Lottery is
     //lotteryId => address array
     mapping(uint256 => address[]) public lotteryTickets;
 
+    // Artist share (bps) FROZEN per lottery at creation, so a drop's split
+    // can never shift mid-sale when the dashboard dial changes. 0 = created
+    // before this feature -> falls back to the live SageConfig value.
+    // APPEND-ONLY: declared after all pre-existing state vars (UUPS layout).
+    mapping(uint256 => uint256) public lotteryArtistShare;
+
     // Information about lotteries
     struct LotteryInfo {
         uint32 startTime; // Timestamp where users can start buying tickets
@@ -386,7 +392,23 @@ contract Lottery is
         );
         lotteries.push(_lotteryInfo.lotteryID);
         lotteryHistory[_lotteryInfo.lotteryID] = _lotteryInfo;
+        // freeze the platform split for this lottery at its creation-time value
+        lotteryArtistShare[_lotteryInfo.lotteryID] = _primaryArtistShare();
         emit LotteryStatusChanged(_lotteryInfo.lotteryID, Status.Created);
+    }
+
+    /** Corrective/backfill setter for a lottery's frozen artist share.
+     *  0 resets the lottery to follow the live SageConfig value. */
+    function setLotteryArtistShare(uint256 _lotteryId, uint256 _shareBps)
+        external
+        onlyAdmin
+    {
+        require(_shareBps <= 10000, "Invalid share");
+        require(
+            lotteryHistory[_lotteryId].numberOfEditions > 0,
+            "Lottery doesn't exist"
+        );
+        lotteryArtistShare[_lotteryId] = _shareBps;
     }
 
     function createLotteryBatch(LotteryInfo[] calldata _lotteries)
@@ -578,8 +600,9 @@ contract Lottery is
         if (ticketCostTokens > 0) {
             // Reverts if the user doesn't have enough refundable balance.
             refunds[_lotteryId][msg.sender] -= ticketCostTokens;
-            uint256 artistShare = (ticketCostTokens * _primaryArtistShare()) /
-                10000;
+            uint256 share = lotteryArtistShare[_lotteryId];
+            if (share == 0) share = _primaryArtistShare();
+            uint256 artistShare = (ticketCostTokens * share) / 10000;
             token.transfer(nftContract.artist(), artistShare);
             token.transfer(
                 sageStorage.multisig(),

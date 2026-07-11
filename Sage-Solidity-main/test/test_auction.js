@@ -215,7 +215,12 @@ describe("Auction Contract", function() {
         await sageStorage.setAddress(CONFIG_KEY, sageConfig.address);
         await sageConfig.setUint(SHARE_KEY, 7000);
 
-        await createChainTimeAuction(3);
+        await createChainTimeAuction(3); // stamped 7000 at creation
+        expect(await auction.auctionArtistShare(3)).to.equal(7000);
+        // fixture auctions 1/2 were created BEFORE the config existed -> 8000
+        expect(await auction.auctionArtistShare(2)).to.equal(8000);
+        // changing the dial AFTER creation must NOT affect auction 3 (frozen)
+        await sageConfig.setUint(SHARE_KEY, 5000);
         const artistBefore = await mockERC20.balanceOf(artist.address);
         const multisigBefore = await mockERC20.balanceOf(multisig.address);
         await mockERC20.connect(addr2).approve(auction.address, 10);
