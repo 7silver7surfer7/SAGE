@@ -44,7 +44,7 @@ export default function BidHistoryTable({ auctionId, isActive }: Props) {
   return (
     <table className='games-modal__bid-history-table' data-active={isActive}>
       <tbody className='games-modal__bid-history-data'>
-        {bids?.slice(0, 10).map(({ bidderAddress, bidderUsername, amount, blockTimestamp }) => {
+        {bids?.map(({ bidderAddress, bidderUsername, amount, blockTimestamp }) => {
           // const { amountFormatted, amountFormattedShortened } = formatAmount(amount);
           const dateTime = new Date(blockTimestamp * 1000).toLocaleString();
           // const animateFirst: string = previousData ? 'true' : 'false';
