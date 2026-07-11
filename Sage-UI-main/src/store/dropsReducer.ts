@@ -193,87 +193,8 @@ export const dropsApi = baseApi.injectEndpoints({
           if (req.collection) {
             await runCollectionPipeline(dropId, req, startDate, endDate, fetchWithBQ);
           }
-          const total = req.collection ? 0 : req.artworks.length;
-          for (let i = 0; i < total; i++) {
-            const artwork = req.artworks[i];
-            const label = artwork.name || `artwork ${i + 1}`;
-            const { url, optimizedUrl } = await dropProgress.track(
-              `Uploading "${label}" to Arweave (${i + 1}/${total})`,
-              () => uploadFileToArweave(artwork.file)
-            );
-            const { width, height } = await getMediaDimensions(artwork.file);
-            // Build the ERC-721 metadata JSON and store it on Arweave; its URL
-            // becomes the on-chain tokenURI when the drop is deployed. Without
-            // this, minted NFTs would have a null/blank metadata pointer.
-            const isVideo = artwork.file.type === 'video/mp4';
-            const metadataPath = await dropProgress.track(
-              `Writing metadata for "${label}" to Arweave`,
-              () => createNftMetadataOnArweave(endpoint, artwork.name, artwork.description, url, isVideo)
-            );
-            const media = {
-              name: artwork.name,
-              description: artwork.description,
-              arweavePath: url,
-              metadataPath,
-              s3Path: url,
-              s3PathOptimized: optimizedUrl,
-              width,
-              height,
-            };
-            const saleLabel =
-              artwork.saleType === 'auction'
-                ? 'auction'
-                : artwork.saleType === 'lottery'
-                ? 'drawing'
-                : 'open edition';
-            await dropProgress.track(`Registering ${saleLabel} for "${label}"`, async () => {
-              if (artwork.saleType === 'auction') {
-                const { data: result } = await fetchWithBQ({
-                  url: 'endpoints/dropUpload?action=InsertAuction',
-                  method: 'POST',
-                  body: { dropId, minPrice: String(artwork.minPrice), startDate, endDate, ...media },
-                });
-                if ((result as any)?.error) throw new Error((result as any).error);
-              } else if (artwork.saleType === 'lottery') {
-                const { data: drawingResult } = await fetchWithBQ({
-                  url: 'endpoints/dropUpload?action=InsertDrawing',
-                  method: 'POST',
-                  body: {
-                    dropId,
-                    ticketCostTokens: artwork.ticketCostTokens,
-                    ticketCostPoints: artwork.ticketCostPoints,
-                    maxTickets: artwork.maxTickets,
-                    maxTicketsPerUser: artwork.maxTicketsPerUser,
-                    startDate,
-                    endDate,
-                    isRefundable: 'false',
-                  },
-                });
-                if ((drawingResult as any)?.error) throw new Error((drawingResult as any).error);
-                const drawingId = (drawingResult as any).drawingId as number;
-                const { data: nftResult } = await fetchWithBQ({
-                  url: 'endpoints/dropUpload?action=InsertNft',
-                  method: 'POST',
-                  body: { drawingId, numberOfEditions: 1, ...media },
-                });
-                if ((nftResult as any)?.error) throw new Error((nftResult as any).error);
-              } else {
-                const { data: result } = await fetchWithBQ({
-                  url: 'endpoints/dropUpload?action=InsertOpenEdition',
-                  method: 'POST',
-                  body: {
-                    dropId,
-                    costTokens: artwork.costTokens,
-                    costPoints: artwork.costPoints,
-                    maxPerUser: artwork.maxPerUser,
-                    startDate,
-                    endDate,
-                    ...media,
-                  },
-                });
-                if ((result as any)?.error) throw new Error((result as any).error);
-              }
-            });
+          if (!req.collection) {
+            await uploadAndRegisterArtworks(dropId, req.artworks, startDate, endDate, fetchWithBQ);
           }
           if (req.approveNow) {
             if (req.signer) {
@@ -426,6 +347,67 @@ export const dropsApi = baseApi.injectEndpoints({
     }),
     deleteDrops: builder.mutation<null, void>({
       query: () => `drops?action=DeleteDrops`,
+      invalidatesTags: ['PendingDrops'],
+    }),
+    /** Adds artworks to a SAVED DRAFT — pays Arweave only for the new files;
+     *  everything already uploaded is reused as-is. */
+    addArtworksToDrop: builder.mutation<
+      boolean,
+      { dropId: number; artworks: NewDropArtwork[]; startDate: number; endDate: number }
+    >({
+      queryFn: async ({ dropId, artworks, startDate, endDate }, {}, _, fetchWithBQ) => {
+        dropProgress.reset();
+        dropProgress.note(
+          `Adding ${artworks.length} artwork${artworks.length === 1 ? '' : 's'} to drop #${dropId}`
+        );
+        try {
+          await uploadAndRegisterArtworks(dropId, artworks, startDate, endDate, fetchWithBQ);
+          dropProgress.note('Done — run "verify assets" before approving.');
+          dropProgress.finish();
+          toast.success(`Added ${artworks.length} artwork${artworks.length === 1 ? '' : 's'}.`);
+          return { data: true };
+        } catch (e: any) {
+          console.error('addArtworksToDrop() failed', e);
+          dropProgress.finish();
+          toast.error(`Adding artworks failed: ${extractErrorMessage(e)}`, { autoClose: false });
+          return { data: false };
+        }
+      },
+      invalidatesTags: ['PendingDrops'],
+    }),
+    /** DB-only edit of a draft artwork (name/description/sale params) — free,
+     *  never touches Arweave. */
+    updateDraftArtwork: builder.mutation<boolean, Record<string, any>>({
+      queryFn: async (body, {}, _, fetchWithBQ) => {
+        const { data, error } = await fetchWithBQ({
+          url: 'endpoints/dropUpload?action=UpdateDraftArtwork',
+          method: 'POST',
+          body,
+        });
+        const err = (error as any)?.data?.error || (data as any)?.error;
+        if (err) {
+          toast.error(`Update failed: ${err}`);
+          return { data: false };
+        }
+        return { data: true };
+      },
+      invalidatesTags: ['PendingDrops'],
+    }),
+    deleteDraftArtwork: builder.mutation<boolean, { gameType: string; gameId: number }>({
+      queryFn: async (body, {}, _, fetchWithBQ) => {
+        const { data, error } = await fetchWithBQ({
+          url: 'endpoints/dropUpload?action=DeleteDraftArtwork',
+          method: 'POST',
+          body,
+        });
+        const err = (error as any)?.data?.error || (data as any)?.error;
+        if (err) {
+          toast.error(`Remove failed: ${err}`);
+          return { data: false };
+        }
+        toast.success('Artwork removed from the draft.');
+        return { data: true };
+      },
       invalidatesTags: ['PendingDrops'],
     }),
     // OpenEdition.mintCount in the DB is a snapshot set to 0 at deploy time
@@ -795,6 +777,105 @@ async function syncAllowlistAddresses(
       url: 'drops?action=MarkAllowlistSynced',
       method: 'POST',
       body: { dropId, addresses: batches[i], contractAddress },
+    });
+  }
+}
+
+/**
+ * Uploads each artwork (media + generated metadata, 2 Arweave txs) and
+ * registers its game row on the given drop. Shared by drop CREATION and by
+ * "add artworks" on a saved draft — adding to a draft pays only for the NEW
+ * files; everything already uploaded stays as-is (Arweave storage is paid
+ * once and permanent, so edits must never re-upload existing media).
+ */
+async function uploadAndRegisterArtworks(
+  dropId: number,
+  artworks: NewDropArtwork[],
+  startDate: number,
+  endDate: number,
+  fetchWithBQ: any
+) {
+  const endpoint = '/api/endpoints/dropUpload/';
+  const total = artworks.length;
+  for (let i = 0; i < total; i++) {
+    const artwork = artworks[i];
+    const label = artwork.name || `artwork ${i + 1}`;
+    const { url, optimizedUrl } = await dropProgress.track(
+      `Uploading "${label}" to Arweave (${i + 1}/${total})`,
+      () => uploadFileToArweave(artwork.file)
+    );
+    const { width, height } = await getMediaDimensions(artwork.file);
+    // Build the ERC-721 metadata JSON and store it on Arweave; its URL
+    // becomes the on-chain tokenURI when the drop is deployed. Without
+    // this, minted NFTs would have a null/blank metadata pointer.
+    const isVideo = artwork.file.type === 'video/mp4';
+    const metadataPath = await dropProgress.track(
+      `Writing metadata for "${label}" to Arweave`,
+      () => createNftMetadataOnArweave(endpoint, artwork.name, artwork.description, url, isVideo)
+    );
+    const media = {
+      name: artwork.name,
+      description: artwork.description,
+      arweavePath: url,
+      metadataPath,
+      s3Path: url,
+      s3PathOptimized: optimizedUrl,
+      width,
+      height,
+    };
+    const saleLabel =
+      artwork.saleType === 'auction'
+        ? 'auction'
+        : artwork.saleType === 'lottery'
+        ? 'drawing'
+        : 'open edition';
+    await dropProgress.track(`Registering ${saleLabel} for "${label}"`, async () => {
+      if (artwork.saleType === 'auction') {
+        const { data: result } = await fetchWithBQ({
+          url: 'endpoints/dropUpload?action=InsertAuction',
+          method: 'POST',
+          body: { dropId, minPrice: String(artwork.minPrice), startDate, endDate, ...media },
+        });
+        if ((result as any)?.error) throw new Error((result as any).error);
+      } else if (artwork.saleType === 'lottery') {
+        const { data: drawingResult } = await fetchWithBQ({
+          url: 'endpoints/dropUpload?action=InsertDrawing',
+          method: 'POST',
+          body: {
+            dropId,
+            ticketCostTokens: artwork.ticketCostTokens,
+            ticketCostPoints: artwork.ticketCostPoints,
+            maxTickets: artwork.maxTickets,
+            maxTicketsPerUser: artwork.maxTicketsPerUser,
+            startDate,
+            endDate,
+            isRefundable: 'false',
+          },
+        });
+        if ((drawingResult as any)?.error) throw new Error((drawingResult as any).error);
+        const drawingId = (drawingResult as any).drawingId as number;
+        const { data: nftResult } = await fetchWithBQ({
+          url: 'endpoints/dropUpload?action=InsertNft',
+          method: 'POST',
+          body: { drawingId, numberOfEditions: 1, ...media },
+        });
+        if ((nftResult as any)?.error) throw new Error((nftResult as any).error);
+      } else {
+        const { data: result } = await fetchWithBQ({
+          url: 'endpoints/dropUpload?action=InsertOpenEdition',
+          method: 'POST',
+          body: {
+            dropId,
+            costTokens: artwork.costTokens,
+            costPoints: artwork.costPoints,
+            maxPerUser: artwork.maxPerUser,
+            startDate,
+            endDate,
+            ...media,
+          },
+        });
+        if ((result as any)?.error) throw new Error((result as any).error);
+      }
     });
   }
 }
@@ -1456,6 +1537,9 @@ export const {
   useDeleteDropsMutation,
   useGetOpenEditionMintCountQuery,
   useGetCollectionMintCountQuery,
+  useAddArtworksToDropMutation,
+  useUpdateDraftArtworkMutation,
+  useDeleteDraftArtworkMutation,
   useGetDropAllowlistQuery,
   useCheckDropAllowlistQuery,
   useUpdateDropAllowlistMutation,

@@ -41,6 +41,11 @@ const ACTION_ROLES: Record<string, Role[]> = {
   InsertAuction: [Role.ADMIN],
   InsertOpenEdition: [Role.ADMIN],
   InsertDrawing: [Role.ADMIN],
+  // Draft editing: fix names/prices, remove an artwork, or add media to a
+  // saved (unapproved) drop WITHOUT deleting and re-uploading everything —
+  // media already on Arweave is paid for and stays; only new files cost AR.
+  UpdateDraftArtwork: [Role.ADMIN],
+  DeleteDraftArtwork: [Role.ADMIN],
   // Collection drops (ZIP → bulk sequential mint)
   InsertCollectionMint: [Role.ADMIN],
   ProcessCollectionZip: [Role.ADMIN],
@@ -102,6 +107,12 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       break;
     case 'InsertDrawing':
       await insertDrawing(request.body, response);
+      break;
+    case 'UpdateDraftArtwork':
+      await updateDraftArtwork(request.body, response);
+      break;
+    case 'DeleteDraftArtwork':
+      await deleteDraftArtwork(request.body, response);
       break;
     case 'InsertCollectionMint':
       await insertCollectionMint(request.body, response);
@@ -576,6 +587,131 @@ async function registerOpenEditionMint(
       },
     });
     response.json({ nftId: record.id });
+  } catch (e: any) {
+    console.log(e);
+    response.json({ error: e.message });
+  }
+}
+
+/**
+ * Draft-only guard shared by the artwork edit/delete actions: the parent drop
+ * must be unapproved and the game not yet deployed on-chain. Editing a LIVE
+ * game's parameters would desync the DB from the contract (prices/supply are
+ * baked on-chain at deploy), so those are refused outright.
+ */
+async function assertDraftGame(
+  gameType: string,
+  gameId: number
+): Promise<{ ok: boolean; error?: string; nftIds: number[] }> {
+  if (gameType === 'auction') {
+    const g = await prisma.auction.findUnique({ where: { id: gameId }, include: { Drop: true } });
+    if (!g) return { ok: false, error: 'Auction not found', nftIds: [] };
+    if (g.Drop.approvedAt || g.contractAddress)
+      return { ok: false, error: 'Drop is already approved/deployed — draft edits only', nftIds: [] };
+    return { ok: true, nftIds: [g.nftId] };
+  }
+  if (gameType === 'lottery') {
+    const g = await prisma.lottery.findUnique({
+      where: { id: gameId },
+      include: { Drop: true, Nfts: true },
+    });
+    if (!g) return { ok: false, error: 'Drawing not found', nftIds: [] };
+    if (g.Drop.approvedAt || g.contractAddress)
+      return { ok: false, error: 'Drop is already approved/deployed — draft edits only', nftIds: [] };
+    return { ok: true, nftIds: g.Nfts.map((n) => n.id) };
+  }
+  if (gameType === 'openEdition') {
+    const g = await prisma.openEdition.findUnique({
+      where: { id: gameId },
+      include: { Drop: true },
+    });
+    if (!g) return { ok: false, error: 'Open edition not found', nftIds: [] };
+    if (g.Drop.approvedAt || g.contractAddress)
+      return { ok: false, error: 'Drop is already approved/deployed — draft edits only', nftIds: [] };
+    return { ok: true, nftIds: [g.nftId] };
+  }
+  return { ok: false, error: 'Unknown game type', nftIds: [] };
+}
+
+/**
+ * Edits a DRAFT artwork's DB-side fields (name/description on the Nft, sale
+ * parameters on the game). Free — nothing touches Arweave; the uploaded media
+ * and metadata stay exactly as paid for.
+ */
+async function updateDraftArtwork(data: any, response: NextApiResponse) {
+  console.log(`updateDraftArtwork(${data.gameType}, ${data.gameId})`);
+  try {
+    const gameId = Number(data.gameId);
+    const guard = await assertDraftGame(String(data.gameType), gameId);
+    if (!guard.ok) {
+      response.status(400).json({ error: guard.error });
+      return;
+    }
+    if (data.name != null || data.description != null) {
+      await prisma.nft.updateMany({
+        where: { id: { in: guard.nftIds } },
+        data: {
+          ...(data.name != null ? { name: String(data.name) } : {}),
+          ...(data.description != null ? { description: String(data.description) } : {}),
+        },
+      });
+    }
+    if (data.gameType === 'auction' && data.minPrice != null) {
+      await prisma.auction.update({
+        where: { id: gameId },
+        data: { minimumPrice: String(data.minPrice) },
+      });
+    }
+    if (data.gameType === 'lottery') {
+      await prisma.lottery.update({
+        where: { id: gameId },
+        data: {
+          ...(data.ticketCostTokens != null ? { costPerTicketTokens: toNumber(data.ticketCostTokens) } : {}),
+          ...(data.ticketCostPoints != null ? { costPerTicketPoints: toNumber(data.ticketCostPoints) } : {}),
+          ...(data.maxTickets != null ? { maxTickets: toNumber(data.maxTickets) } : {}),
+          ...(data.maxTicketsPerUser != null ? { maxTicketsPerUser: toNumber(data.maxTicketsPerUser) } : {}),
+        },
+      });
+    }
+    if (data.gameType === 'openEdition') {
+      await prisma.openEdition.update({
+        where: { id: gameId },
+        data: {
+          ...(data.costTokens != null ? { costTokens: toNumber(data.costTokens) } : {}),
+          ...(data.costPoints != null ? { costPoints: toNumber(data.costPoints) } : {}),
+          ...(data.maxPerUser != null ? { maxPerUser: toNumber(data.maxPerUser) } : {}),
+        },
+      });
+    }
+    response.json({ updated: true });
+  } catch (e: any) {
+    console.log(e);
+    response.json({ error: e.message });
+  }
+}
+
+/**
+ * Removes an artwork (game + its Nft rows) from a DRAFT drop. The Arweave
+ * upload is permanent and already paid for — deleting here only unlinks it
+ * from the drop; re-adding the same piece later means paying again, so the
+ * UI warns before calling this.
+ */
+async function deleteDraftArtwork(data: any, response: NextApiResponse) {
+  console.log(`deleteDraftArtwork(${data.gameType}, ${data.gameId})`);
+  try {
+    const gameId = Number(data.gameId);
+    const gameType = String(data.gameType);
+    const guard = await assertDraftGame(gameType, gameId);
+    if (!guard.ok) {
+      response.status(400).json({ error: guard.error });
+      return;
+    }
+    // game row first (it references the Nft), then the Nft rows
+    if (gameType === 'auction') await prisma.auction.delete({ where: { id: gameId } });
+    if (gameType === 'lottery') await prisma.lottery.delete({ where: { id: gameId } });
+    if (gameType === 'openEdition') await prisma.openEdition.delete({ where: { id: gameId } });
+    await prisma.nft.deleteMany({ where: { id: { in: guard.nftIds } } });
+    response.json({ deleted: true });
   } catch (e: any) {
     console.log(e);
     response.json({ error: e.message });

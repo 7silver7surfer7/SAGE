@@ -9,6 +9,7 @@ import LoaderSpinner from '../LoaderSpinner';
 import { BaseMedia, PfpImage } from '../Media/BaseMedia';
 import { NewDropDetailsModal } from './NewDropDetailsModal';
 import { AllowlistModal } from './AllowlistModal';
+import { EditDropModal } from './EditDropModal';
 
 interface Props {
   drop: Drop_include_GamesAndArtist;
@@ -36,6 +37,11 @@ export default function NewDropCard({ drop }: Props) {
     isOpen: isAllowlistOpen,
     closeModal: closeAllowlistModal,
     openModal: openAllowlistModal,
+  } = useModal();
+  const {
+    isOpen: isEditOpen,
+    closeModal: closeEditModal,
+    openModal: openEditModal,
   } = useModal();
   const [assetStatus, setAssetStatus] = useState<AssetStatus>({});
   const [isVerifying, setIsVerifying] = useState(false);
@@ -207,6 +213,18 @@ export default function NewDropCard({ drop }: Props) {
       >
         {isDeploying ? <LoaderSpinner /> : 'approve & deploy drop'}
       </button>
+      <button
+        onClick={openEditModal}
+        disabled={isDeploying || isDeleting}
+        className='dashboard__submit-button'
+        style={{ width: '100%', display: 'inline-block', height: '50px' }}
+      >
+        edit drop
+      </button>
+      {/* mount on demand so its row state hydrates from the freshest drop data */}
+      {isEditOpen && (
+        <EditDropModal isOpen={isEditOpen} closeModal={closeEditModal} drop={drop} />
+      )}
       <button
         onClick={openAllowlistModal}
         disabled={isDeploying || isDeleting}
