@@ -483,6 +483,22 @@ describe("Lottery Contract", function() {
             expect(await lottery.prizeClaimed(2, 3)).to.equal(true);
         });
 
+        it("Should honor SageConfig platform cut on prize claim", async function() {
+            const CONFIG_KEY = ethers.utils.solidityKeccak256(["string"], ["address.config"]);
+            const SHARE_KEY = ethers.utils.solidityKeccak256(["string"], ["share.primaryArtist"]);
+            const SageConfig = await ethers.getContractFactory("SageConfig");
+            const sageConfig = await SageConfig.deploy(sageStorage.address);
+            await sageStorage.setAddress(CONFIG_KEY, sageConfig.address);
+            await sageConfig.setUint(SHARE_KEY, 7000); // artist 70 / platform 30
+
+            await lottery.connect(addr1).buyTickets(2, 1); // ticketCostTokens = 10
+            const multisigBefore = await mockERC20.balanceOf(multisig.address);
+            prizeProof = { lotteryId: 2, winner: addr1.address, ticketNumber: 1, uri: "ipfs://aaa", proof: prizeProofA };
+            await lottery.connect(addr1).claimPrize(prizeProof);
+            // platform gets 30% of the 10-token ticket instead of the default 20%
+            expect(await mockERC20.balanceOf(multisig.address)).to.equal(multisigBefore.add(3));
+        });
+
         it("Should throw trying to claim twice", async function() {
             await lottery.connect(addr1).buyTickets(2, 1);
             prizeProof = {lotteryId: 2, winner: addr1.address, ticketNumber: 1, uri: "ipfs://aaa", proof: prizeProofA}

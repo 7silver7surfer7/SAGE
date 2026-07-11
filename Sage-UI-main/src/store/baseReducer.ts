@@ -16,6 +16,7 @@ export const baseApi = createApi({
     'OpenEditionMintCount',
     'PendingDrops',
     'PlatformRoyaltyAddress',
+    'PrimaryPlatformCut',
     'Prizes',
     'Refunds',
     'TicketCount',

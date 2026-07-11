@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/security/Pausable.sol";
 import "../../interfaces/IRewards.sol";
 import "../../interfaces/IWhitelist.sol";
 import "../../interfaces/ISageStorage.sol";
+import "../../interfaces/ISageConfig.sol";
 import "../../interfaces/INFT.sol";
 
 contract SAGEOpenEdition is Pausable {
@@ -15,7 +16,14 @@ contract SAGEOpenEdition is Pausable {
     IRewards public rewardsContract;
     IERC20 public token;
     mapping(uint256 => mapping(address => uint256)) public mintedByUser;
-    uint256 private constant ARTIST_SHARE = 8000;
+    // Fallback artist share of primary sales; the live value is read from
+    // SageConfig at mint time (_primaryArtistShare) so the platform cut is
+    // dashboard-settable without a redeploy.
+    uint256 private constant DEFAULT_ARTIST_SHARE = 8000;
+    bytes32 private constant CONFIG_KEY =
+        keccak256(abi.encodePacked("address.config"));
+    bytes32 private constant PRIMARY_ARTIST_SHARE_KEY =
+        keccak256(abi.encodePacked("share.primaryArtist"));
 
     struct OpenEdition {
         uint32 startTime; // Timestamp where users can start minting
@@ -62,6 +70,16 @@ contract SAGEOpenEdition is Pausable {
         token = IERC20(_token);
         rewardsContract = IRewards(_rewardsContract);
         signerAddress = _admin;
+    }
+
+    /** Artist share of primary sales in bps, read live from SageConfig
+     *  (resolved via SageStorage's address.config key). Falls back to the
+     *  historical 8000 while the config contract or key is unset. */
+    function _primaryArtistShare() internal view returns (uint256) {
+        address cfg = sageStorage.getAddress(CONFIG_KEY);
+        if (cfg == address(0)) return DEFAULT_ARTIST_SHARE;
+        uint256 share = ISageConfig(cfg).getUint(PRIMARY_ARTIST_SHARE_KEY);
+        return share == 0 ? DEFAULT_ARTIST_SHARE : share;
     }
 
     function isWhitelisted(OpenEdition memory _oe) internal view {
@@ -163,7 +181,8 @@ contract SAGEOpenEdition is Pausable {
         uint256 totalCostInTokens = oe.costTokens * _amount;
 
         if (totalCostInTokens > 0) {
-            uint256 artistShare = (totalCostInTokens * ARTIST_SHARE) / 10000;
+            uint256 artistShare = (totalCostInTokens * _primaryArtistShare()) /
+                10000;
             token.transferFrom(
                 msg.sender,
                 oe.nftContract.artist(),

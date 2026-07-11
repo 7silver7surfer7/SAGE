@@ -41,6 +41,25 @@ async function grantOnChainRole(role: string, walletAddress: string, signer: Sig
 const PLATFORM_ROYALTY_KEY = ethers.utils.solidityKeccak256(['string'], ['address.royalty']);
 export const DEFAULT_PLATFORM_ROYALTY_ADDRESS = '0x3E099aF007CaB8233D44782D8E6fe80FECDC321e';
 
+// SageConfig (resolved via SageStorage address.config) holds the ARTIST share
+// of primary sales in bps under share.primaryArtist; 0/unset = contracts fall
+// back to 8000 (platform 20%). The dashboard shows the PLATFORM cut percent.
+const CONFIG_ADDRESS_KEY = ethers.utils.solidityKeccak256(['string'], ['address.config']);
+const PRIMARY_ARTIST_SHARE_KEY = ethers.utils.solidityKeccak256(['string'], ['share.primaryArtist']);
+export const DEFAULT_PLATFORM_PRIMARY_CUT_PCT = 20;
+const SAGE_CONFIG_ABI = [
+  'function getUint(bytes32) view returns (uint256)',
+  'function setUint(bytes32, uint256)',
+];
+
+async function getSageConfigContract(signer?: Signer) {
+  const storage = await getStorageContract();
+  const address = await storage.getAddress(CONFIG_ADDRESS_KEY);
+  if (address === ethers.constants.AddressZero) return null;
+  const provider = signer ?? storage.provider;
+  return new ethers.Contract(address, SAGE_CONFIG_ABI, provider as any);
+}
+
 const dashboardApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (builder) => ({
@@ -105,6 +124,41 @@ const dashboardApi = baseApi.injectEndpoints({
       },
       providesTags: ['PlatformRoyaltyAddress'],
     }),
+    getPrimaryPlatformCut: builder.query<number, void>({
+      queryFn: async () => {
+        try {
+          const config = await getSageConfigContract();
+          if (!config) return { data: DEFAULT_PLATFORM_PRIMARY_CUT_PCT };
+          const artistShareBps = Number(await config.getUint(PRIMARY_ARTIST_SHARE_KEY));
+          if (!artistShareBps) return { data: DEFAULT_PLATFORM_PRIMARY_CUT_PCT };
+          return { data: (10000 - artistShareBps) / 100 };
+        } catch (e) {
+          console.error('getPrimaryPlatformCut failed', e);
+          return { data: DEFAULT_PLATFORM_PRIMARY_CUT_PCT };
+        }
+      },
+      providesTags: ['PrimaryPlatformCut'],
+    }),
+    setPrimaryPlatformCut: builder.mutation<boolean, { platformCutPct: number; signer: Signer }>({
+      queryFn: async ({ platformCutPct, signer }) => {
+        try {
+          const config = await getSageConfigContract(signer);
+          if (!config) {
+            toast.error('SageConfig is not registered on-chain yet.');
+            return { data: false };
+          }
+          const artistShareBps = Math.round((100 - platformCutPct) * 100);
+          const tx = await config.setUint(PRIMARY_ARTIST_SHARE_KEY, artistShareBps);
+          await tx.wait();
+          toast.success(`Platform primary-sale cut set to ${platformCutPct}% on-chain.`);
+          return { data: true };
+        } catch (e) {
+          toast.error(`Failed to update: ${extractErrorMessage(e)}`);
+          return { data: false };
+        }
+      },
+      invalidatesTags: ['PrimaryPlatformCut'],
+    }),
     setPlatformRoyaltyAddress: builder.mutation<boolean, { address: string; signer: Signer }>({
       queryFn: async ({ address, signer }) => {
         try {
@@ -138,9 +192,11 @@ export const {
   useGetAllUsersAndEarnedPointsQuery,
   useGetConfigQuery,
   useGetPlatformRoyaltyAddressQuery,
+  useGetPrimaryPlatformCutQuery,
   useGetSalesEventsQuery,
   usePromoteUserToAdminMutation,
   usePromoteUserToArtistMutation,
   useSetPlatformRoyaltyAddressMutation,
+  useSetPrimaryPlatformCutMutation,
   useUpdateConfigMutation,
 } = dashboardApi;

@@ -27,7 +27,7 @@ export const config = {
     rpcUrl: env('SAGE_MARKETPLACE_RPC', 'https://rpc.testnet.chain.robinhood.com'),
     chainId: Number(env('SAGE_MARKETPLACE_CHAIN_ID', '46630')),
     sageToken: env('SAGE_TOKEN_ADDRESS', '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B'),
-    openEdition: env('SAGE_OPENEDITION_ADDRESS', '0x652595ffD447513DcA1B5e532618Af60C8791E60'),
+    openEdition: env('SAGE_OPENEDITION_ADDRESS', '0x2e07Bf3E70958998B73126F1E13Ab9163f58547c'),
     lottery: env('SAGE_LOTTERY_ADDRESS', '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E'),
     auction: env('SAGE_AUCTION_ADDRESS', '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD'),
     rewards: env('SAGE_REWARDS_ADDRESS', '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC'),

@@ -14,6 +14,7 @@ import "../../interfaces/INFT.sol";
 import "../../interfaces/ILottery.sol";
 import "../../interfaces/IWhitelist.sol";
 import "../../interfaces/ISageStorage.sol";
+import "../../interfaces/ISageConfig.sol";
 
 contract Lottery is
     Initializable,
@@ -26,7 +27,15 @@ contract Lottery is
     address private signerAddress;
 
     IERC20 public token;
-    uint256 private constant ARTIST_SHARE = 8000;
+    // Fallback artist share of primary sales; the live value is read from
+    // SageConfig at payout time (_primaryArtistShare) so the platform cut is
+    // dashboard-settable without another upgrade. Constants use no storage
+    // slots — proxy layout unchanged.
+    uint256 private constant DEFAULT_ARTIST_SHARE = 8000;
+    bytes32 private constant CONFIG_KEY =
+        keccak256(abi.encodePacked("address.config"));
+    bytes32 private constant PRIMARY_ARTIST_SHARE_KEY =
+        keccak256(abi.encodePacked("share.primaryArtist"));
 
     // Address of the randomness generator
     IRandomNumberGenerator private randomGenerator;
@@ -140,6 +149,16 @@ contract Lottery is
         require(startTime > 0, "Invalid start time");
         require(closeTime > startTime, "Close time must be after start time");
         _;
+    }
+
+    /** Artist share of primary sales in bps, read live from SageConfig
+     *  (resolved via SageStorage's address.config key). Falls back to the
+     *  historical 8000 while the config contract or key is unset. */
+    function _primaryArtistShare() internal view returns (uint256) {
+        address cfg = sageStorage.getAddress(CONFIG_KEY);
+        if (cfg == address(0)) return DEFAULT_ARTIST_SHARE;
+        uint256 share = ISageConfig(cfg).getUint(PRIMARY_ARTIST_SHARE_KEY);
+        return share == 0 ? DEFAULT_ARTIST_SHARE : share;
     }
 
     /**
@@ -559,7 +578,8 @@ contract Lottery is
         if (ticketCostTokens > 0) {
             // Reverts if the user doesn't have enough refundable balance.
             refunds[_lotteryId][msg.sender] -= ticketCostTokens;
-            uint256 artistShare = (ticketCostTokens * ARTIST_SHARE) / 10000;
+            uint256 artistShare = (ticketCostTokens * _primaryArtistShare()) /
+                10000;
             token.transfer(nftContract.artist(), artistShare);
             token.transfer(
                 sageStorage.multisig(),

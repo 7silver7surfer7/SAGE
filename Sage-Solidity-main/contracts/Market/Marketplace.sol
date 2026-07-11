@@ -7,11 +7,19 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../../interfaces/INFT.sol";
 import "../../interfaces/IERC2981.sol";
 import "../../interfaces/ISageStorage.sol";
+import "../../interfaces/ISageConfig.sol";
 
 contract Marketplace {
     IERC20 public token;
     ISageStorage immutable sageStorage;
-    uint256 private constant ARTIST_SHARE = 8000;
+    // Fallback artist share of primary sales; the live value is read from
+    // SageConfig at sale time (_primaryArtistShare) so the platform cut is
+    // dashboard-settable without a redeploy.
+    uint256 private constant DEFAULT_ARTIST_SHARE = 8000;
+    bytes32 private constant CONFIG_KEY =
+        keccak256(abi.encodePacked("address.config"));
+    bytes32 private constant PRIMARY_ARTIST_SHARE_KEY =
+        keccak256(abi.encodePacked("share.primaryArtist"));
     // SageStorage key holding the platform's royalty receiver; when unset the
     // platform's royalty cut falls back to the multisig.
     bytes32 private constant PLATFORM_ROYALTY_KEY =
@@ -97,7 +105,7 @@ contract Marketplace {
 
     /**
      * @dev Shared payout for both offer directions.
-     * - Artist as seller: unchanged primary economics (ARTIST_SHARE 80/20).
+     * - Artist as seller: primary economics (_primaryArtistShare, default 80/20).
      * - True secondary: EIP-2981 royalty. For new-generation SageNFT contracts
      *   (public artistShare getter) the royalty is SPLIT AT SALE TIME — artist
      *   share straight to the artist wallet, remainder to the multisig — so
@@ -105,6 +113,16 @@ contract Marketplace {
      *   probe reverts) keep the old behavior: royalty to the contract, later
      *   split by withdraw(). External 2981 receivers are paid directly.
      */
+    /** Artist share of primary sales in bps, read live from SageConfig
+     *  (resolved via SageStorage's address.config key). Falls back to the
+     *  historical 8000 while the config contract or key is unset. */
+    function _primaryArtistShare() internal view returns (uint256) {
+        address cfg = sageStorage.getAddress(CONFIG_KEY);
+        if (cfg == address(0)) return DEFAULT_ARTIST_SHARE;
+        uint256 share = ISageConfig(cfg).getUint(PRIMARY_ARTIST_SHARE_KEY);
+        return share == 0 ? DEFAULT_ARTIST_SHARE : share;
+    }
+
     /** Platform's royalty receiver: the address.royalty storage key, or the
      *  multisig while the key is unset. Applies to ROYALTY cuts only —
      *  primary-sale platform cuts keep going to the multisig. */
@@ -122,7 +140,7 @@ contract Marketplace {
     ) internal {
         address artist = INFT(contractAddress).artist();
         if (seller == artist) {
-            uint256 artistCut = (price * ARTIST_SHARE) / 10000;
+            uint256 artistCut = (price * _primaryArtistShare()) / 10000;
             token.transferFrom(payer, artist, artistCut);
             token.transferFrom(payer, sageStorage.multisig(), price - artistCut);
             return;

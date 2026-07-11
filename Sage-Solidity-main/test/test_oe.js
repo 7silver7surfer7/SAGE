@@ -126,6 +126,21 @@ describe("OpenEdition Contract", function() {
         expect(await openEdition.getMintCount(2)).to.equal(10);
     });
 
+    it("Should honor SageConfig platform cut on token mints", async function() {
+        const CONFIG_KEY = ethers.utils.solidityKeccak256(["string"], ["address.config"]);
+        const SHARE_KEY = ethers.utils.solidityKeccak256(["string"], ["share.primaryArtist"]);
+        const SageConfig = await ethers.getContractFactory("SageConfig");
+        const sageConfig = await SageConfig.deploy(sageStorage.address);
+        await sageStorage.setAddress(CONFIG_KEY, sageConfig.address);
+        await sageConfig.setUint(SHARE_KEY, 7000); // artist 70 / platform 30
+
+        const artistBefore = await mockERC20.balanceOf(artist.address);
+        const multisigBefore = await mockERC20.balanceOf(multisig.address);
+        await openEdition.connect(addr2).batchMint(2, 10); // cost 10 tokens each = 100
+        expect(await mockERC20.balanceOf(artist.address)).to.equal(artistBefore.add(70));
+        expect(await mockERC20.balanceOf(multisig.address)).to.equal(multisigBefore.add(30));
+    });
+
     it("Should throw if minting more than user limit", async function() {
         await openEdition
             .connect(addr1)

@@ -248,6 +248,27 @@ describe("Per-token royalties", () => {
         );
     });
 
+    it("Should honor SageConfig platform cut on marketplace primary sales", async function() {
+        const CONFIG_KEY = ethers.utils.solidityKeccak256(["string"], ["address.config"]);
+        const SHARE_KEY = ethers.utils.solidityKeccak256(["string"], ["share.primaryArtist"]);
+        const SageConfig = await ethers.getContractFactory("SageConfig");
+        const sageConfig = await SageConfig.deploy(sageStorage.address);
+        await sageStorage.setAddress(CONFIG_KEY, sageConfig.address);
+        await sageConfig.setUint(SHARE_KEY, 7000); // artist 70 / platform 30
+
+        await nft.connect(artist).artistMint(uri);
+        await mockERC20.connect(addr1).approve(market.address, ONE);
+        const a = await mockERC20.balanceOf(artist.address);
+        const m = await mockERC20.balanceOf(multisig.address);
+        await buyFromSellOffer(market, addr1, artist, nftContractAddress, ONE, 1);
+        expect((await mockERC20.balanceOf(artist.address)).sub(a)).to.equal(
+            ethers.utils.parseEther("0.7")
+        );
+        expect((await mockERC20.balanceOf(multisig.address)).sub(m)).to.equal(
+            ethers.utils.parseEther("0.3")
+        );
+    });
+
     it("Should keep withdrawERC20 as backstop on new contracts", async function() {
         // third-party 2981 marketplaces pay address(this); withdraw still splits
         await mockERC20.mint(nft.address, ethers.utils.parseEther("1"));

@@ -1,8 +1,11 @@
 import {
+  DEFAULT_PLATFORM_PRIMARY_CUT_PCT,
   DEFAULT_PLATFORM_ROYALTY_ADDRESS,
   useGetConfigQuery,
   useGetPlatformRoyaltyAddressQuery,
+  useGetPrimaryPlatformCutQuery,
   useSetPlatformRoyaltyAddressMutation,
+  useSetPrimaryPlatformCutMutation,
   useUpdateConfigMutation,
 } from '@/store/dashboardReducer';
 import { useDeleteDropsMutation, useGetApprovedDropsQuery } from '@/store/dropsReducer';
@@ -26,6 +29,11 @@ export function ConfigPanel() {
     useSetPlatformRoyaltyAddressMutation();
   const { signer } = useSAGEAccount();
   const [royaltyAddressInput, setRoyaltyAddressInput] = useState<string>('');
+  // on-chain platform primary-sale cut % (SageConfig share.primaryArtist)
+  const { data: primaryPlatformCut } = useGetPrimaryPlatformCutQuery();
+  const [setPrimaryPlatformCut, { isLoading: isSavingPrimaryCut }] =
+    useSetPrimaryPlatformCutMutation();
+  const [primaryCutInput, setPrimaryCutInput] = useState<string>('');
 
   useEffect(() => {
     if (config) {
@@ -39,6 +47,30 @@ export function ConfigPanel() {
       setRoyaltyAddressInput(platformRoyaltyAddress);
     }
   }, [platformRoyaltyAddress]);
+
+  useEffect(() => {
+    if (primaryPlatformCut !== undefined) {
+      setPrimaryCutInput(String(primaryPlatformCut));
+    }
+  }, [primaryPlatformCut]);
+
+  const handlePrimaryCutSave = async () => {
+    // blank falls back to the 20% default
+    const pct = primaryCutInput.trim() === '' ? DEFAULT_PLATFORM_PRIMARY_CUT_PCT : Number(primaryCutInput);
+    if (isNaN(pct) || pct < 0 || pct > 50) {
+      toast.warn('Platform cut must be between 0 and 50 percent.');
+      return;
+    }
+    if (!signer) {
+      toast.warn('Connect the admin wallet first.');
+      return;
+    }
+    if (pct === primaryPlatformCut) {
+      toast.info(`Platform cut is already ${pct}%.`);
+      return;
+    }
+    await setPrimaryPlatformCut({ platformCutPct: pct, signer: signer as any });
+  };
 
   const handleRoyaltyAddressSave = async () => {
     // blank falls back to the platform default
@@ -144,6 +176,34 @@ export function ConfigPanel() {
           onClick={handleRoyaltyAddressSave}
         >
           {isSavingRoyaltyAddress ? <LoaderSpinner /> : `save royalty address (on-chain)`}
+        </button>
+      </div>
+      <div className='creations-panel__file-desc-group' style={{ marginTop: '45px' }}>
+        <h1 className='creations-panel__file-desc-label'>Platform Primary-Sale Cut % (on-chain)</h1>
+        <input
+          type='number'
+          min='0'
+          max='50'
+          step='0.5'
+          value={primaryCutInput}
+          onChange={(e) => setPrimaryCutInput(e.target.value)}
+          placeholder={`${DEFAULT_PLATFORM_PRIMARY_CUT_PCT} (default)`}
+          className='creations-panel__file-input-field'
+        />
+        <em style={{ display: 'block', fontSize: '0.75em', opacity: 0.7, marginTop: '4px' }}>
+          Platform&apos;s share of PRIMARY sales (auctions, drawings, open editions, and first
+          marketplace sales). The artist receives the rest. Applies to all future payouts,
+          including games already live. Saving sends a transaction from the connected admin
+          wallet. Leave blank for the default.
+        </em>
+        <button
+          disabled={isSavingPrimaryCut}
+          className='dashboard__submit-button'
+          type='button'
+          style={{ marginTop: '10px' }}
+          onClick={handlePrimaryCutSave}
+        >
+          {isSavingPrimaryCut ? <LoaderSpinner /> : `save primary-sale cut (on-chain)`}
         </button>
       </div>
       <div className='creations-panel__file-desc-group' style={{ marginTop: '125px' }}>

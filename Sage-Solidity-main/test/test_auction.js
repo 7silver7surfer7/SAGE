@@ -192,6 +192,57 @@ describe("Auction Contract", function() {
         );
     });
 
+    // Auctions 1/2 from the fixture anchor endTime to WALL-CLOCK Date.now(),
+    // but evm_increaseTime from earlier tests leaves the chain days ahead of
+    // it — so these tests create fresh auctions anchored to CHAIN time.
+    async function createChainTimeAuction(auctionId) {
+        const chainNow = (await ethers.provider.getBlock("latest")).timestamp;
+        await auction.createAuction({
+            ...auctionInfo,
+            auctionId,
+            startTime: chainNow,
+            endTime: chainNow + 86400,
+            nftUri: "ipfs://config-test",
+        });
+    }
+
+    it("Should honor SageConfig platform cut on settle, default when unset", async function() {
+        const CONFIG_KEY = ethers.utils.solidityKeccak256(["string"], ["address.config"]);
+        const SHARE_KEY = ethers.utils.solidityKeccak256(["string"], ["share.primaryArtist"]);
+        const SageConfig = await ethers.getContractFactory("SageConfig");
+        const sageConfig = await SageConfig.deploy(sageStorage.address);
+        // register config + set artist share 70% (owner holds role.admin)
+        await sageStorage.setAddress(CONFIG_KEY, sageConfig.address);
+        await sageConfig.setUint(SHARE_KEY, 7000);
+
+        await createChainTimeAuction(3);
+        const artistBefore = await mockERC20.balanceOf(artist.address);
+        const multisigBefore = await mockERC20.balanceOf(multisig.address);
+        await mockERC20.connect(addr2).approve(auction.address, 10);
+        await auction.connect(addr2).bid(3, 10);
+        await ethers.provider.send("evm_increaseTime", [86401]);
+        await auction.settleAuction(3);
+        expect(await mockERC20.balanceOf(artist.address)).to.equal(artistBefore.add(7));
+        expect(await mockERC20.balanceOf(multisig.address)).to.equal(multisigBefore.add(3));
+    });
+
+    it("Should keep auction state across a UUPS upgrade", async function() {
+        await createChainTimeAuction(4);
+        await mockERC20.connect(addr2).approve(auction.address, 10);
+        await auction.connect(addr2).bid(4, 10);
+        // _authorizeUpgrade checks DEFAULT_ADMIN_ROLE — owner's was revoked in
+        // the fixture; the multisig signer kept it from the constructor
+        const AuctionAsMultisig = await ethers.getContractFactory("Auction", multisig);
+        const upgraded = await upgrades.upgradeProxy(auction.address, AuctionAsMultisig);
+        const resp = await upgraded.getAuction(4);
+        expect(resp.highestBid).to.equal(10);
+        expect(resp.highestBidder).to.equal(addr2.address);
+        // still settles correctly on the new implementation
+        await ethers.provider.send("evm_increaseTime", [86401]);
+        await upgraded.settleAuction(4);
+        expect(await nft.balanceOf(addr2.address)).to.equal(1);
+    });
+
     it("Should allow late bids when no endTime was set and have extensions", async function() {
         await mockERC20.connect(addr1).approve(auction.address, 20);
         await ethers.provider.send("evm_increaseTime", [30 * 86400]);

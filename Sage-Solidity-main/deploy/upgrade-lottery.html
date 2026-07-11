@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Upgrade Lottery Contract</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 680px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  .row b { font-weight: 600; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem; }
+  .warn { color: #b45309; }
+  .err { color: #dc2626; }
+  .ok { color: #0c9d68; }
+</style>
+</head>
+<body>
+  <h1>Upgrade Lottery Contract 🎟️</h1>
+  <p class="sub">Points the Lottery proxy at the new implementation (configurable
+  platform primary-sale cut). Must be signed by the CURRENT multisig wallet.
+  All live lottery state is preserved — this only swaps the code.</p>
+
+  <div class="card">
+    <div class="row"><span>Network</span><b>Robinhood Chain testnet (46630)</b></div>
+    <div class="row"><span>Lottery proxy</span><code>0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E</code></div>
+    <div class="row"><span>New implementation</span><code>0xcC751493280D8F4668Dc1009B05C38c7787808bA</code></div>
+    <div class="row"><span>Required signer (current multisig)</span><code id="multisig">—</code></div>
+    <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
+  </div>
+
+  <button id="btn" disabled>connect wallet</button>
+  <div class="status" id="status">Connect MetaMask with the multisig wallet selected.</div>
+
+<script>
+(async function () {
+  const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
+  const LOTTERY_PROXY = '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E';
+  const NEW_IMPL = '0xcc751493280d8f4668dc1009b05c38c7787808ba';
+  const CHAIN_ID = '0xb626'; // 46630
+  const SEL_MULTISIG = '0x4783c35b';   // multisig()
+  const SEL_UPGRADE_TO = '0x3659cfe6'; // upgradeTo(address)
+  // EIP-1967 implementation slot
+  const IMPL_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
+  const btn = document.getElementById('btn');
+  const status = document.getElementById('status');
+  const say = (msg, cls) => { status.textContent = msg; status.className = 'status ' + (cls || ''); };
+  const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
+
+  if (!window.ethereum) { say('MetaMask not detected.', 'err'); return; }
+
+  let account = null;
+  let multisig = null;
+
+  const readMultisig = async () =>
+    '0x' + (await ethereum.request({ method: 'eth_call', params: [{ to: STORAGE, data: SEL_MULTISIG }, 'latest'] })).slice(-40);
+  const readImpl = async () =>
+    '0x' + (await ethereum.request({ method: 'eth_getStorageAt', params: [LOTTERY_PROXY, IMPL_SLOT, 'latest'] })).slice(-40);
+
+  async function refresh() {
+    const chainId = await ethereum.request({ method: 'eth_chainId' });
+    if (chainId.toLowerCase() !== CHAIN_ID) {
+      say('Wrong network — switch MetaMask to Robinhood Chain testnet (46630).', 'warn');
+      try { await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] }); }
+      catch { return false; }
+    }
+    multisig = await readMultisig();
+    document.getElementById('multisig').textContent = multisig;
+    const impl = await readImpl();
+    if (impl.toLowerCase() === NEW_IMPL) {
+      say('Already upgraded — the proxy points at the new implementation. Nothing to send.', 'ok');
+      btn.disabled = true;
+      return false;
+    }
+    if (account && account.toLowerCase() !== multisig.toLowerCase()) {
+      say('Connected wallet ' + short(account) + ' is NOT the multisig ' + short(multisig) +
+          '. Switch accounts in MetaMask.', 'warn');
+      btn.textContent = 'wrong wallet — switch account';
+      btn.disabled = true;
+      return false;
+    }
+    return true;
+  }
+
+  btn.disabled = false;
+  btn.onclick = async () => {
+    try {
+      if (!account) {
+        const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+        account = accounts[0];
+        document.getElementById('connected').textContent = account;
+        if (!(await refresh())) return;
+        btn.textContent = 'upgrade lottery contract';
+        say('Ready. Clicking sends upgradeTo — approve it on your device.', '');
+        return;
+      }
+      if (!(await refresh())) return;
+      btn.disabled = true;
+      say('Sending transaction — approve on your device…', '');
+      const data = SEL_UPGRADE_TO + NEW_IMPL.slice(2).padStart(64, '0');
+      const txHash = await ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: account, to: LOTTERY_PROXY, data }],
+      });
+      say('Sent: ' + txHash + '\nWaiting for confirmation…', '');
+      for (let i = 0; i < 60; i++) {
+        const rcpt = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+        if (rcpt) {
+          if (rcpt.status === '0x1') {
+            const impl = await readImpl();
+            say('Confirmed ✓  implementation is now ' + impl + '\nLottery payouts now honor the dashboard platform-cut setting.', 'ok');
+          } else {
+            say('Transaction reverted. Is the connected wallet the current multisig?', 'err');
+            btn.disabled = false;
+          }
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      say('Still pending — check the tx in MetaMask: ' + txHash, 'warn');
+    } catch (e) {
+      say('Error: ' + (e && e.message || e), 'err');
+      btn.disabled = false;
+    }
+  };
+
+  ethereum.on?.('accountsChanged', (accs) => {
+    account = accs[0] || null;
+    document.getElementById('connected').textContent = account || 'not connected';
+    if (account) refresh().then((ok) => { if (ok) { btn.disabled = false; btn.textContent = 'upgrade lottery contract'; } });
+  });
+
+  try {
+    multisig = await readMultisig();
+    document.getElementById('multisig').textContent = multisig;
+  } catch {}
+})();
+</script>
+</body>
+</html>

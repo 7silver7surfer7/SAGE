@@ -8,6 +8,7 @@ import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../../interfaces/INFT.sol";
 import "../../interfaces/ISageStorage.sol";
+import "../../interfaces/ISageConfig.sol";
 
 contract Auction is
     Initializable,
@@ -20,7 +21,15 @@ contract Auction is
     mapping(uint256 => AuctionInfo) public auctions;
     uint256 public constant DEFAULT_EXTENSION = 600;
     uint256 private constant bidIncrementPercentage = 100; // 1,00% higher than the previous bid
-    uint256 private constant ARTIST_SHARE = 8000;
+    // Fallback artist share of primary sales; the live value is read from
+    // SageConfig at settle time (_primaryArtistShare) so the platform cut is
+    // dashboard-settable without another upgrade. Constants use no storage
+    // slots — proxy layout unchanged.
+    uint256 private constant DEFAULT_ARTIST_SHARE = 8000;
+    bytes32 private constant CONFIG_KEY =
+        keccak256(abi.encodePacked("address.config"));
+    bytes32 private constant PRIMARY_ARTIST_SHARE_KEY =
+        keccak256(abi.encodePacked("share.primaryArtist"));
 
     IERC20 public token;
     struct AuctionInfo {
@@ -78,6 +87,16 @@ contract Auction is
         _disableInitializers();
     }
 
+    /** Artist share of primary sales in bps, read live from SageConfig
+     *  (resolved via SageStorage's address.config key). Falls back to the
+     *  historical 8000 while the config contract or key is unset. */
+    function _primaryArtistShare() internal view returns (uint256) {
+        address cfg = sageStorage.getAddress(CONFIG_KEY);
+        if (cfg == address(0)) return DEFAULT_ARTIST_SHARE;
+        uint256 share = ISageConfig(cfg).getUint(PRIMARY_ARTIST_SHARE_KEY);
+        return share == 0 ? DEFAULT_ARTIST_SHARE : share;
+    }
+
     /**
      * @dev Constructor for an upgradable contract
      */
@@ -130,7 +149,7 @@ contract Auction is
         auction.settled = true;
         if (highestBidder != address(0)) {
             auction.nftContract.safeMint(highestBidder, auction.nftUri);
-            uint256 artistShare = (highestBid * ARTIST_SHARE) / 10000;
+            uint256 artistShare = (highestBid * _primaryArtistShare()) / 10000;
             token.transfer(auction.nftContract.artist(), artistShare);
             token.transfer(sageStorage.multisig(), highestBid - artistShare);
         }
