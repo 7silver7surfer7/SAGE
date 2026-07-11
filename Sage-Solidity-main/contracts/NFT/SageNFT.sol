@@ -22,7 +22,10 @@ contract SageNFT is
     ISageStorage immutable sageStorage;
 
     address public artist;
-    uint256 private artistShare;
+    // public: the getter doubles as the "new-generation contract" marker the
+    // Marketplace probes (legacy contracts had this private) to decide between
+    // instant royalty split and the old pool-in-contract behavior.
+    uint256 public artistShare;
 
     string private contractMetadata;
 
@@ -31,8 +34,18 @@ contract SageNFT is
     bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 public constant MINTER_ROLE = keccak256("role.minter");
     bytes32 public constant BURNER_ROLE = keccak256("role.burner");
+    bytes32 public constant ADMIN_ROLE = keccak256("role.admin");
 
-    uint256 private constant DEFAULT_ROYALTY_PERCENTAGE = 1200; // in basis points (100 = 1%)
+    // Per-token secondary-sale royalty, in basis points (100 = 1%).
+    // defaultRoyaltyBps is set per DROP at deploy time by the dashboard flow;
+    // each token permanently stamps the value current at its mint, so drops by
+    // the same artist can carry different royalties on one contract.
+    uint96 public constant MAX_ROYALTY_BPS = 2000; // 20% fat-finger cap
+    uint96 public defaultRoyaltyBps;
+    mapping(uint256 => uint96) public tokenRoyaltyBps;
+
+    event DefaultRoyaltyChanged(uint96 bps);
+    event TokenRoyaltySet(uint256 indexed tokenId, uint96 bps);
 
     bytes4 private constant INTERFACE_ID_ERC2981 = 0x2a55205a; // implements ERC-2981 interface
 
@@ -46,6 +59,7 @@ contract SageNFT is
         sageStorage = ISageStorage(_sageStorage);
         artist = _artist;
         artistShare = _artistShare;
+        defaultRoyaltyBps = 1200; // matches the legacy fixed royalty until a drop sets its own
         // nextTokenId is initialized to 1, since starting at 0 leads to higher gas cost for the first minter
         nextTokenId.increment();
     }
@@ -63,6 +77,19 @@ contract SageNFT is
         _;
     }
 
+    /**
+     * @dev Admin role OR the multisig. The dashboard's drop-deploy flow runs
+     * as an admin wallet, so royalty setters can't be multisig-only.
+     */
+    modifier onlyAdminOrMultisig() {
+        require(
+            sageStorage.hasRole(ADMIN_ROLE, msg.sender) ||
+                sageStorage.multisig() == msg.sender,
+            "Admin calls only"
+        );
+        _;
+    }
+
     function contractURI() public view returns (string memory) {
         return contractMetadata;
     }
@@ -70,8 +97,35 @@ contract SageNFT is
     function _incMint(address to, string calldata uri) internal {
         uint256 currentTokenId = nextTokenId.current();
         nextTokenId.increment();
+        // stamp the drop's royalty permanently on this token — covers every
+        // mint path (artistMint + the game contracts' safeMint calls)
+        tokenRoyaltyBps[currentTokenId] = defaultRoyaltyBps;
         _safeMint(to, currentTokenId);
         _setTokenURI(currentTokenId, uri);
+    }
+
+    /**
+     * @notice Sets the royalty stamped on tokens minted from now on.
+     * Called by the drop-deploy flow before a drop's games go live.
+     */
+    function setDefaultRoyalty(uint96 _bps) external onlyAdminOrMultisig {
+        require(_bps <= MAX_ROYALTY_BPS, "Royalty exceeds cap");
+        defaultRoyaltyBps = _bps;
+        emit DefaultRoyaltyChanged(_bps);
+    }
+
+    /**
+     * @notice Corrective per-token setter (e.g. when two concurrent drops by
+     * the same artist carried different royalties and a token got mis-stamped).
+     */
+    function setTokenRoyalty(uint256 _tokenId, uint96 _bps)
+        external
+        onlyAdminOrMultisig
+    {
+        require(_exists(_tokenId), "Nonexistent token");
+        require(_bps <= MAX_ROYALTY_BPS, "Royalty exceeds cap");
+        tokenRoyaltyBps[_tokenId] = _bps;
+        emit TokenRoyaltySet(_tokenId, _bps);
     }
 
     function artistMint(string calldata uri) public onlyArtist {
@@ -217,9 +271,12 @@ contract SageNFT is
         view
         returns (address, uint256)
     {
-        return (
-            address(this),
-            (salePrice * DEFAULT_ROYALTY_PERCENTAGE) / 10000
-        );
+        // Per-token value stamped at mint. No default fallback: on this code
+        // every token IS stamped in _incMint, so 0 unambiguously means an
+        // intentional 0%-royalty drop. The receiver stays address(this) so
+        // third-party EIP-2981 marketplaces keep working (funds pool here and
+        // withdraw()/withdrawERC20() split them); SAGE's own Marketplace
+        // splits at sale time instead.
+        return (address(this), (salePrice * tokenRoyaltyBps[tokenId]) / 10000);
     }
 }

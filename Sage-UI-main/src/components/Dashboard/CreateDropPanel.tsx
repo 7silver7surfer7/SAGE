@@ -34,6 +34,7 @@ export default function CreateDropPanel() {
   const [approveNow, setApproveNow] = useState(true);
   const [allowlistEnabled, setAllowlistEnabled] = useState(false);
   const [allowlistText, setAllowlistText] = useState('');
+  const [royaltyPercentage, setRoyaltyPercentage] = useState(12);
   const [goLiveAtInput, setGoLiveAtInput] = useState(''); // datetime-local; empty = immediately
   const [saleStartAtInput, setSaleStartAtInput] = useState(''); // datetime-local; empty = same as go-live
   const [nextKey, setNextKey] = useState(0);
@@ -120,6 +121,10 @@ export default function CreateDropPanel() {
         return;
       }
     }
+    if (isNaN(royaltyPercentage) || royaltyPercentage < 0 || royaltyPercentage > 20) {
+      toast.warn('Royalty must be between 0 and 20 percent.');
+      return;
+    }
     let allowlist: { enabled: boolean; addresses: string[] } | undefined;
     if (allowlistEnabled) {
       const parsed = parseAddressList(allowlistText);
@@ -154,6 +159,7 @@ export default function CreateDropPanel() {
       // from the storefront's contract-address checks until deployed).
       signer: approveNow ? (signer as any) : undefined,
       allowlist,
+      royaltyPercentage,
     });
     if ('data' in result && result.data) {
       setName('');
@@ -166,6 +172,7 @@ export default function CreateDropPanel() {
       setArtistIconFile(null);
       setAllowlistEnabled(false);
       setAllowlistText('');
+      setRoyaltyPercentage(12);
     }
   }
 
@@ -468,6 +475,22 @@ export default function CreateDropPanel() {
               <option value={72}>3 days</option>
               <option value={168}>1 week</option>
             </select>
+          </label>
+          <label className='create-drop-panel__label'>
+            secondary-sale royalty %
+            <input
+              className='create-drop-panel__input'
+              type='number'
+              min='0'
+              max='20'
+              step='0.5'
+              value={royaltyPercentage}
+              onChange={(e) => setRoyaltyPercentage(Number(e.target.value))}
+            />
+            <em className='create-drop-panel__section-hint'>
+              Applies to marketplace re-sales of this drop&apos;s NFTs only — stamped permanently
+              on each NFT at mint. Primary-sale splits are unaffected.
+            </em>
           </label>
           <label className='create-drop-panel__label'>
             go live at (empty = immediately)

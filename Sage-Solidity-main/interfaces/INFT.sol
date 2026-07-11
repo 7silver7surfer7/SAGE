@@ -8,4 +8,8 @@ interface INFT {
     function owner() external view returns (address);
 
     function artist() external view returns (address);
+
+    // Public getter on new-generation SageNFT contracts only — probed inside
+    // try/catch by the Marketplace; reverting here marks a legacy contract.
+    function artistShare() external view returns (uint256);
 }

@@ -91,6 +91,54 @@ contract Marketplace {
         cancelledOrders[message] = true;
     }
 
+    /**
+     * @dev Shared payout for both offer directions.
+     * - Artist as seller: unchanged primary economics (ARTIST_SHARE 80/20).
+     * - True secondary: EIP-2981 royalty. For new-generation SageNFT contracts
+     *   (public artistShare getter) the royalty is SPLIT AT SALE TIME — artist
+     *   share straight to the artist wallet, remainder to the multisig — so
+     *   nothing pools in the NFT contract. Legacy SageNFTs (no getter → the
+     *   probe reverts) keep the old behavior: royalty to the contract, later
+     *   split by withdraw(). External 2981 receivers are paid directly.
+     */
+    function _settleSale(
+        address payer,
+        address seller,
+        address contractAddress,
+        uint256 tokenId,
+        uint256 price
+    ) internal {
+        address artist = INFT(contractAddress).artist();
+        if (seller == artist) {
+            uint256 artistCut = (price * ARTIST_SHARE) / 10000;
+            token.transferFrom(payer, artist, artistCut);
+            token.transferFrom(payer, sageStorage.multisig(), price - artistCut);
+            return;
+        }
+        (address royaltyDest, uint256 royaltyValue) = IERC2981(contractAddress)
+            .royaltyInfo(tokenId, price);
+        if (royaltyValue > 0) {
+            if (royaltyDest == contractAddress) {
+                try INFT(contractAddress).artistShare() returns (
+                    uint256 share
+                ) {
+                    uint256 toArtist = (royaltyValue * share) / 10000;
+                    token.transferFrom(payer, artist, toArtist);
+                    token.transferFrom(
+                        payer,
+                        sageStorage.multisig(),
+                        royaltyValue - toArtist
+                    );
+                } catch {
+                    token.transferFrom(payer, royaltyDest, royaltyValue);
+                }
+            } else {
+                token.transferFrom(payer, royaltyDest, royaltyValue);
+            }
+        }
+        token.transferFrom(payer, seller, price - royaltyValue);
+    }
+
     function buyFromSellOffer(
         address signer,
         address contractAddress,
@@ -118,25 +166,7 @@ contract Marketplace {
         require(!cancelledOrders[message], "Offer was cancelled");
         cancelledOrders[message] = true;
         nftContract.safeTransferFrom(currentOwner, msg.sender, tokenId, "");
-        if (currentOwner == INFT(contractAddress).artist()) {
-            uint256 artistShare = (price * ARTIST_SHARE) / 10000;
-            token.transferFrom(
-                msg.sender,
-                INFT(contractAddress).artist(),
-                artistShare
-            );
-            token.transferFrom(
-                msg.sender,
-                sageStorage.multisig(),
-                price - artistShare
-            );
-        } else {
-            (address royaltyDest, uint256 royaltyValue) = IERC2981(
-                contractAddress
-            ).royaltyInfo(tokenId, price);
-            token.transferFrom(msg.sender, royaltyDest, royaltyValue);
-            token.transferFrom(msg.sender, signer, price - royaltyValue);
-        }
+        _settleSale(msg.sender, signer, contractAddress, tokenId, price);
         emit ListedNFTSold(
             currentOwner,
             msg.sender,
@@ -173,25 +203,7 @@ contract Marketplace {
         require(!cancelledOrders[message], "Offer was cancelled");
         cancelledOrders[message] = true;
         nftContract.safeTransferFrom(currentOwner, buyer, tokenId, "");
-        if (currentOwner == INFT(contractAddress).artist()) {
-            uint256 artistShare = (price * ARTIST_SHARE) / 10000;
-            token.transferFrom(
-                buyer,
-                INFT(contractAddress).artist(),
-                artistShare
-            );
-            token.transferFrom(
-                buyer,
-                sageStorage.multisig(),
-                price - artistShare
-            );
-        } else {
-            (address royaltyDest, uint256 royaltyValue) = IERC2981(
-                contractAddress
-            ).royaltyInfo(tokenId, price);
-            token.transferFrom(buyer, royaltyDest, royaltyValue);
-            token.transferFrom(buyer, currentOwner, price - royaltyValue);
-        }
+        _settleSale(buyer, currentOwner, contractAddress, tokenId, price);
         emit ListedNFTSold(
             currentOwner,
             buyer,

@@ -6,6 +6,7 @@ import {
   extractErrorMessage,
   getAuctionContract,
   getLotteryContract,
+  getNFTContract,
   getOpenEditionContract,
 } from '@/utilities/contracts';
 import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.json';
@@ -67,6 +68,10 @@ export interface CreateDropRequest {
   /** Optional allowlist gating, saved with the draft right after the drop row
    *  is created. The whitelist contract itself deploys at approval time. */
   allowlist?: { enabled: boolean; addresses: string[] };
+  /** Secondary-sale royalty in PERCENT (12 = 12%). Stamped on the artist's
+   *  NFT contract (as basis points) at deploy; every token minted for this
+   *  drop keeps it permanently. Marketplace re-sales only. */
+  royaltyPercentage: number;
 }
 
 export interface DropAllowlistData {
@@ -138,6 +143,7 @@ export const dropsApi = baseApi.injectEndpoints({
                 bannerImageS3Path: bannerUrl,
                 tileImageS3Path: bannerUrl,
                 goLiveAt: req.goLiveAt,
+                royaltyPercentage: req.royaltyPercentage,
               },
             })
           );
@@ -588,6 +594,10 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   }
   // trigger server-side task that optimizes NFT images
   await fetchWithBQ(`drops?action=OptimizeDropImages&id=${dropId}`);
+  // Stamp this drop's royalty on the artist contract BEFORE any game deploys,
+  // so every token minted for this drop carries it. Legacy artist contracts
+  // (pre-royalty code, no setter) log a warning and keep their fixed 12%.
+  await deployStep('setting drop royalty', () => setDropRoyalty(drop, artistNftContractAddress, signer));
   // Gated drop? Deploy its SageWhitelist + push the addresses BEFORE the games,
   // so lotteries/open editions can be wired to it at creation. Ungated drops
   // get AddressZero — identical to the pre-allowlist behavior.
@@ -616,6 +626,35 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   // deploy (the drop already succeeded on-chain), so it's awaited but its
   // errors are swallowed.
   await prewarmDropVideos(drop);
+}
+
+/**
+ * Stamps the drop's royalty (DB percent -> chain bps) as the artist contract's
+ * default, so every token minted from now on carries it. Warn-don't-fail on
+ * LEGACY artist contracts (pre-royalty code has no setter — their royalty is
+ * fixed at 12% and pools in-contract), so existing artists' drops still deploy.
+ * Idempotent: skips the tx when the on-chain value already matches.
+ */
+async function setDropRoyalty(drop: DropFull, artistNftContractAddress: string, signer: Signer) {
+  const bps = Math.round(((drop as any).royaltyPercentage ?? 12) * 100);
+  const nft = await getNFTContract(artistNftContractAddress, signer);
+  let current: number;
+  try {
+    current = Number(await (nft as any).defaultRoyaltyBps());
+  } catch {
+    dropProgress.note(
+      `Artist contract predates per-drop royalties — royalty stays at the fixed 12% (pooled). ` +
+        `Re-onboard the artist under a new contract to use custom royalties.`
+    );
+    return;
+  }
+  if (current === bps) {
+    console.log(`setDropRoyalty() :: already ${bps} bps, skipping`);
+    return;
+  }
+  console.log(`setDropRoyalty() :: ${current} -> ${bps} bps on ${artistNftContractAddress}`);
+  const tx = await (nft as any).setDefaultRoyalty(bps);
+  await tx.wait();
 }
 
 /**

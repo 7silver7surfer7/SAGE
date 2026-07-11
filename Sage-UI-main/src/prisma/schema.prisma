@@ -26,6 +26,11 @@ model Drop {
   // frozen — does not track later profile renames or apply to other drops
   // by the same wallet. Null = show the artist's current profile username.
   artistDisplayName                String?
+  // Secondary-sale royalty in PERCENT (12 = 12%). Stamped onto the artist's
+  // NFT contract as basis points at drop deploy; each token minted for this
+  // drop keeps the value permanently. Marketplace re-sales only — primary
+  // sale splits are unaffected.
+  royaltyPercentage                Float       @default(12)
   // Allowlist gating: when enabled, only wallets in AllowlistEntries may
   // mint/bid/buy (on-chain via a per-drop SageWhitelist contract for open
   // editions + lotteries; UI-gate for auctions). Editable pre- and post-deploy.
@@ -173,8 +178,10 @@ model Nft {
 model NftContract {
   artistAddress          String  @id @db.Char(42)
   contractAddress        String? @db.Char(42)
+  // DEPRECATED — never read; superseded by Drop.royaltyPercentage (per-drop,
+  // stamped on-chain at deploy). Kept to avoid a destructive column drop.
   royaltyPercentage      Float       @default(0.0)
-  splitterId             Int?  
+  splitterId             Int?
   Splitter               Splitter?   @relation("Splitter", fields: [splitterId], references: [id])
   Artist                 User        @relation("ArtistContract", fields: [artistAddress], references: [walletAddress])
   Drops                  Drop[]  @relation("ContractDrops")

@@ -231,6 +231,11 @@ async function insertDrop(data: any, response: NextApiResponse) {
         royaltyPercentage: isNaN(royalty) ? defaultRoyalty : royalty,
       },
     });
+    // Secondary-sale royalty, PERCENT units; stamped on-chain (as bps) at
+    // drop deploy. Server-side clamp mirrors the dashboard's 0-20 bound.
+    const dropRoyalty = parseFloat(data.royaltyPercentage);
+    const royaltyPercentage =
+      isNaN(dropRoyalty) ? 12 : Math.min(Math.max(dropRoyalty, 0), 20);
     // Create drop
     var record = await prisma.drop.create({
       data: {
@@ -243,6 +248,7 @@ async function insertDrop(data: any, response: NextApiResponse) {
         featuredMediaS3Path: data.featuredMediaS3Path || null,
         mobileCoverS3Path: data.mobileCoverS3Path || null,
         artistDisplayName: data.artistDisplayName?.trim() || null,
+        royaltyPercentage,
         NftContract: { connect: { artistAddress: data.artistWallet } },
       },
     });
