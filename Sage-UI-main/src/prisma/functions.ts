@@ -56,7 +56,8 @@ export async function getHomePageData(prisma: PrismaClient) {
     NftContract: { include: { Artist: true } },
     Lotteries: { include: { Nfts: true } },
     Auctions: { include: { Nft: true } },
-      OpenEditions: { include: { Nft: true } },
+    OpenEditions: { include: { Nft: true } },
+    CollectionMints: true as const,
   };
   let drops: Drop_include_GamesAndArtist[] = await prisma.drop.findMany({
     where: { ...filterDropApprovedOnly() },
@@ -158,6 +159,7 @@ export async function getIndividualDropsPageData(prisma: PrismaClient, id: numbe
       Lotteries: { include: { Nfts: true } },
       Auctions: { include: { Nft: true } },
       OpenEditions: { include: { Nft: true } },
+      CollectionMints: true,
     },
     where: {
       id,

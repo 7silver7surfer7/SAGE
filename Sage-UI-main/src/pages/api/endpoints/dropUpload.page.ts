@@ -4,7 +4,17 @@ import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
 import { Role } from '@prisma/client';
 import { createS3SignedUrl } from '@/utilities/awsS3-server';
-import { sendArweaveTransaction, signChunkedUploadTx } from '@/utilities/arweave-server';
+import {
+  estimateUploadCostAR,
+  getArweaveBalance,
+  sendArweaveTransaction,
+  signChunkedUploadTx,
+} from '@/utilities/arweave-server';
+import {
+  processCollectionZip,
+  BatchCheckpoint,
+  CollectionProgress,
+} from '@/utilities/collectionBundler';
 import { mirrorToS3, s3MirrorUrl } from '@/utilities/s3Mirror';
 import { getRequester, requireRole, Requester } from '@/utilities/apiAuth';
 import { parameters } from '@/constants/config';
@@ -31,6 +41,11 @@ const ACTION_ROLES: Record<string, Role[]> = {
   InsertAuction: [Role.ADMIN],
   InsertOpenEdition: [Role.ADMIN],
   InsertDrawing: [Role.ADMIN],
+  // Collection drops (ZIP → bulk sequential mint)
+  InsertCollectionMint: [Role.ADMIN],
+  ProcessCollectionZip: [Role.ADMIN],
+  GetCollectionStatus: [Role.ADMIN],
+  RegisterCollectionMint: [Role.USER, Role.ARTIST, Role.ADMIN], // ownership verified on-chain below
   InsertNft: [Role.ARTIST, Role.ADMIN],
   DeleteNft: [Role.ARTIST, Role.ADMIN], // additionally scoped to own NFTs below
   RegisterOpenEditionMint: [Role.USER, Role.ARTIST, Role.ADMIN],
@@ -87,6 +102,18 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       break;
     case 'InsertDrawing':
       await insertDrawing(request.body, response);
+      break;
+    case 'InsertCollectionMint':
+      await insertCollectionMint(request.body, response);
+      break;
+    case 'ProcessCollectionZip':
+      await processCollectionZipAction(Number(request.query.id), response);
+      break;
+    case 'GetCollectionStatus':
+      await getCollectionStatus(Number(request.query.id), response);
+      break;
+    case 'RegisterCollectionMint':
+      await registerCollectionMint(request.body, requester, response);
       break;
     case 'InsertNft':
       await insertNft(request.body, response);
@@ -546,6 +573,261 @@ async function registerOpenEditionMint(
         ownerAddress: requester.walletAddress,
         artistAddress: openEdition.Drop.artistAddress,
         artistDisplayName: openEdition.Drop.artistDisplayName,
+      },
+    });
+    response.json({ nftId: record.id });
+  } catch (e: any) {
+    console.log(e);
+    response.json({ error: e.message });
+  }
+}
+
+async function insertCollectionMint(data: any, response: NextApiResponse) {
+  console.log('insertCollectionMint()');
+  try {
+    const record = await prisma.collectionMint.create({
+      data: {
+        dropId: Number(data.dropId),
+        costTokens: toNumber(data.costTokens),
+        limitPerUser: toNumber(data.limitPerUser),
+        // maxSupply = image count, known only after the zip is processed
+        maxSupply: 0,
+        startTime: new Date(Number(data.startDate) * 1000),
+        endTime: new Date(Number(data.endDate) * 1000),
+        status: 'staging',
+      },
+    });
+    response.json({ collectionMintId: record.id });
+  } catch (e: any) {
+    console.log(e);
+    response.json({ error: e.message });
+  }
+}
+
+/**
+ * The long-running half of a collection drop: pulls the staged zip from S3,
+ * bundles every image + generated metadata to Arweave (ANS-104), posts the
+ * path manifest, mirrors everything to S3, and records the result. The
+ * request stays open for the duration (Cloud Run --timeout raised for this);
+ * progress is written to the CollectionMint row so the dashboard can poll
+ * GetCollectionStatus in parallel. Idempotent: checkpoints in `progress`
+ * mean a retry skips already-posted bundles.
+ */
+async function processCollectionZipAction(collectionMintId: number, response: NextApiResponse) {
+  console.log(`processCollectionZip(${collectionMintId})`);
+  const cm = await prisma.collectionMint.findUnique({
+    where: { id: collectionMintId },
+    include: { Drop: true },
+  });
+  if (!cm) {
+    response.status(404).json({ error: 'Collection not found' });
+    return;
+  }
+  if (cm.status === 'done') {
+    response.json({ status: 'done', manifestId: cm.manifestId });
+    return;
+  }
+  const zipUrl = `https://${process.env.S3_BUCKET}.s3.us-east-2.amazonaws.com/collection-staging/${collectionMintId}.zip`;
+  try {
+    // Pre-flight: this run spends real AR from the platform wallet — refuse
+    // outright if the balance can't plausibly cover the zip's byte size.
+    const headRes = await fetch(zipUrl, { method: 'HEAD' });
+    if (!headRes.ok) {
+      response.status(400).json({ error: `staged zip not found (HTTP ${headRes.status}) — upload it first` });
+      return;
+    }
+    const zipBytes = Number(headRes.headers.get('content-length') || 0);
+    const [estimate, { balance }] = await Promise.all([
+      estimateUploadCostAR(zipBytes),
+      getArweaveBalance(),
+    ]);
+    if (parseFloat(balance) < parseFloat(estimate)) {
+      await prisma.collectionMint.update({
+        where: { id: collectionMintId },
+        data: { status: 'failed', progress: JSON.stringify({ error: `insufficient AR: need ~${estimate}, have ${balance}` }) },
+      });
+      response.status(400).json({ error: `Insufficient AR balance: this zip needs ~${estimate} AR, wallet has ${balance} AR` });
+      return;
+    }
+
+    // resume data from a previous interrupted run
+    const prior = cm.progress ? JSON.parse(cm.progress) : {};
+    const priorCheckpoints: BatchCheckpoint[] = prior.checkpoints || [];
+    const checkpoints: BatchCheckpoint[] = [...priorCheckpoints];
+
+    await prisma.collectionMint.update({
+      where: { id: collectionMintId },
+      data: { status: 'processing' },
+    });
+
+    const result = await processCollectionZip({
+      zipUrl,
+      dropName: cm.Drop.name,
+      description: cm.Drop.description,
+      priorCheckpoints,
+      onCheckpoint: async (cp) => {
+        checkpoints.push(cp);
+        await prisma.collectionMint.update({
+          where: { id: collectionMintId },
+          data: { progress: JSON.stringify({ checkpoints }) },
+        });
+      },
+      onProgress: async (p: CollectionProgress) => {
+        await prisma.collectionMint.update({
+          where: { id: collectionMintId },
+          data: {
+            progress: JSON.stringify({
+              imagesTotal: p.imagesTotal,
+              imagesBundled: p.imagesBundled,
+              bundlesPosted: p.bundlesPosted,
+              checkpoints,
+            }),
+          },
+        });
+      },
+    });
+
+    await prisma.collectionMint.update({
+      where: { id: collectionMintId },
+      data: {
+        status: 'done',
+        manifestId: result.manifestId,
+        baseUri: result.baseUri,
+        maxSupply: result.maxSupply,
+        previewImagePath: result.previewImagePath,
+        pathMap: JSON.stringify(result.pathMap),
+      },
+    });
+    response.json({ status: 'done', manifestId: result.manifestId, maxSupply: result.maxSupply });
+  } catch (e: any) {
+    console.log('processCollectionZip failed:', e);
+    await prisma.collectionMint
+      .update({
+        where: { id: collectionMintId },
+        data: {
+          status: 'failed',
+          progress: JSON.stringify({
+            ...(cm.progress ? JSON.parse(cm.progress) : {}),
+            error: e.message,
+          }),
+        },
+      })
+      .catch(() => {});
+    response.status(500).json({ error: e.message });
+  }
+}
+
+async function getCollectionStatus(collectionMintId: number, response: NextApiResponse) {
+  const cm = await prisma.collectionMint.findUnique({
+    where: { id: collectionMintId },
+    select: { status: true, progress: true, maxSupply: true, manifestId: true, previewImagePath: true },
+  });
+  if (!cm) {
+    response.status(404).json({ error: 'Collection not found' });
+    return;
+  }
+  response.json(cm);
+}
+
+/**
+ * Collection-mint bookkeeping, cloned from registerOpenEditionMint: mints
+ * happen entirely on-chain, so this is how a collector's token becomes an Nft
+ * row (visible in their Collection page). Verifies on-chain ownership AND that
+ * the token's URI really is this collection's `{baseUri}{index}.json` before
+ * writing — both tokenId and index are client-supplied.
+ */
+async function registerCollectionMint(
+  data: { collectionMintId: number; tokenId: number; index: number },
+  requester: Requester,
+  response: NextApiResponse
+) {
+  console.log(
+    `registerCollectionMint(${data.collectionMintId}, token ${data.tokenId}, index ${data.index}, ${requester.walletAddress})`
+  );
+  try {
+    const cm = await prisma.collectionMint.findUnique({
+      where: { id: Number(data.collectionMintId) },
+      include: { Drop: { include: { NftContract: true } } },
+    });
+    if (!cm || !cm.baseUri || !cm.pathMap) {
+      response.status(404).json({ error: 'Collection not found or not processed' });
+      return;
+    }
+    const nftContractAddress = cm.Drop.NftContract.contractAddress;
+    if (!nftContractAddress) {
+      response.status(400).json({ error: 'Artist NFT contract not deployed yet' });
+      return;
+    }
+    const tokenId = Number(data.tokenId);
+    const index = Number(data.index);
+    const provider = new ethers.providers.StaticJsonRpcProvider(
+      parameters.RPC_URL,
+      +parameters.CHAIN_ID
+    );
+    const nftContract = new ethers.Contract(
+      nftContractAddress,
+      [
+        'function ownerOf(uint256) view returns (address)',
+        'function tokenURI(uint256) view returns (string)',
+      ],
+      provider
+    );
+    const [onChainOwner, onChainUri] = await Promise.all([
+      nftContract.ownerOf(tokenId),
+      nftContract.tokenURI(tokenId),
+    ]);
+    if (onChainOwner.toLowerCase() !== requester.walletAddress.toLowerCase()) {
+      response.status(403).json({ error: 'Token is not owned by the requesting wallet' });
+      return;
+    }
+    if (onChainUri !== `${cm.baseUri}${index}.json`) {
+      response.status(400).json({ error: 'Token URI does not match the claimed collection index' });
+      return;
+    }
+    // sync cached mintCount from chain (idempotent, best-effort)
+    if (cm.contractAddress) {
+      try {
+        const collectionContract = new ethers.Contract(
+          cm.contractAddress,
+          ['function getMintCount(uint256) view returns (uint32)'],
+          provider
+        );
+        const mintCount = await collectionContract.getMintCount(cm.collectionId ?? cm.id);
+        await prisma.collectionMint.update({
+          where: { id: cm.id },
+          data: { mintCount: Number(mintCount) },
+        });
+      } catch (e) {
+        console.error(`Failed to sync mintCount for collection ${cm.id}`, e);
+      }
+    }
+    // idempotent: a retried registration must not create a duplicate row
+    const existing = await prisma.nft.findFirst({
+      where: { tokenId, artistAddress: cm.Drop.artistAddress },
+    });
+    if (existing) {
+      response.json({ nftId: existing.id });
+      return;
+    }
+    const entry = JSON.parse(cm.pathMap)[String(index)];
+    if (!entry) {
+      response.status(400).json({ error: 'Unknown collection index' });
+      return;
+    }
+    const imageUrl = `https://arweave.net/${entry.img}`;
+    const record = await prisma.nft.create({
+      data: {
+        name: `${cm.Drop.name} #${index}`,
+        description: cm.Drop.description,
+        tokenId,
+        metadataPath: `${cm.baseUri}${index}.json`,
+        arweavePath: imageUrl,
+        s3Path: imageUrl,
+        s3PathOptimized: imageUrl,
+        numberOfEditions: 1,
+        ownerAddress: requester.walletAddress,
+        artistAddress: cm.Drop.artistAddress,
+        artistDisplayName: cm.Drop.artistDisplayName,
       },
     });
     response.json({ nftId: record.id });

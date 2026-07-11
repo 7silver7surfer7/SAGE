@@ -60,6 +60,19 @@ export default function NewDropCard({ drop }: Props) {
     if (mediaTxid) assetChecks.push({ label: `"${name}" ${isVideo ? 'video' : 'image'}`, txid: mediaTxid });
     if (metaTxid) assetChecks.push({ label: `"${name}" metadata`, txid: metaTxid });
   }
+  // collection drops: same spot-checks the deploy gate runs (manifest +
+  // first/last token metadata + first image) — not all 5,000
+  for (const cm of (drop as any).CollectionMints ?? []) {
+    if (cm.manifestId) assetChecks.push({ label: 'collection manifest', txid: cm.manifestId });
+    if (cm.pathMap) {
+      const map = JSON.parse(cm.pathMap);
+      if (map['1']?.json) assetChecks.push({ label: 'first token metadata', txid: map['1'].json });
+      if (map['1']?.img) assetChecks.push({ label: 'first image', txid: map['1'].img });
+      const last = map[String(cm.maxSupply)];
+      if (last?.json)
+        assetChecks.push({ label: `last token metadata (#${cm.maxSupply})`, txid: last.json });
+    }
+  }
 
   // Troubleshooting recheck for the propagation-lag failure mode: a fresh
   // Arweave upload can take a while to become readable on the gateway, which
@@ -133,6 +146,25 @@ export default function NewDropCard({ drop }: Props) {
           </div>
         </div>
       </div>
+      {/* collection drops: processing status + preview of image #1 */}
+      {((drop as any).CollectionMints ?? []).map((cm: any) => (
+        <div key={`cm-${cm.id}`} style={{ fontSize: '12px', margin: '8px 0' }}>
+          <div>
+            collection: {cm.maxSupply > 0 ? `${cm.maxSupply} images` : 'processing…'} · status:{' '}
+            <b style={{ color: cm.status === 'done' ? '#0c9d68' : cm.status === 'failed' ? '#dc2626' : undefined }}>
+              {cm.status}
+            </b>
+            {cm.costTokens > 0 ? ` · ${cm.costTokens} SAGE per mint` : ' · free mint'}
+          </div>
+          {cm.previewImagePath && (
+            <div style={{ position: 'relative', width: '31%', minWidth: '90px', paddingBottom: '31%', overflow: 'hidden', marginTop: '6px' }}>
+              <div style={{ position: 'absolute', inset: 0 }}>
+                <BaseMedia src={cm.previewImagePath} />
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
       {/* every artwork's DISPLAY media, live — confirms visually that the
           uploads work before approving, mirroring the actual drop page */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', margin: '10px 0' }}>

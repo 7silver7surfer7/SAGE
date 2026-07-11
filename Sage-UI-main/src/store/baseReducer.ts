@@ -13,6 +13,7 @@ export const baseApi = createApi({
     'EscrowPoints',
     'Following',
     'Nfts',
+    'CollectionMintCount',
     'OpenEditionMintCount',
     'PendingDrops',
     'PlatformRoyaltyAddress',

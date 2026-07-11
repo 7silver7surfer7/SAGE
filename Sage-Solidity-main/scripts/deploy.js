@@ -35,6 +35,8 @@ function shouldDeployContract(name) {
             return true;
         case "OpenEdition":
             return true;
+        case "Collection":
+            return true; // SageCollection — fixed-price sequential collection mints
         case "RNGTemp":
             return false; // superseded by SageRNG (deployed via the "RNG" step)
     }
@@ -145,6 +147,23 @@ deployOpenEdition = async (rewards, storage, deployer) => {
         openEdition = OpenEdition.attach(openEditionAddress);
     }
     return [openEdition, false];
+};
+
+deployCollection = async (storage, deployer) => {
+    const collectionAddress = CONTRACTS[hre.network.name]["collectionAddress"];
+    const ashAddress = CONTRACTS[hre.network.name]["ashAddress"];
+    const Collection = await hre.ethers.getContractFactory("SageCollection");
+
+    if (shouldDeployContract("Collection")) {
+        const collection = await Collection.deploy(storage.address, ashAddress);
+        await collection.deployed();
+        console.log("Collection deployed to:", collection.address);
+        saveAddress("collectionAddress", collection.address);
+        return [collection, true];
+    } else {
+        collection = Collection.attach(collectionAddress);
+    }
+    return [collection, false];
 };
 
 deployRNG = async (lotteryAddr) => {
@@ -352,6 +371,10 @@ async function main() {
     openEdition = result[0];
     newOpenEdition = result[1];
 
+    result = await deployCollection(storage, deployer);
+    collection = result[0];
+    newCollection = result[1];
+
     values = await deployRNG(lottery.address);
     randomness = values[0];
     newRandomness = values[1];
@@ -384,6 +407,10 @@ async function main() {
         await storage.grantRole(
             ethers.utils.solidityKeccak256(["string"], ["role.minter"]),
             openEdition.address
+        );
+        await storage.grantRole(
+            ethers.utils.solidityKeccak256(["string"], ["role.minter"]),
+            collection.address
         );
         // the human admin (hardware wallet) needs role.admin for dashboard
         // actions that call onlyAdmin functions (createOpenEdition, etc.)
@@ -431,6 +458,12 @@ async function main() {
             await storage.grantRole(
                 ethers.utils.solidityKeccak256(["string"], ["role.minter"]),
                 openEdition.address
+            );
+        }
+        if (newCollection) {
+            await storage.grantRole(
+                ethers.utils.solidityKeccak256(["string"], ["role.minter"]),
+                collection.address
             );
         }
         if (newRewards) {

@@ -35,6 +35,12 @@ export default function CreateDropPanel() {
   const [description, setDescription] = useState('');
   const [bannerFile, setBannerFile] = useState<File | null>(null);
   const [artworks, setArtworks] = useState<ArtworkRow[]>([]);
+  // 'standard' = per-artwork auctions/drawings/open editions;
+  // 'collection' = one ZIP of unique images, fixed-price sequential mint
+  const [dropStyle, setDropStyle] = useState<'standard' | 'collection'>('standard');
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [collectionPrice, setCollectionPrice] = useState(1);
+  const [collectionLimitPerUser, setCollectionLimitPerUser] = useState(0);
   const [durationHours, setDurationHours] = useState(24);
   const [approveNow, setApproveNow] = useState(true);
   const [allowlistEnabled, setAllowlistEnabled] = useState(false);
@@ -106,7 +112,16 @@ export default function CreateDropPanel() {
       toast.warn('Select a banner image.');
       return;
     }
-    if (artworks.length === 0) {
+    if (dropStyle === 'collection') {
+      if (!zipFile) {
+        toast.warn('Select the collection ZIP.');
+        return;
+      }
+      if (isNaN(collectionPrice) || collectionPrice < 0) {
+        toast.warn('Set a valid mint price.');
+        return;
+      }
+    } else if (artworks.length === 0) {
       toast.warn('Add at least one artwork.');
       return;
     }
@@ -182,12 +197,23 @@ export default function CreateDropPanel() {
       signer: approveNow ? (signer as any) : undefined,
       allowlist,
       royaltyPercentage,
+      collection:
+        dropStyle === 'collection'
+          ? {
+              zipFile: zipFile as File,
+              costTokens: collectionPrice,
+              limitPerUser: collectionLimitPerUser,
+            }
+          : undefined,
     });
     if ('data' in result && result.data) {
       setName('');
       setDescription('');
       setBannerFile(null);
       setArtworks([]);
+      setZipFile(null);
+      setCollectionPrice(1);
+      setCollectionLimitPerUser(0);
       setGoLiveAtInput('');
       setSaleStartAtInput('');
       setArtistDisplayName('');
@@ -201,6 +227,25 @@ export default function CreateDropPanel() {
   return (
     <form className='create-drop-panel' onSubmit={handleSubmit}>
       <fieldset disabled={isCreating} className='create-drop-panel__fieldset'>
+        <label className='create-drop-panel__label'>
+          drop style
+          <select
+            className='create-drop-panel__input'
+            value={dropStyle}
+            onChange={(e) => setDropStyle(e.target.value as 'standard' | 'collection')}
+          >
+            <option value='standard'>standard — auctions / drawings / open editions</option>
+            <option value='collection'>collection — ZIP of images, fixed-price mint</option>
+          </select>
+          {dropStyle === 'collection' && (
+            <em className='create-drop-panel__section-hint'>
+              Upload one ZIP containing the collection&apos;s images (png/jpg/gif, up to 5,000
+              images / 1GB). Everything is handled automatically — Arweave upload, per-token
+              metadata, contract setup. Collectors mint image #1, #2, #3… in file order at the
+              price you set below. Supply = the number of images in the zip.
+            </em>
+          )}
+        </label>
         <label className='create-drop-panel__label'>
           artist wallet (defaults to you)
           <input
@@ -308,6 +353,49 @@ export default function CreateDropPanel() {
           {bannerFile && <em className='create-drop-panel__section-hint'>{bannerFile.name}</em>}
         </div>
 
+        {dropStyle === 'collection' && (
+          <div className='create-drop-panel__banner-section'>
+            <span className='create-drop-panel__section-title'>collection zip *</span>
+            <label className='create-drop-panel__banner-uploader'>
+              <span className='create-drop-panel__banner-placeholder'>
+                {zipFile
+                  ? `${zipFile.name} (${(zipFile.size / (1024 * 1024)).toFixed(0)}MB)`
+                  : '+ SELECT ZIP OF IMAGES'}
+              </span>
+              <input
+                type='file'
+                style={{ display: 'none' }}
+                accept='.zip,application/zip,application/x-zip-compressed'
+                onChange={(e) => setZipFile(e.target.files?.[0] || null)}
+              />
+            </label>
+            <div className='create-drop-panel__sale-params'>
+              <label className='create-drop-panel__param'>
+                mint price (SAGE)
+                <input
+                  className='create-drop-panel__input'
+                  type='number'
+                  min='0'
+                  step='any'
+                  required
+                  value={collectionPrice}
+                  onChange={(e) => setCollectionPrice(Number(e.target.value))}
+                />
+              </label>
+              <label className='create-drop-panel__param'>
+                mints per wallet (0 = unlimited)
+                <input
+                  className='create-drop-panel__input'
+                  type='number'
+                  min='0'
+                  value={collectionLimitPerUser}
+                  onChange={(e) => setCollectionLimitPerUser(Number(e.target.value))}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+        {dropStyle === 'standard' && (
         <div className='create-drop-panel__artworks-header'>
           <span className='create-drop-panel__section-title'>artwork for sale *</span>
           <label className='create-drop-panel__add-button'>
@@ -321,7 +409,8 @@ export default function CreateDropPanel() {
             />
           </label>
         </div>
-        {artworks.map((artwork) => (
+        )}
+        {dropStyle === 'standard' && artworks.map((artwork) => (
           <div key={artwork.key} className='create-drop-panel__artwork-card'>
             <div className='create-drop-panel__artwork-row'>
               {artwork.previewUrl ? (

@@ -5,6 +5,7 @@ import {
   assertSignerOnConfiguredChain,
   extractErrorMessage,
   getAuctionContract,
+  getCollectionContract,
   getLotteryContract,
   getNFTContract,
   getOpenEditionContract,
@@ -17,6 +18,7 @@ import { fetchOrCreateNftContract } from './nftsReducer';
 import { baseApi } from './baseReducer';
 import { Role } from '@prisma/client';
 import { createNftMetadataOnArweave, uploadFileToArweave } from '@/utilities/arweave-client';
+import { uploadFileToS3 } from '@/utilities/awsS3-client';
 import { dropProgress } from '@/utilities/dropProgress';
 import { isVideoSrc } from '@/utilities/media';
 
@@ -72,6 +74,14 @@ export interface CreateDropRequest {
    *  NFT contract (as basis points) at deploy; every token minted for this
    *  drop keeps it permanently. Marketplace re-sales only. */
   royaltyPercentage: number;
+  /** Collection drop mode: a ZIP of unique images bulk-uploaded to Arweave;
+   *  collectors mint sequentially at a fixed SAGE price. When set, `artworks`
+   *  is ignored — the zip IS the drop's content. */
+  collection?: {
+    zipFile: File;
+    costTokens: number;
+    limitPerUser: number;
+  };
 }
 
 export interface DropAllowlistData {
@@ -117,7 +127,11 @@ export const dropsApi = baseApi.injectEndpoints({
         // and the deploy can be retried from the New Drops tab.
         let createdDropId = 0;
         dropProgress.reset();
-        dropProgress.note(`Creating drop "${req.name}" (${req.artworks.length} artwork${req.artworks.length === 1 ? '' : 's'})`);
+        dropProgress.note(
+          req.collection
+            ? `Creating collection drop "${req.name}" (bulk zip)`
+            : `Creating drop "${req.name}" (${req.artworks.length} artwork${req.artworks.length === 1 ? '' : 's'})`
+        );
         try {
           const { url: bannerUrl } = await dropProgress.track('Uploading banner to Arweave', () =>
             uploadFileToArweave(req.bannerFile)
@@ -173,7 +187,10 @@ export const dropsApi = baseApi.injectEndpoints({
             req.saleStartAt ?? req.goLiveAt ?? Math.floor(Date.now() / 1000) + 300;
           const endDate = startDate + req.durationHours * 3600;
           const endpoint = '/api/endpoints/dropUpload/';
-          const total = req.artworks.length;
+          if (req.collection) {
+            await runCollectionPipeline(dropId, req, startDate, endDate, fetchWithBQ);
+          }
+          const total = req.collection ? 0 : req.artworks.length;
           for (let i = 0; i < total; i++) {
             const artwork = req.artworks[i];
             const label = artwork.name || `artwork ${i + 1}`;
@@ -427,6 +444,22 @@ export const dropsApi = baseApi.injectEndpoints({
         { type: 'OpenEditionMintCount', id: editionId },
       ],
     }),
+    // Same live-read rationale as getOpenEditionMintCount, for collections.
+    getCollectionMintCount: builder.query<number, number>({
+      queryFn: async (collectionId) => {
+        try {
+          const contract = await getCollectionContract();
+          const count = await contract.getMintCount(collectionId);
+          return { data: Number(count) };
+        } catch (e) {
+          console.error(`getCollectionMintCount(${collectionId}) failed`, e);
+          return { error: { status: 400, data: {} } };
+        }
+      },
+      providesTags: (_result, _error, collectionId) => [
+        { type: 'CollectionMintCount', id: collectionId },
+      ],
+    }),
   }),
 });
 
@@ -613,6 +646,9 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   await deployStep('open editions', () =>
     deployOpenEditions(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
   );
+  await deployStep('collection mints', () =>
+    deployCollectionMints(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
+  );
   // FINAL required step: flip approvedAt/isLive so the drop appears on the
   // storefront. This call was dropped in an earlier refactor, which left a
   // fully-minted drop invisible — it must always run after the games deploy
@@ -760,6 +796,132 @@ async function syncAllowlistAddresses(
   }
 }
 
+/**
+ * Collection-drop creation pipeline (client side): registers the game row,
+ * stages the ZIP on S3 (the browser must PUT it there itself — Cloud Run's
+ * edge rejects >32MB request bodies, so the zip can't travel through our own
+ * API), then kicks the server's long-running bundling job and mirrors its
+ * DB-reported progress into the dashboard log until it completes.
+ */
+async function runCollectionPipeline(
+  dropId: number,
+  req: CreateDropRequest,
+  startDate: number,
+  endDate: number,
+  fetchWithBQ: any
+) {
+  const c = req.collection!;
+  const { data: cmResult } = await dropProgress.track('Registering collection', async () =>
+    fetchWithBQ({
+      url: 'endpoints/dropUpload?action=InsertCollectionMint',
+      method: 'POST',
+      body: {
+        dropId,
+        costTokens: c.costTokens,
+        limitPerUser: c.limitPerUser,
+        startDate,
+        endDate,
+      },
+    })
+  );
+  if ((cmResult as any)?.error) throw new Error((cmResult as any).error);
+  const collectionMintId = (cmResult as any).collectionMintId as number;
+
+  const zipMB = (c.zipFile.size / (1024 * 1024)).toFixed(0);
+  await dropProgress.track(`Staging zip on S3 (${zipMB}MB)`, () =>
+    uploadFileToS3(
+      '/api/endpoints/dropUpload/',
+      'collection-staging',
+      `${collectionMintId}.zip`,
+      c.zipFile
+    )
+  );
+
+  // Long-running server job; poll its DB-reported progress in parallel so the
+  // dashboard shows movement ("34/200 bundled") instead of a silent spinner.
+  const stepId = dropProgress.begin('Bundling images to Arweave (this can take a while)');
+  const poller = setInterval(async () => {
+    try {
+      const { data } = await fetchWithBQ(
+        `endpoints/dropUpload?action=GetCollectionStatus&id=${collectionMintId}`
+      );
+      const progress = (data as any)?.progress ? JSON.parse((data as any).progress) : null;
+      if (progress?.imagesTotal) {
+        dropProgress.update(
+          stepId,
+          `${progress.imagesBundled ?? 0}/${progress.imagesTotal} images bundled, ` +
+            `${progress.bundlesPosted?.length ?? 0} bundle tx${(progress.bundlesPosted?.length ?? 0) === 1 ? '' : 's'} posted`
+        );
+      }
+    } catch {
+      /* polling is cosmetic */
+    }
+  }, 5000);
+  try {
+    // plain fetch (not fetchWithBQ): this request stays open for the whole
+    // server-side job — possibly many minutes for thousands of images
+    const res = await fetch(
+      `/api/endpoints/dropUpload/?action=ProcessCollectionZip&id=${collectionMintId}`
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.error) {
+      throw new Error(data?.error || `processing failed (HTTP ${res.status})`);
+    }
+    dropProgress.complete(
+      stepId,
+      `${data.maxSupply} images live — manifest ${String(data.manifestId).slice(0, 8)}…`
+    );
+  } catch (e: any) {
+    dropProgress.fail(stepId, e?.message);
+    throw e;
+  } finally {
+    clearInterval(poller);
+  }
+}
+
+/**
+ * Creates the drop's collections on the SageCollection singleton. Idempotent
+ * like the other game deploys: rows with a contractAddress are skipped, so a
+ * re-approve resumes cleanly. Requires zip processing to have finished (the
+ * baseUri/maxSupply come from it) — an unprocessed collection fails the step.
+ */
+async function deployCollectionMints(
+  drop: DropFull,
+  artistNftContractAddress: string,
+  signer: Signer,
+  fetchWithBQ: any,
+  whitelistAddress: string
+) {
+  if (!drop.CollectionMints || drop.CollectionMints.length === 0) return;
+  const contract = await getCollectionContract(signer);
+  for (const cm of drop.CollectionMints) {
+    if (cm.contractAddress) continue; // already deployed
+    if (cm.status !== 'done' || !cm.baseUri || !cm.maxSupply) {
+      throw new Error(
+        `Collection #${cm.id} hasn't finished processing its zip (status: ${cm.status}) — ` +
+          `wait for processing to complete (or re-run it from the create form) and re-approve.`
+      );
+    }
+    const tx = await contract.createCollection({
+      startTime: Math.floor(new Date(cm.startTime).getTime() / 1000),
+      closeTime: Math.floor(new Date(cm.endTime).getTime() / 1000),
+      maxSupply: cm.maxSupply,
+      mintCount: 0,
+      limitPerUser: cm.limitPerUser,
+      baseUri: cm.baseUri,
+      nftContract: artistNftContractAddress,
+      whitelist: whitelistAddress,
+      costTokens: ethers.utils.parseEther(String(cm.costTokens)),
+      id: cm.id,
+    });
+    await tx.wait();
+    const { data: updated } = await fetchWithBQ(
+      `drops?action=UpdateCollectionContractAddress&id=${cm.id}&address=${parameters.COLLECTION_ADDRESS}`
+    );
+    if ((updated as any)?.error) throw new Error((updated as any).error);
+  }
+}
+
 /** extract a 43-char Arweave txid from an arweave.net URL, or null */
 function arweaveTxid(url?: string | null): string | null {
   const m = url ? /arweave\.net\/([A-Za-z0-9_-]{43})/.exec(url) : null;
@@ -776,6 +938,43 @@ function arweaveTxid(url?: string | null): string | null {
  * good upload. Reported per-artwork in the dashboard log.
  */
 async function verifyDropMediaRetrievable(drop: DropFull) {
+  // Collection drops: verify the manifest + spot-check the FIRST and LAST
+  // token's metadata items (not all 5,000 — keeps the gate bounded; the
+  // bundles are all-or-nothing txs, so the ends existing is strong evidence
+  // the middle does too). Freshly-bundled DataItems can lag gateway indexing
+  // even longer than plain txs; the S3 mirror covers display meanwhile, but
+  // the on-chain tokenURI depends on Arweave — so the gate stays strict.
+  for (const cm of drop.CollectionMints ?? []) {
+    if (cm.contractAddress) continue; // already deployed in a previous run
+    if (cm.status !== 'done' || !cm.manifestId || !cm.pathMap) {
+      throw new Error(
+        `Collection #${cm.id} hasn't finished processing (status: ${cm.status}) — nothing was minted on-chain.`
+      );
+    }
+    const map = JSON.parse(cm.pathMap);
+    const checks = [
+      { label: 'collection manifest', txid: cm.manifestId },
+      { label: 'first token metadata', txid: map['1']?.json },
+      { label: `last token metadata (#${cm.maxSupply})`, txid: map[String(cm.maxSupply)]?.json },
+      { label: 'first image', txid: map['1']?.img },
+    ].filter((c): c is { label: string; txid: string } => !!c.txid);
+    await dropProgress.track(`Verifying collection uploaded to Arweave`, async () => {
+      for (const check of checks) {
+        const result = await verifyAssetRetrievable(check.txid);
+        console.log(
+          `verifyDropMedia() :: collection ${check.label} ${check.txid} -> ` +
+            (result.retrievable ? 'OK' : `NOT retrievable (${result.reason})`)
+        );
+        if (!result.retrievable) {
+          throw new Error(
+            `The ${check.label} isn't retrievable on Arweave yet (${result.reason}). ` +
+              `Freshly-bundled uploads can take a while to index — nothing was minted ` +
+              `on-chain; use "verify assets" on the New Drops tab and re-approve once green.`
+          );
+        }
+      }
+    });
+  }
   const nfts = [
     ...drop.Auctions.map((a) => a.Nft),
     ...drop.Lotteries.flatMap((l) => l.Nfts),
@@ -1251,6 +1450,7 @@ export const {
   useDeleteDropMutation,
   useDeleteDropsMutation,
   useGetOpenEditionMintCountQuery,
+  useGetCollectionMintCountQuery,
   useGetDropAllowlistQuery,
   useCheckDropAllowlistQuery,
   useUpdateDropAllowlistMutation,

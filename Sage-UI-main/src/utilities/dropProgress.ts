@@ -52,6 +52,11 @@ export const dropProgress = {
     steps = steps.map((s) => (s.id === id ? { ...s, status: 'done', detail: detail ?? s.detail } : s));
     emit();
   },
+  /** live-update an active step's detail (e.g. long jobs reporting "34/200") */
+  update(id: number, detail: string) {
+    steps = steps.map((s) => (s.id === id ? { ...s, detail } : s));
+    emit();
+  },
   fail(id: number, detail?: string) {
     steps = steps.map((s) => (s.id === id ? { ...s, status: 'error', detail: detail ?? s.detail } : s));
     emit();

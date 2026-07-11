@@ -41,9 +41,41 @@ model Drop {
   Auctions                         Auction[]
   Lotteries                        Lottery[]
   OpenEditions                     OpenEdition[]
+  CollectionMints                  CollectionMint[]
   UserFavoriteDrops                User[]      @relation("userFavoriteDrops")
   FeaturedDropConfig               Config?     @relation("ConfigFeaturedDrop")
   AllowlistEntries                 DropAllowlistEntry[]
+}
+
+// "Collection" drop style: a ZIP of N unique images uploaded in bulk (ANS-104
+// bundles + one Arweave path manifest); collectors mint sequentially at a
+// fixed SAGE price via the SageCollection contract. Unlike OpenEdition there
+// is no upfront Nft row per image — Nft rows materialize per mint (see
+// RegisterCollectionMint), keyed off the manifest paths.
+model CollectionMint {
+  id               Int       @id @default(autoincrement())
+  dropId           Int
+  collectionId     Int? // on-chain collection id (== id, set at deploy/approval)
+  contractAddress  String?   @db.Char(42)
+  costTokens       Float     @default(0) // mint price in SAGE
+  maxSupply        Int // number of images == hard mint cap
+  limitPerUser     Int       @default(0) // 0 = unlimited
+  mintCount        Int       @default(0) // cached on-chain mint count
+  isLive           Boolean   @default(false)
+  startTime        DateTime
+  endTime          DateTime
+  manifestId       String? // Arweave path-manifest txid (set when processing completes)
+  baseUri          String? // https://arweave.net/{manifestId}/ — token i's metadata at {i}.json
+  previewImagePath String? // first image's URL, for tiles/cards
+  status           String    @default("staging") // staging | processing | done | failed
+  progress         String? // JSON: { imagesTotal, imagesBundled, bundlesPosted: [txids], error? }
+  // JSON: { "<index>": { img: dataItemId, json: dataItemId, ext: "png" } } —
+  // written as processing batches complete; doubles as the resume checkpoint
+  // (DataItem ids are NOT reproducible across retries: Arweave RSA-PSS
+  // signatures are randomized, so a re-signed item gets a new id) and as the
+  // register-time lookup for each minted token's direct image URL.
+  pathMap          String?
+  Drop             Drop      @relation(fields: [dropId], references: [id])
 }
 
 model DropAllowlistEntry {

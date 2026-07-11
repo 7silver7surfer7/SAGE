@@ -13,6 +13,7 @@ import {
 import System from '@/components/Icons/System';
 import AuctionTile from '@/components/Pages/DropIndividual/AuctionTile';
 import OpenEditionTile from '@/components/Pages/DropIndividual/OpenEditionTile';
+import CollectionMintTile from '@/components/Pages/DropIndividual/CollectionMintTile';
 import DrawingTile from '@/components/Pages/DropIndividual/DrawingTile';
 import { useSession } from 'next-auth/react';
 import useDrop from '@/hooks/useDrop';
@@ -30,6 +31,7 @@ interface Props {
   drawings: DropPageData['Lotteries'];
   auctions: DropPageData['Auctions'];
   openEditions: DropPageData['OpenEditions'];
+  collections: DropPageData['CollectionMints'];
   gamesCount: number;
 }
 
@@ -63,7 +65,7 @@ type TileClassName =
   | 'drop-page__grid-item--single'
   | 'drop-page__grid-item--double';
 
-export default function drop({ drop, auctions, artist, drawings, openEditions, gamesCount }: Props) {
+export default function drop({ drop, auctions, artist, drawings, openEditions, collections, gamesCount }: Props) {
   const {
     systemTypes,
     bannerImgSrc,
@@ -213,6 +215,17 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, g
                 />
               );
             })}
+            {collections.map((c) => {
+              return (
+                <CollectionMintTile
+                  key={`cm-${c.id}`}
+                  className={tileClassName}
+                  dropName={drop.name}
+                  artist={artist}
+                  collection={c}
+                />
+              );
+            })}
             {drawings.map((d) => {
               return (
                 <DrawingTile
@@ -259,7 +272,9 @@ export async function getStaticProps({
   const artist = drop.NftContract.Artist;
   const drawings = drop.Lotteries;
   const openEditions = drop.OpenEditions;
-  const gamesCount: number = auctions.length + drawings.length + openEditions.length;
+  const collections = drop.CollectionMints;
+  const gamesCount: number =
+    auctions.length + drawings.length + openEditions.length + collections.length;
 
   return {
     props: {
@@ -268,6 +283,7 @@ export async function getStaticProps({
       auctions,
       drawings,
       openEditions,
+      collections,
       gamesCount,
     },
     revalidate: 60,

@@ -11,6 +11,7 @@ export interface Parameters {
   LOTTERY_ADDRESS: string;
   AUCTION_ADDRESS: string;
   OPENEDITION_ADDRESS: string;
+  COLLECTION_ADDRESS: string;
   REWARDS_ADDRESS: string;
   ASHTOKEN_ADDRESS: string;
   NFTFACTORY_ADDRESS: string;

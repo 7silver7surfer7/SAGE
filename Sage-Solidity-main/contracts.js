@@ -12,6 +12,7 @@ CONTRACTS = {
         factoryAddress: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
         lotteryAddress: "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
         openEditionAddress: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+        collectionAddress: "",
         randomnessAddress: "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
         rewardsAddress: "0x0165878A594ca255338adfa4d48449f69242Eb8F",
         auctionAddress: "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
@@ -29,6 +30,7 @@ CONTRACTS = {
         factoryAddress: "0x21e8Bb18193Db10ddecACE141EDE66882c08D991",
         lotteryAddress: "0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E",
         openEditionAddress: "0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9",
+        collectionAddress: "0xFdcdd3a9150a79bC2F44f33e6EdA3C1B34a7366A",
         randomnessAddress: "0xB438593B6ceea256A65dE8E722f8F1718f963773",
         rewardsAddress: "0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC",
         auctionAddress: "0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD",
@@ -46,6 +48,7 @@ CONTRACTS = {
         factoryAddress: "",
         lotteryAddress: "",
         openEditionAddress: "",
+        collectionAddress: "",
         randomnessAddress: "",
         rewardsAddress: "",
         auctionAddress: "",
@@ -62,6 +65,7 @@ CONTRACTS = {
         factoryAddress: "0xfD2126F97519b90B81196373178E0b97AcD0CDC4",
         lotteryAddress: "0xBB8022c7235d456252eC1B40C65DB5F4B7123F2D",
         openEditionAddress: "0x1E13F6e12F8815901CB9cB7cB686350f212d0261",
+        collectionAddress: "",
         randomnessAddress: "0xc1202264727FC40239295C61aa25E6Daacd2A650",
         rewardsAddress: "0xC1F9787079a83E444836450b8f3b31A9D5D3cBad", //imp 0x05A45Ee2E54DF5B273394Ac4368e6c3CDa89c5c6
         auctionAddress: "0xC99A4a7a2222fcdc488D15Bda9f9A95D4f59bF0C", //imp 0xc827cef79121F5Cf41684C311D7C0C4AaDdDC7c5
@@ -77,6 +81,7 @@ CONTRACTS = {
         whitelistAddress:"0xEfd5840Eea51Fcae9e15872124E659F2Ca006266",
         lotteryAddress: "0xFCCCed6439ab16313B39048019aA50566d6bd72b", //imp 0xbb03246366ffb993a382c2f2e27f582ae1ca2471
         openEditionAddress: "0xFCCCed6439ab16313B39048019aA50566d6bd000",
+        collectionAddress: "",
         storageAddress: "0xEc620c97C0c2f893e6D86B8C0008B654fA738a9e",
         factoryAddress: "0x4A33B3F83268180cAf3CC4A66FA1977ad2551051",
         factoryAddress_old: "0x8fCe9aA49BACe6d7f1d906A229450baEa7406dB6",

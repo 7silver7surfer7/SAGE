@@ -35,7 +35,8 @@ const configuration: Configuration = {
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
-    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9', // deployed 2026-07-09
+    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9',
+    COLLECTION_ADDRESS: '0xFdcdd3a9150a79bC2F44f33e6EdA3C1B34a7366A', // SageCollection (deployed 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     APP_URL: 'http://localhost:3005/',
   },
@@ -51,7 +52,8 @@ const configuration: Configuration = {
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
-    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9', // deployed 2026-07-09
+    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9',
+    COLLECTION_ADDRESS: '0xFdcdd3a9150a79bC2F44f33e6EdA3C1B34a7366A', // SageCollection (deployed 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     APP_URL: 'https://sage-dev.vercel.app/',
   },
@@ -67,7 +69,8 @@ const configuration: Configuration = {
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
-    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9', // deployed 2026-07-09
+    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9',
+    COLLECTION_ADDRESS: '0xFdcdd3a9150a79bC2F44f33e6EdA3C1B34a7366A', // SageCollection (deployed 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     APP_URL: 'https://sage-staging.vercel.app/',
   },
@@ -83,7 +86,8 @@ const configuration: Configuration = {
     LOTTERY_ADDRESS: '',
     REWARDS_ADDRESS: '',
     AUCTION_ADDRESS: '',
-    OPENEDITION_ADDRESS: '', // fill after SAGEOpenEdition deploy
+    OPENEDITION_ADDRESS: '',
+    COLLECTION_ADDRESS: '', // fill after SageCollection mainnet deploy
     ASHTOKEN_ADDRESS: '0x08deaa8250beAeD65366fbbde0088E76261637bA', // SAGE token (live on Robinhood mainnet)
     APP_URL: 'https://www.sage.art/',
   },

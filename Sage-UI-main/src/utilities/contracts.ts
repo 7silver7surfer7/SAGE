@@ -7,6 +7,7 @@ import SageNFTJson from '@/constants/abis/NFT/SageNFT.sol/SageNFT.json';
 import NFTFactoryJson from '@/constants/abis/NFT/NFTFactory.sol/NFTFactory.json';
 import MarketplaceJson from '@/constants/abis/Market/Marketplace.sol/Marketplace.json';
 import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SAGEOpenEdition.json';
+import CollectionJson from '@/constants/abis/Collection/SageCollection.sol/SageCollection.json';
 import StorageJson from '@/constants/abis/Utils/SageStorage.sol/SageStorage.json';
 import ERC20StandardJson from '@/constants/abis/ERC-20/ERC20Standard.json';
 import {
@@ -27,6 +28,7 @@ const {
   LOTTERY_ADDRESS,
   AUCTION_ADDRESS,
   OPENEDITION_ADDRESS,
+  COLLECTION_ADDRESS,
   NFTFACTORY_ADDRESS,
   MARKETPLACE_ADDRESS,
   STORAGE_ADDRESS,
@@ -92,6 +94,15 @@ export async function getOpenEditionContract(signer?: Signer): Promise<Contract>
     OPENEDITION_ADDRESS,
     OpenEditionJson.contractName,
     OpenEditionJson.abi,
+    signer
+  );
+}
+
+export async function getCollectionContract(signer?: Signer): Promise<Contract> {
+  return await getContract(
+    COLLECTION_ADDRESS,
+    CollectionJson.contractName,
+    CollectionJson.abi,
     signer
   );
 }

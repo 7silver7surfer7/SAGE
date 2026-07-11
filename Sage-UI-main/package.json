@@ -30,6 +30,7 @@
     "@types/react-table": "^7.7.9",
     "@types/sharp": "^0.30.5",
     "@vercel/analytics": "^0.1.3",
+    "arbundles": "^0.11.2",
     "arweave": "^1.11.6",
     "aws-sdk": "^2.1221.0",
     "babel-plugin-superjson-next": "^0.4.2",
@@ -68,6 +69,7 @@
     "ts-node": "^10.9.1",
     "twitter-api-sdk": "^1.2.1",
     "underscore": "^1.13.4",
+    "unzipper": "^0.12.5",
     "video.js": "^7.20.3",
     "wagmi": "^0.6.6"
   },
@@ -79,6 +81,7 @@
     "@typechain/ethers-v5": "^10.1.0",
     "@types/chai": "^4.3.1",
     "@types/mocha": "^9.1.1",
+    "@types/unzipper": "^0.10.11",
     "@types/video.js": "^7.3.49",
     "chai": "^4.3.4",
     "cypress-dark": "^1.8.3",

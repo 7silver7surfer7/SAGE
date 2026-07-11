@@ -57,10 +57,16 @@ async function isDataRetrievable(txid: string, attempts = 8): Promise<boolean> {
 export async function sendArweaveTransaction(
   filename: string,
   data: Uint8Array,
-  contentType: string
+  contentType: string,
+  // Extra tags for special payloads — e.g. ANS-104 bundles need
+  // Bundle-Format/Bundle-Version so gateways unbundle + index their DataItems.
+  extraTags: { name: string; value: string }[] = []
 ): Promise<{ tx: Transaction; balance: string }> {
   const tx = await arweave.createTransaction({ data }, arweaveJwk);
   tx.addTag('Content-Type', contentType);
+  for (const t of extraTags) {
+    tx.addTag(t.name, t.value);
+  }
   await arweave.transactions.sign(tx, arweaveJwk);
 
   // Chunked uploader, NOT transactions.post(): post()'s response was never
@@ -142,6 +148,19 @@ export async function signChunkedUploadTx(
   );
   const { balance } = await getArweaveBalance();
   return { tx: tx.toJSON(), balance };
+}
+
+/** The platform wallet's JWK — for signing ANS-104 DataItems (arbundles).
+ *  Server-only, obviously; never send this anywhere. */
+export function getArweaveJwk() {
+  return arweaveJwk;
+}
+
+/** Estimated AR cost to store `bytes` (network price + 15% margin), in AR. */
+export async function estimateUploadCostAR(bytes: number): Promise<string> {
+  const winston = await arweave.api.get(`price/${bytes}`).then((r) => String(r.data));
+  const withMargin = BigInt(winston) + BigInt(winston) / BigInt(7); // ~+15%
+  return arweave.ar.winstonToAr(withMargin.toString());
 }
 
 export async function getArweaveBalance(): Promise<{ address: string; balance: string }> {

@@ -47,6 +47,7 @@ export type Drop_include_GamesAndArtist = Prisma.DropGetPayload<{
     Lotteries: { include: { Nfts: true } };
     Auctions: { include: { Nft: true } };
     OpenEditions: { include: { Nft: true } };
+    CollectionMints: true;
     NftContract: { include: { Artist: true } };
   };
 }>;
@@ -65,6 +66,7 @@ export type DropFull = Prisma.DropGetPayload<{
     Auctions: { include: { Nft: true } };
     Lotteries: { include: { Nfts: true } };
     OpenEditions: { include: { Nft: true } };
+    CollectionMints: true;
   };
 }>;
 

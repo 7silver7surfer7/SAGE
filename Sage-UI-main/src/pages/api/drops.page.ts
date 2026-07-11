@@ -27,6 +27,7 @@ const ACTION_ROLES: Record<string, Role[]> = {
   UpdateAuctionContractAddress: [Role.ADMIN],
   UpdateLotteryContractAddress: [Role.ADMIN],
   UpdateOpenEditionContractAddress: [Role.ADMIN],
+  UpdateCollectionContractAddress: [Role.ADMIN],
   UpdateApprovedDateAndIsLiveFlags: [Role.ADMIN],
   DeleteDrop: [Role.ADMIN],
   DeleteDrops: [Role.ADMIN],
@@ -94,6 +95,9 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
     case 'UpdateOpenEditionContractAddress':
       await updateOpenEditionContractAddress(Number(id), address as string, response);
       break;
+    case 'UpdateCollectionContractAddress':
+      await updateCollectionContractAddress(Number(id), address as string, response);
+      break;
     case 'UpdateApprovedDateAndIsLiveFlags':
       await updateApprovedDateAndIsLiveFlags(Number(id), walletAddress as string, response);
       break;
@@ -153,7 +157,8 @@ async function getDropsPendingApproval(response: NextApiResponse) {
         NftContract: { include: { Artist: true } },
         Lotteries: { include: { Nfts: true } },
         Auctions: { include: { Nft: true } },
-      OpenEditions: { include: { Nft: true } },
+        OpenEditions: { include: { Nft: true } },
+        CollectionMints: true,
       },
     });
     result.forEach(withArtistDisplayNameOverride);
@@ -172,8 +177,9 @@ async function getFullDrop(id: number, response: NextApiResponse) {
       include: {
         NftContract: { include: { Artist: true } },
         Auctions: { include: { Nft: true } },
-      OpenEditions: { include: { Nft: true } },
+        OpenEditions: { include: { Nft: true } },
         Lotteries: { include: { Nfts: true } },
+        CollectionMints: true,
       },
     });
     if (result) withArtistDisplayNameOverride(result);
@@ -378,6 +384,26 @@ async function updateOpenEditionContractAddress(
   }
 }
 
+async function updateCollectionContractAddress(
+  id: number,
+  contractAddress: string,
+  response: NextApiResponse
+) {
+  console.log(`updateCollectionContractAddress(${id}, ${contractAddress})`);
+  try {
+    // like open editions, the on-chain Collection struct's `id` is this row's
+    // DB id (see deployCollectionMints in dropsReducer.ts)
+    const result = await prisma.collectionMint.update({
+      where: { id },
+      data: { contractAddress, collectionId: id },
+    });
+    response.json(result);
+  } catch (e) {
+    console.log(e);
+    response.status(500);
+  }
+}
+
 async function updateApprovedDateAndIsLiveFlags(
   id: number,
   walletAddress: string,
@@ -406,6 +432,10 @@ async function updateApprovedDateAndIsLiveFlags(
     await prisma.openEdition.updateMany({
       where: { dropId: Number(id) },
       data: { isLive: true, contractAddress: parameters.OPENEDITION_ADDRESS },
+    });
+    await prisma.collectionMint.updateMany({
+      where: { dropId: Number(id) },
+      data: { isLive: true, contractAddress: parameters.COLLECTION_ADDRESS },
     });
     // object shape — the deploy flow's retry check reads res.data.approvedAt
     // (returning the bare date here made every successful call look failed)
