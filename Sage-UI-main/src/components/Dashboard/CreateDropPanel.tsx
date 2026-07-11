@@ -39,7 +39,8 @@ export default function CreateDropPanel() {
   // 'collection' = one ZIP of unique images, fixed-price sequential mint
   const [dropStyle, setDropStyle] = useState<'standard' | 'collection'>('standard');
   const [zipFile, setZipFile] = useState<File | null>(null);
-  const [collectionPrice, setCollectionPrice] = useState(1);
+  // default FREE mint — the admin sets a SAGE price only when they want one
+  const [collectionPrice, setCollectionPrice] = useState(0);
   // default ONE mint per wallet — the admin can raise it or set 0 for unlimited
   const [collectionLimitPerUser, setCollectionLimitPerUser] = useState(1);
   // 0 = no deadline (the default): mint stays open until the collection sells out
@@ -216,7 +217,7 @@ export default function CreateDropPanel() {
       setBannerFile(null);
       setArtworks([]);
       setZipFile(null);
-      setCollectionPrice(1);
+      setCollectionPrice(0);
       setCollectionLimitPerUser(1);
       setGoLiveAtInput('');
       setSaleStartAtInput('');
