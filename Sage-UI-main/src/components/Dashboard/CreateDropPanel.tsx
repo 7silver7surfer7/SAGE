@@ -40,7 +40,8 @@ export default function CreateDropPanel() {
   const [dropStyle, setDropStyle] = useState<'standard' | 'collection'>('standard');
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [collectionPrice, setCollectionPrice] = useState(1);
-  const [collectionLimitPerUser, setCollectionLimitPerUser] = useState(0);
+  // default ONE mint per wallet — the admin can raise it or set 0 for unlimited
+  const [collectionLimitPerUser, setCollectionLimitPerUser] = useState(1);
   // 0 = no deadline (the default): mint stays open until the collection sells out
   const [collectionDurationHours, setCollectionDurationHours] = useState(0);
   const [durationHours, setDurationHours] = useState(24);
@@ -216,7 +217,7 @@ export default function CreateDropPanel() {
       setArtworks([]);
       setZipFile(null);
       setCollectionPrice(1);
-      setCollectionLimitPerUser(0);
+      setCollectionLimitPerUser(1);
       setGoLiveAtInput('');
       setSaleStartAtInput('');
       setArtistDisplayName('');

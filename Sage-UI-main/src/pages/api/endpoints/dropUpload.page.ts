@@ -589,7 +589,9 @@ async function insertCollectionMint(data: any, response: NextApiResponse) {
       data: {
         dropId: Number(data.dropId),
         costTokens: toNumber(data.costTokens),
-        limitPerUser: toNumber(data.limitPerUser),
+        // default ONE mint per wallet when unspecified; an explicit 0 is the
+        // admin deliberately choosing unlimited
+        limitPerUser: data.limitPerUser != null ? toNumber(data.limitPerUser) : 1,
         // maxSupply = image count, known only after the zip is processed
         maxSupply: 0,
         startTime: new Date(Number(data.startDate) * 1000),
