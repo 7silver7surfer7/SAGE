@@ -1,4 +1,9 @@
-# syntax=docker/dockerfile:1
+# NOTE: no `# syntax=docker/dockerfile:1` directive — it forces BuildKit to
+# re-resolve that frontend image from Docker Hub on every build, which stalls
+# the whole build whenever Hub's CDN is unreachable (bit us 2026-07-11). The
+# built-in frontend on current Docker supports everything used here,
+# including --mount=type=secret.
+#
 # SAGE marketplace — Cloud Run image.
 #
 # Next.js 12 pages here use ISR (getStaticProps + revalidate), so `next build`
