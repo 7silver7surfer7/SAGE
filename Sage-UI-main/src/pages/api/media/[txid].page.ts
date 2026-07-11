@@ -5,6 +5,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
+import { once } from 'events';
 
 /**
  * Range-capable transcoding proxy for Arweave media.
@@ -56,6 +57,8 @@ interface Entry {
 const lru = new Map<string, { size: number; atime: number }>();
 // dedupe concurrent work for the same tx (a <video> fires several ranges at once)
 const inFlight = new Map<string, Promise<Entry>>();
+// dedupe poster-frame extraction the same way (many tiles ask at once)
+const posterInFlight = new Map<string, Promise<Entry>>();
 // serialize ffmpeg runs — decoding a huge frame is memory-heavy; one at a time
 // protects the instance from OOM when several oversized videos warm together
 let transcodeGate: Promise<unknown> = Promise.resolve();
@@ -232,6 +235,59 @@ async function ensureServable(txid: string): Promise<Entry> {
   }
 }
 
+/** Extract a single downscaled JPEG still (first frame) for a video poster. */
+async function extractPoster(srcFile: string, outFile: string) {
+  await run('ffmpeg', [
+    '-nostdin', '-y', '-loglevel', 'error', '-i', srcFile,
+    '-frames:v', '1',
+    // long side -> 640px: a tile-sized still, tiny to transfer and fast to draw
+    '-vf', "scale='if(gt(iw,ih),640,-2)':'if(gt(iw,ih),-2,640)':flags=lanczos",
+    '-q:v', '3', '-f', 'image2', '-c:v', 'mjpeg', outFile,
+  ]);
+}
+
+/**
+ * Returns a cached first-frame JPEG poster for a video tx. Tiles show this
+ * instantly (a few KB) instead of waiting for the <video> to load metadata and
+ * paint its first frame — and it renders even where iOS won't mount yet-another
+ * concurrent decoder. Reuses an already-cached rendition/master frame when
+ * present so a poster request never forces a fresh full download.
+ */
+async function getPoster(txid: string): Promise<Entry> {
+  const posterKey = `${txid}.poster`;
+  const cached = readCached(posterKey);
+  if (cached) return cached;
+
+  let promise = posterInFlight.get(txid);
+  if (!promise) {
+    promise = (async () => {
+      const already = readCached(posterKey);
+      if (already) return already;
+      const srcEntry =
+        readCached(`${txid}.ios`) || readCached(txid) || (await downloadMaster(txid));
+      // non-video (a still image) is its own poster — serve it directly
+      if (!srcEntry.type.startsWith('video/')) return srcEntry;
+
+      const outTmp = path.join(CACHE_DIR, `${posterKey}.pf-${process.pid}-${Date.now()}`);
+      const prev = transcodeGate; // share the ffmpeg gate — memory-heavy decode
+      let release: (value?: unknown) => void = () => {};
+      transcodeGate = new Promise((r) => (release = r));
+      try {
+        await prev.catch(() => {});
+        await extractPoster(srcEntry.file, outTmp);
+        return commit(posterKey, outTmp, 'image/jpeg', new Set([posterKey]));
+      } catch (e) {
+        fs.rmSync(outTmp, { force: true });
+        throw e;
+      } finally {
+        release!();
+      }
+    })().finally(() => posterInFlight.delete(txid));
+    posterInFlight.set(txid, promise);
+  }
+  return promise;
+}
+
 function getServable(txid: string) {
   let promise = inFlight.get(txid);
   if (!promise) {
@@ -272,6 +328,125 @@ async function verifyRetrievable(
   return { retrievable: false, status: lastStatus, reason: lastReason || 'not retrievable' };
 }
 
+// leading bytes buffered to probe iOS-safety before committing to a passthrough
+const COLD_PROBE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Cold-start streaming. On a cache miss the buffered path downloads the WHOLE
+ * file before sending a byte; for a large video that's a multi-second stall for
+ * the first viewer. Instead, pull from the gateway, tee to the cache, and — once
+ * a probe on the leading bytes confirms the video is already iOS-safe (needs no
+ * transcode) — pass the bytes straight to the client as they arrive.
+ *
+ * Kept deliberately narrow for safety:
+ *  - Only whole-file / open-ended `bytes=0-` GETs. Safari tests range support
+ *    with `bytes=0-1` and refuses playback without a real 206, so its requests
+ *    fall through to the buffered path (which serves proper 206s) — we never
+ *    answer a Safari range probe with a 200 passthrough.
+ *  - Oversized masters (which MUST be transcoded before an iOS device sees them)
+ *    and anything we can't confirm iOS-safe fall back to the buffered path.
+ *  - Client backpressure is honored so a slow consumer can't balloon memory.
+ * Returns true if it fully handled the response.
+ */
+async function tryColdStream(
+  txid: string,
+  req: NextApiRequest,
+  res: NextApiResponse
+): Promise<boolean> {
+  if (req.method !== 'GET') return false;
+  const range = req.headers.range;
+  if (range && !/^bytes=0-\s*$/.test(range)) return false; // not a whole-file ask
+  if (readCached(`${txid}.ios`) || readCached(txid) || inFlight.has(txid)) return false;
+
+  let gwRes: Response;
+  try {
+    gwRes = await fetchFromGateway(txid);
+  } catch {
+    return false; // let the buffered path surface the gateway error
+  }
+  const type = gwRes.headers.get('content-type') || 'application/octet-stream';
+  if (!type.startsWith('video/') || !gwRes.body) {
+    gwRes.body?.cancel?.().catch(() => {});
+    return false; // images are small — the buffered path is already fast
+  }
+
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  const tmp = path.join(CACHE_DIR, `${txid}.cs-${process.pid}-${Date.now()}`);
+  const ws = fs.createWriteStream(tmp);
+  const reader = (Readable as any).fromWeb(gwRes.body) as Readable;
+  const writeCache = (buf: Buffer) => {
+    if (!ws.write(buf)) return once(ws, 'drain');
+    return undefined;
+  };
+
+  const prefix: Buffer[] = [];
+  let prefixLen = 0;
+  let streamEnded = true; // flips to false if we break out with bytes remaining
+  try {
+    for await (const chunk of reader) {
+      const buf = chunk as Buffer;
+      prefix.push(buf);
+      prefixLen += buf.length;
+      await writeCache(buf);
+      if (prefixLen >= COLD_PROBE_BYTES) {
+        streamEnded = false;
+        break;
+      }
+    }
+  } catch {
+    try { ws.destroy(); } catch {}
+    fs.rmSync(tmp, { force: true });
+    return false;
+  }
+
+  const info = await probeVideo(tmp); // moov is at the front for faststart uploads
+  const oversized =
+    info && (Math.max(info.width, info.height) > IOS_MAX_DIM || info.level > IOS_MAX_LEVEL);
+
+  if (!info || oversized) {
+    // can't confirm iOS-safe (moov-at-end) or it's oversized and needs a
+    // transcode — finish the download into the cache and hand off to the
+    // buffered path, which will find the master already cached (no re-download).
+    try {
+      if (!streamEnded) for await (const chunk of reader) await writeCache(chunk as Buffer);
+      await new Promise<void>((resolve, reject) => ws.end((e?: any) => (e ? reject(e) : resolve())));
+      commit(txid, tmp, type, new Set([txid]));
+    } catch {
+      try { ws.destroy(); } catch {}
+      fs.rmSync(tmp, { force: true });
+    }
+    return false;
+  }
+
+  // iOS-safe: pass through. Send what we buffered, then tee the rest to both the
+  // client (with backpressure) and the cache; commit the master when complete.
+  res.status(200);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('Content-Type', type);
+  try {
+    for (const buf of prefix) {
+      if (!res.write(buf)) await once(res, 'drain');
+    }
+    if (!streamEnded) {
+      for await (const chunk of reader) {
+        const buf = chunk as Buffer;
+        await writeCache(buf);
+        if (!res.write(buf)) await once(res, 'drain');
+      }
+    }
+    await new Promise<void>((resolve, reject) => ws.end((e?: any) => (e ? reject(e) : resolve())));
+    res.end();
+    try { commit(txid, tmp, type, new Set([txid])); } catch { fs.rmSync(tmp, { force: true }); }
+  } catch {
+    // client aborted or gateway hiccup mid-stream — drop the partial cache file
+    try { ws.destroy(); } catch {}
+    fs.rmSync(tmp, { force: true });
+    try { res.end(); } catch {}
+  }
+  return true;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.status(405).end();
@@ -290,12 +465,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  // Poster: a small cached first-frame JPEG for a video, so tiles frame
+  // instantly instead of waiting on the <video> to load. Small — no ranges.
+  if (req.query.poster) {
+    try {
+      const { file, type, size } = await getPoster(txid);
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Content-Type', type);
+      if (size < RESPONSE_LENGTH_DECLARE_MAX) res.setHeader('Content-Length', size);
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+      fs.createReadStream(file).pipe(res);
+    } catch (e: any) {
+      console.error(`media proxy poster [${txid}]:`, e.message);
+      res.status(502).json({ error: e.message });
+    }
+    return;
+  }
+
   // Pre-warm: do the download + (if needed) transcode and cache it, without
   // streaming a body. Called at drop-approval time so the first real viewer
   // gets a cache hit instead of waiting on the transcode.
   if (req.query.prewarm) {
     try {
       const { type, size, transcode } = await getServable(txid);
+      // also warm the poster so the very first tile view frames instantly
+      await getPoster(txid).catch((e) =>
+        console.warn(`media proxy prewarm-poster [${txid}]: ${e.message}`)
+      );
       res.status(200).json({
         warmed: true,
         type,
@@ -314,6 +513,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
+    // Cold-start fast path: stream an iOS-safe video through as it downloads so
+    // the first viewer doesn't wait for the whole file. Returns false (and
+    // leaves the response untouched) for Safari range probes, oversized masters,
+    // images, or anything unconfirmed — those take the buffered path below.
+    if (await tryColdStream(txid, req, res)) return;
+
     const { file, type, size } = await getServable(txid);
     res.setHeader('Accept-Ranges', 'bytes');
     // content-addressed: the bytes for a tx id can never change

@@ -5,6 +5,12 @@ const nextConfig = {
   reactStrictMode: false,
   pageExtensions: ['page.tsx', 'page.ts', 'api.ts'],
   images: {
+    // Media is content-addressed (Arweave tx id / immutable S3 key), so an
+    // optimized image for a given URL can never change. Cache each optimized
+    // variant for a year instead of the 60s default, so repeat views (and any
+    // CDN in front) serve it instantly instead of re-fetching from Arweave and
+    // re-running sharp every minute.
+    minimumCacheTTL: 31536000,
     domains: [
       // Arweave is the sole media host; the legacy S3/CloudFront hosts remain
       // allowed so any pre-migration images already in the DB still render.

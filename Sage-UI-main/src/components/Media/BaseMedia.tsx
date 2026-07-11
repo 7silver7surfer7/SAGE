@@ -4,7 +4,7 @@ import Image, { ImageProps } from 'next/image';
 import Zoom from 'react-medium-image-zoom';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useState } from 'react';
-import { isVideoSrc, videoPlaybackSrc } from '@/utilities/media';
+import { isVideoSrc, videoPlaybackSrc, videoPosterSrc } from '@/utilities/media';
 // video.js is ~200 kB minified; load it only when a video actually renders
 const VideoJS = dynamic(() => import('./VideoJS'), { ssr: false });
 
@@ -90,7 +90,10 @@ function BaseMedia({
         playsinline: true,
         preload: 'metadata',
         muted: videoMustStartMuted(),
-        // poster: 'https://d180qjjsfkqvjc.cloudfront.net/trailers/lehel_poster.png',
+        // first-frame still (a few KB) painted immediately while the video
+        // itself loads — the tile shows the artwork instantly instead of a
+        // blank/black box until metadata arrives
+        poster: videoPosterSrc(src),
         sources: [
           {
             // proxied through /api/media for real 206 range support — Safari
