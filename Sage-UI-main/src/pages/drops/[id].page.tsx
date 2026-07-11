@@ -119,6 +119,25 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, g
               <h1 className='drop-page__header-drop-name'>
                 <i className='drop-page__header-drop-name-italic'>{dropName},</i> by {artistName}
               </h1>
+              {/* static prop — every visitor (signed-in or not) sees that this
+                  drop is gated; the buy buttons enforce per-wallet access */}
+              {(drop as any).allowlistEnabled && (
+                <p
+                  className='drop-page__header-drop-details-item'
+                  style={{
+                    display: 'inline-block',
+                    border: '1px solid currentColor',
+                    borderRadius: '999px',
+                    padding: '2px 12px',
+                    fontSize: '12px',
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    margin: '6px 0',
+                  }}
+                >
+                  allowlist only
+                </p>
+              )}
               {/* <p className='drop-page__header-drop-description'>{dropDescription}</p> */}
               <div className='drop-page__header-drop-details'>
                 <p className='drop-page__header-drop-details-item'>

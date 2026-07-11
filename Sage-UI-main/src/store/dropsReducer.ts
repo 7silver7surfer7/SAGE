@@ -9,6 +9,9 @@ import {
   getOpenEditionContract,
 } from '@/utilities/contracts';
 import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.json';
+import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
+import { parameters } from '@/constants/config';
+import { chunk, ALLOWLIST_CHUNK_SIZE } from '@/utilities/allowlist';
 import { fetchOrCreateNftContract } from './nftsReducer';
 import { baseApi } from './baseReducer';
 import { Role } from '@prisma/client';
@@ -61,6 +64,15 @@ export interface CreateDropRequest {
   /** When provided, "approve now" deploys the drop on-chain (prompts wallet
    *  signatures) via the same path New Drops uses, instead of a DB-only flag flip. */
   signer?: Signer;
+  /** Optional allowlist gating, saved with the draft right after the drop row
+   *  is created. The whitelist contract itself deploys at approval time. */
+  allowlist?: { enabled: boolean; addresses: string[] };
+}
+
+export interface DropAllowlistData {
+  enabled: boolean;
+  whitelistContractAddress: string | null;
+  entries: { address: string; syncedAt: string | null }[];
 }
 
 export interface PresetDropArtist {
@@ -132,6 +144,23 @@ export const dropsApi = baseApi.injectEndpoints({
           if ((dropResult as any)?.error) throw new Error((dropResult as any).error);
           const dropId = (dropResult as any).dropId as number;
           createdDropId = dropId;
+          if (req.allowlist?.enabled && req.allowlist.addresses.length > 0) {
+            await dropProgress.track(
+              `Saving allowlist (${req.allowlist.addresses.length} addresses)`,
+              async () => {
+                const { data: alRes, error: alErr } = await fetchWithBQ({
+                  url: 'drops?action=SaveDropAllowlist',
+                  method: 'POST',
+                  body: { dropId, addresses: req.allowlist!.addresses, enabled: true },
+                });
+                if (alErr || (alRes as any)?.error) {
+                  throw new Error(
+                    ((alErr as any)?.data?.error || (alRes as any)?.error) ?? 'allowlist save failed'
+                  );
+                }
+              }
+            );
+          }
           // games open at the explicit sale-start time; falling back to go-live
           // (old single-timestamp behavior), then to 5 minutes from now
           const startDate =
@@ -296,6 +325,78 @@ export const dropsApi = baseApi.injectEndpoints({
     deleteDrop: builder.mutation<null, number>({
       query: (dropId) => `drops?action=DeleteDrop&id=${dropId}`,
       invalidatesTags: ['PendingDrops'],
+    }),
+    getDropAllowlist: builder.query<DropAllowlistData, number>({
+      query: (dropId) => `drops?action=GetDropAllowlist&id=${dropId}`,
+      providesTags: (_r, _e, dropId) => [{ type: 'DropAllowlist', id: dropId }],
+    }),
+    checkDropAllowlist: builder.query<{ gated: boolean; allowed: boolean }, number>({
+      query: (dropId) => `drops?action=CheckDropAllowlist&id=${dropId}`,
+      providesTags: (_r, _e, dropId) => [{ type: 'DropAllowlist', id: dropId }],
+    }),
+    /**
+     * Saves the allowlist (DB) and — when the drop is already deployed — syncs
+     * it on-chain in the same click: deploys the SageWhitelist if this is the
+     * first time gating a deployed drop (wiring every deployed OE/lottery via
+     * setWhitelist), pushes unsynced addresses in chunks, and un-wires the
+     * games (AddressZero) when gating is being disabled. Draft drops save
+     * DB-only; their contract work happens at approval in deployDrop.
+     */
+    updateDropAllowlist: builder.mutation<
+      { total: number; pendingSync: number },
+      { dropId: number; addresses: string[]; enabled: boolean; signer?: Signer }
+    >({
+      queryFn: async ({ dropId, addresses, enabled, signer }, {}, _, fetchWithBQ) => {
+        try {
+          const { data: saveRes, error: saveErr } = await fetchWithBQ({
+            url: 'drops?action=SaveDropAllowlist',
+            method: 'POST',
+            body: { dropId, addresses, enabled },
+          });
+          if (saveErr || (saveRes as any)?.error) {
+            throw new Error(
+              ((saveErr as any)?.data?.error || (saveRes as any)?.error) ?? 'save failed'
+            );
+          }
+          const dropRes = await fetchWithBQ(`drops?action=GetFullDrop&id=${dropId}`);
+          const drop = dropRes.data as DropFull;
+          const isDeployed = !!drop?.approvedAt;
+          if (isDeployed && signer) {
+            await assertSignerOnConfiguredChain(signer);
+            const allowlistRes = await fetchWithBQ(`drops?action=GetDropAllowlist&id=${dropId}`);
+            const allowlist = allowlistRes.data as DropAllowlistData;
+            if (enabled) {
+              const hadContract = !!allowlist.whitelistContractAddress;
+              const contractAddress = await deployAndSyncAllowlist(drop, signer, fetchWithBQ);
+              if (contractAddress !== ethers.constants.AddressZero && !hadContract) {
+                // first-time gating of an already-deployed drop: wire its games
+                await setGamesWhitelist(drop, contractAddress, signer);
+              }
+            } else if (allowlist.whitelistContractAddress) {
+              // gating turned OFF after deploy: un-wire on-chain too, or the
+              // contracts keep blocking while the UI reports the drop as open
+              await setGamesWhitelist(drop, ethers.constants.AddressZero, signer);
+            }
+          }
+          const countsRes = await fetchWithBQ(`drops?action=GetDropAllowlist&id=${dropId}`);
+          const counts = countsRes.data as DropAllowlistData;
+          const pendingSync =
+            counts?.entries?.filter((e) => !e.syncedAt).length ?? 0;
+          const message = isDeployed && signer && pendingSync > 0
+            ? `Allowlist saved, but ${pendingSync} address(es) are not yet on-chain — retry the sync.`
+            : 'Allowlist saved!';
+          pendingSync > 0 && isDeployed ? toast.warn(message) : toast.success(message);
+          return { data: { total: counts?.entries?.length ?? 0, pendingSync } };
+        } catch (e: any) {
+          console.error('updateDropAllowlist() failed', e);
+          toast.error(`Allowlist update failed — ${extractErrorMessage(e)}`, { autoClose: false });
+          return { error: { status: 500, data: extractErrorMessage(e) } as any };
+        }
+      },
+      invalidatesTags: (_r, _e, { dropId }) => [
+        { type: 'DropAllowlist', id: dropId },
+        'PendingDrops',
+      ],
     }),
     deleteDrops: builder.mutation<null, void>({
       query: () => `drops?action=DeleteDrops`,
@@ -487,14 +588,27 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   }
   // trigger server-side task that optimizes NFT images
   await fetchWithBQ(`drops?action=OptimizeDropImages&id=${dropId}`);
+  // Gated drop? Deploy its SageWhitelist + push the addresses BEFORE the games,
+  // so lotteries/open editions can be wired to it at creation. Ungated drops
+  // get AddressZero — identical to the pre-allowlist behavior.
+  const whitelistAddress = await deployStep('allowlist contract', () =>
+    deployAndSyncAllowlist(drop, signer, fetchWithBQ)
+  );
   await deployStep('auctions', () =>
     deployAuctions(drop, artistNftContractAddress, signer, fetchWithBQ)
   );
   await deployStep('lotteries', () =>
-    deployLotteries(drop, artistNftContractAddress, signer, fetchWithBQ)
+    deployLotteries(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
   );
   await deployStep('open editions', () =>
-    deployOpenEditions(drop, artistNftContractAddress, signer, fetchWithBQ)
+    deployOpenEditions(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
+  );
+  // FINAL required step: flip approvedAt/isLive so the drop appears on the
+  // storefront. This call was dropped in an earlier refactor, which left a
+  // fully-minted drop invisible — it must always run after the games deploy
+  // (retries internally; throws an actionable message if it still fails).
+  await deployStep('marking drop live', () =>
+    updateDbApprovedDateAndIsLiveFlags(drop, fetchWithBQ)
   );
   // Warm the media proxy's iOS-safe transcode for every video in the drop, so
   // the first mobile viewer at go-live gets a cache hit. Reported in the log so
@@ -502,6 +616,101 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   // deploy (the drop already succeeded on-chain), so it's awaited but its
   // errors are swallowed.
   await prewarmDropVideos(drop);
+}
+
+/**
+ * Deploys (or reuses) the drop's SageWhitelist contract and pushes any
+ * addresses not yet on-chain, in ALLOWLIST_CHUNK_SIZE batches. Each confirmed
+ * chunk is immediately recorded server-side (MarkAllowlistSynced), so an
+ * interrupted deploy resumes exactly where it stopped on the next attempt.
+ * Ungated/empty allowlists return AddressZero — the no-gate sentinel the
+ * contracts already understand.
+ */
+async function deployAndSyncAllowlist(
+  drop: DropFull,
+  signer: Signer,
+  fetchWithBQ: any
+): Promise<string> {
+  const { data: allowlist } = await fetchWithBQ(`drops?action=GetDropAllowlist&id=${drop.id}`);
+  if (!allowlist?.enabled || !allowlist.entries?.length) {
+    return ethers.constants.AddressZero;
+  }
+  let contractAddress: string = allowlist.whitelistContractAddress;
+  if (contractAddress) {
+    console.log(`deployAndSyncAllowlist() :: reusing whitelist contract ${contractAddress}`);
+  } else {
+    console.log(`deployAndSyncAllowlist() :: deploying SageWhitelist for drop ${drop.id}...`);
+    const factory = new ethers.ContractFactory(
+      sageWhitelistJson.abi,
+      sageWhitelistJson.bytecode,
+      signer
+    );
+    const instance = await factory.deploy(parameters.STORAGE_ADDRESS);
+    await instance.deployed();
+    contractAddress = instance.address;
+    console.log(`deployAndSyncAllowlist() :: SageWhitelist deployed to ${contractAddress}`);
+  }
+  await syncAllowlistAddresses(drop.id, contractAddress, allowlist.entries, signer, fetchWithBQ);
+  return contractAddress;
+}
+
+/**
+ * Points every DEPLOYED game of a drop at the given whitelist address
+ * (AddressZero = un-gate). Used when gating is enabled or disabled on a drop
+ * that's already live; freshly-created games get the address at creation
+ * instead. Skips games already pointing at the target, so re-runs are cheap.
+ */
+async function setGamesWhitelist(drop: DropFull, whitelistAddress: string, signer: Signer) {
+  const deployedLotteries = drop.Lotteries.filter((l: any) => l.contractAddress);
+  if (deployedLotteries.length) {
+    const lotteryContract = await getLotteryContract(signer);
+    for (const l of deployedLotteries) {
+      const current = await lotteryContract.getWhitelist(l.id);
+      if (current?.toLowerCase() === whitelistAddress.toLowerCase()) continue;
+      console.log(`setGamesWhitelist() :: lottery ${l.id} -> ${whitelistAddress}`);
+      const tx = await lotteryContract.setWhitelist(l.id, whitelistAddress);
+      await tx.wait();
+    }
+  }
+  const deployedOEs = drop.OpenEditions.filter((oe: any) => oe.contractAddress);
+  if (deployedOEs.length) {
+    const openEditionContract = await getOpenEditionContract(signer);
+    for (const oe of deployedOEs) {
+      const editionId = oe.editionId ?? oe.id;
+      const onChain = await openEditionContract.getOpenEdition(editionId);
+      if (onChain?.whitelist?.toLowerCase() === whitelistAddress.toLowerCase()) continue;
+      console.log(`setGamesWhitelist() :: open edition ${editionId} -> ${whitelistAddress}`);
+      const tx = await openEditionContract.setWhitelist(editionId, whitelistAddress);
+      await tx.wait();
+    }
+  }
+}
+
+/** Pushes unsynced allowlist entries on-chain in chunks, marking each chunk synced. */
+async function syncAllowlistAddresses(
+  dropId: number,
+  contractAddress: string,
+  entries: { address: string; syncedAt: string | null }[],
+  signer: Signer,
+  fetchWithBQ: any
+) {
+  const pending = entries.filter((e) => !e.syncedAt).map((e) => e.address);
+  if (pending.length === 0) return;
+  const whitelistContract = new ethers.Contract(contractAddress, sageWhitelistJson.abi, signer);
+  const batches = chunk(pending, ALLOWLIST_CHUNK_SIZE);
+  for (let i = 0; i < batches.length; i++) {
+    console.log(
+      `syncAllowlistAddresses() :: adding batch ${i + 1}/${batches.length} (${batches[i].length} addresses)...`
+    );
+    const tx = await whitelistContract.addAddresses(batches[i]);
+    await tx.wait();
+    // record per-chunk so an interruption resumes at the right batch
+    await fetchWithBQ({
+      url: 'drops?action=MarkAllowlistSynced',
+      method: 'POST',
+      body: { dropId, addresses: batches[i], contractAddress },
+    });
+  }
 }
 
 /** extract a 43-char Arweave txid from an arweave.net URL, or null */
@@ -778,7 +987,8 @@ async function deployLotteries(
   drop: DropFull,
   artistNftContractAddress: string,
   signer: Signer,
-  fetchWithBQ: any
+  fetchWithBQ: any,
+  whitelistAddress: string = ethers.constants.AddressZero
 ) {
   const createParams = [];
   for (const l of drop.Lotteries) {
@@ -814,13 +1024,29 @@ async function deployLotteries(
       await fetchWithBQ(`drops?action=UpdateLotteryContractAddress&${params}`);
     }
   }
+  // Gate pass — separate from the create loop above on purpose: LotteryInfo has
+  // no whitelist field, so gating needs a setWhitelist call per lottery. Iterate
+  // ALL of the drop's lotteries (not just freshly-created ones) and skip those
+  // already pointed at the contract, so a re-run after an interruption wires
+  // lotteries the create loop skipped.
+  if (whitelistAddress !== ethers.constants.AddressZero) {
+    const lotteryContract = await getLotteryContract(signer);
+    for (const l of drop.Lotteries) {
+      const current = await lotteryContract.getWhitelist(l.id);
+      if (current?.toLowerCase() === whitelistAddress.toLowerCase()) continue;
+      console.log(`deployLotteries() :: setWhitelist(${l.id}, ${whitelistAddress})`);
+      const wtx = await lotteryContract.setWhitelist(l.id, whitelistAddress);
+      await wtx.wait();
+    }
+  }
 }
 
 async function deployOpenEditions(
   drop: DropFull,
   artistNftContractAddress: string,
   signer: Signer,
-  fetchWithBQ: any
+  fetchWithBQ: any,
+  whitelistAddress: string = ethers.constants.AddressZero
 ) {
   const toDeploy = drop.OpenEditions.filter((oe) => !oe.contractAddress);
   if (toDeploy.length === 0) return;
@@ -841,7 +1067,9 @@ async function deployOpenEditions(
       mintCount: 0,
       nftUri: oe.Nft.metadataPath,
       nftContract: artistNftContractAddress,
-      whitelist: ethers.constants.AddressZero,
+      // AddressZero = ungated; a gated drop passes its SageWhitelist so the
+      // contract enforces the allowlist on every mint path
+      whitelist: whitelistAddress,
       costTokens,
     });
     await tx.wait();
@@ -894,4 +1122,7 @@ export const {
   useDeleteDropMutation,
   useDeleteDropsMutation,
   useGetOpenEditionMintCountQuery,
+  useGetDropAllowlistQuery,
+  useCheckDropAllowlistQuery,
+  useUpdateDropAllowlistMutation,
 } = dropsApi;

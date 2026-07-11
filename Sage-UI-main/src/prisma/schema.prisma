@@ -26,6 +26,11 @@ model Drop {
   // frozen — does not track later profile renames or apply to other drops
   // by the same wallet. Null = show the artist's current profile username.
   artistDisplayName                String?
+  // Allowlist gating: when enabled, only wallets in AllowlistEntries may
+  // mint/bid/buy (on-chain via a per-drop SageWhitelist contract for open
+  // editions + lotteries; UI-gate for auctions). Editable pre- and post-deploy.
+  allowlistEnabled                 Boolean     @default(false)
+  whitelistContractAddress         String?     @db.Char(42) // deployed SageWhitelist; null until approval
   NftContract                      NftContract @relation("ContractDrops", fields:[artistAddress], references: [artistAddress])
   ApprovedByUser                   User?       @relation("Drop_approvedByToUser", fields: [approvedBy], references: [walletAddress])
   Auctions                         Auction[]
@@ -33,6 +38,19 @@ model Drop {
   OpenEditions                     OpenEdition[]
   UserFavoriteDrops                User[]      @relation("userFavoriteDrops")
   FeaturedDropConfig               Config?     @relation("ConfigFeaturedDrop")
+  AllowlistEntries                 DropAllowlistEntry[]
+}
+
+model DropAllowlistEntry {
+  id        Int       @id @default(autoincrement())
+  dropId    Int
+  address   String    @db.Char(42) // stored lowercase
+  createdAt DateTime  @default(now())
+  syncedAt  DateTime? // null = not yet pushed to the on-chain SageWhitelist
+  Drop      Drop      @relation(fields: [dropId], references: [id])
+
+  @@unique([dropId, address])
+  @@index([dropId])
 }
 
 model Lottery {

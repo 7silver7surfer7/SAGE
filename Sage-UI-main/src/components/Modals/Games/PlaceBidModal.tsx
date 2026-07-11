@@ -20,6 +20,7 @@ import shortenAddress from '@/utilities/shortenAddress';
 import ClaimPrizeButton from '@/components/Pages/Profile/ClaimPrizeButton';
 import { parameters } from '@/constants/config';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
+import useAllowlistGate from '@/hooks/useAllowlistGate';
 
 interface Props extends ModalProps {
   auction: Auction_include_Nft;
@@ -137,8 +138,16 @@ function PlaceBidModal({ isOpen, closeModal, auction, artist, dropName }: Props)
     });
   }
 
+  // Allowlist gate — for auctions this is the ONLY gate (no on-chain hook),
+  // so the bid button itself is disabled for wallets not on the list.
+  const allowlistGate = useAllowlistGate(auction.dropId);
+  const isAllowlistBlocked = allowlistGate.gated && !allowlistGate.allowed;
   const buttonText = needApproval ? 'approve' : 'place bid';
-  const buttonDisplay = errorState.isError ? errorState.errorMessage : buttonText;
+  const buttonDisplay = isAllowlistBlocked
+    ? 'allowlist only'
+    : errorState.isError
+    ? errorState.errorMessage
+    : buttonText;
 
   useEffect(() => {
     if (!signer) {
@@ -242,7 +251,7 @@ function PlaceBidModal({ isOpen, closeModal, auction, artist, dropName }: Props)
                     value={state.desiredBidValue}
                   />
                   <button
-                    disabled={isPlaceBidLoading || errorState.isError}
+                    disabled={isPlaceBidLoading || errorState.isError || isAllowlistBlocked}
                     className='games-modal__place-bid-button'
                     onClick={handlePlaceBidClick}
                   >

@@ -5,6 +5,7 @@ import { isVideoSrc } from '@/utilities/media';
 import { PresetDrop } from '@/store/dropsReducer';
 import { withArtistDisplayNameOverride } from '@/prisma/functions';
 import { requireRole } from '@/utilities/apiAuth';
+import { parseAddressList, ALLOWLIST_MAX_ADDRESSES } from '@/utilities/allowlist';
 import prisma from '@/prisma/client';
 import sharp from 'sharp';
 import { OPTIMIZED_IMAGE_WIDTH, parameters } from '@/constants/config';
@@ -29,6 +30,13 @@ const ACTION_ROLES: Record<string, Role[]> = {
   UpdateApprovedDateAndIsLiveFlags: [Role.ADMIN],
   DeleteDrop: [Role.ADMIN],
   DeleteDrops: [Role.ADMIN],
+  // Per-drop allowlist gating. Admin manages the list; CheckDropAllowlist is
+  // broad because every signed-in visitor needs to learn "am I allowed to buy"
+  // (the wallet is taken from the JWT, never from the query — not spoofable).
+  GetDropAllowlist: [Role.ADMIN],
+  SaveDropAllowlist: [Role.ADMIN],
+  MarkAllowlistSynced: [Role.ADMIN],
+  CheckDropAllowlist: [Role.USER, Role.ARTIST, Role.ADMIN],
 };
 
 async function handler(request: NextApiRequest, response: NextApiResponse) {
@@ -94,6 +102,18 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       break;
     case 'DeleteDrops':
       await deleteDrops(response);
+      break;
+    case 'GetDropAllowlist':
+      await getDropAllowlist(Number(id), response);
+      break;
+    case 'SaveDropAllowlist':
+      await saveDropAllowlist(request, response);
+      break;
+    case 'MarkAllowlistSynced':
+      await markAllowlistSynced(request, response);
+      break;
+    case 'CheckDropAllowlist':
+      await checkDropAllowlist(Number(id), walletAddress, response);
       break;
     default:
       response.status(500);
@@ -394,6 +414,136 @@ async function updateApprovedDateAndIsLiveFlags(
   }
 }
 
+async function getDropAllowlist(id: number, response: NextApiResponse) {
+  console.log(`getDropAllowlist(${id})`);
+  try {
+    const drop = await prisma.drop.findUnique({
+      where: { id },
+      select: {
+        allowlistEnabled: true,
+        whitelistContractAddress: true,
+        AllowlistEntries: {
+          select: { address: true, syncedAt: true },
+          orderBy: { id: 'asc' },
+        },
+      },
+    });
+    if (!drop) {
+      response.status(404).json({ error: 'drop not found' });
+      return;
+    }
+    response.json({
+      enabled: drop.allowlistEnabled,
+      whitelistContractAddress: drop.whitelistContractAddress,
+      entries: drop.AllowlistEntries,
+    });
+  } catch (e) {
+    console.log(e);
+    response.status(500).json({ error: 'failed to load allowlist' });
+  }
+}
+
+/**
+ * Full-replace save that PRESERVES sync state: rows already on the list keep
+ * their syncedAt (so a post-deploy save only pushes genuinely new addresses
+ * on-chain); rows not in the incoming list are removed.
+ */
+async function saveDropAllowlist(request: NextApiRequest, response: NextApiResponse) {
+  const { dropId, addresses, enabled } = request.body || {};
+  console.log(`saveDropAllowlist(${dropId}, ${addresses?.length} addresses, enabled=${enabled})`);
+  try {
+    if (!Number(dropId) || !Array.isArray(addresses)) {
+      response.status(400).json({ error: 'dropId and addresses[] required' });
+      return;
+    }
+    // never trust client-side validation — same parser, server-side
+    const { valid, invalid } = parseAddressList(addresses.join('\n'));
+    if (invalid.length) {
+      response.status(400).json({ error: `invalid addresses: ${invalid.slice(0, 5).join(', ')}` });
+      return;
+    }
+    if (valid.length > ALLOWLIST_MAX_ADDRESSES) {
+      response.status(413).json({ error: `allowlist capped at ${ALLOWLIST_MAX_ADDRESSES} addresses` });
+      return;
+    }
+    const id = Number(dropId);
+    await prisma.$transaction([
+      prisma.dropAllowlistEntry.deleteMany({
+        where: { dropId: id, address: { notIn: valid } },
+      }),
+      prisma.dropAllowlistEntry.createMany({
+        data: valid.map((address) => ({ dropId: id, address })),
+        skipDuplicates: true, // existing rows keep their syncedAt
+      }),
+      prisma.drop.update({ where: { id }, data: { allowlistEnabled: !!enabled } }),
+    ]);
+    const [total, pendingSync] = await Promise.all([
+      prisma.dropAllowlistEntry.count({ where: { dropId: id } }),
+      prisma.dropAllowlistEntry.count({ where: { dropId: id, syncedAt: null } }),
+    ]);
+    response.json({ total, pendingSync });
+  } catch (e) {
+    console.log(e);
+    response.status(500).json({ error: 'failed to save allowlist' });
+  }
+}
+
+/** Records that a chunk of addresses landed on-chain (called per confirmed tx). */
+async function markAllowlistSynced(request: NextApiRequest, response: NextApiResponse) {
+  const { dropId, addresses, contractAddress } = request.body || {};
+  console.log(`markAllowlistSynced(${dropId}, ${addresses?.length} addresses, ${contractAddress})`);
+  try {
+    if (!Number(dropId) || !Array.isArray(addresses)) {
+      response.status(400).json({ error: 'dropId and addresses[] required' });
+      return;
+    }
+    const id = Number(dropId);
+    await prisma.dropAllowlistEntry.updateMany({
+      where: { dropId: id, address: { in: addresses.map((a: string) => a.toLowerCase()) } },
+      data: { syncedAt: new Date() },
+    });
+    if (contractAddress) {
+      await prisma.drop.update({
+        where: { id },
+        data: { whitelistContractAddress: String(contractAddress).toLowerCase() },
+      });
+    }
+    response.json({ ok: true });
+  } catch (e) {
+    console.log(e);
+    response.status(500).json({ error: 'failed to mark synced' });
+  }
+}
+
+/**
+ * "Can this signed-in wallet buy on this drop?" — wallet comes from the JWT
+ * (requester), never the query string, so it can't be spoofed. Ungated drops
+ * always answer allowed.
+ */
+async function checkDropAllowlist(id: number, walletAddress: string, response: NextApiResponse) {
+  try {
+    const drop = await prisma.drop.findUnique({
+      where: { id },
+      select: { allowlistEnabled: true },
+    });
+    if (!drop) {
+      response.status(404).json({ error: 'drop not found' });
+      return;
+    }
+    if (!drop.allowlistEnabled) {
+      response.json({ gated: false, allowed: true });
+      return;
+    }
+    const entry = await prisma.dropAllowlistEntry.findUnique({
+      where: { dropId_address: { dropId: id, address: walletAddress.toLowerCase() } },
+    });
+    response.json({ gated: true, allowed: !!entry });
+  } catch (e) {
+    console.log(e);
+    response.status(500).json({ error: 'failed to check allowlist' });
+  }
+}
+
 async function deleteDrop(id: number, response: NextApiResponse) {
   console.log(`deleteDrop(${id})`);
   const drop = await prisma.drop.findUnique({
@@ -418,6 +568,8 @@ async function deleteDrop(id: number, response: NextApiResponse) {
     }
     await prisma.lottery.delete({ where: { id: l.id } });
   }
+  // allowlist entries reference the drop — must go first or the FK blocks this
+  await prisma.dropAllowlistEntry.deleteMany({ where: { dropId: id } });
   await prisma.drop.delete({ where: { id } });
 }
 
@@ -435,6 +587,7 @@ async function deleteDrops(response: NextApiResponse) {
   await prisma.auction.deleteMany();
   await prisma.nft.deleteMany();
   await prisma.lottery.deleteMany();
+  await prisma.dropAllowlistEntry.deleteMany();
   await prisma.drop.deleteMany();
 }
 

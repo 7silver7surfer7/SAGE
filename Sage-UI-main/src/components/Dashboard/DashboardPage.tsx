@@ -5,6 +5,7 @@ import { Tab, Tabs, TabList, TabPanel } from 'react-tabs';
 import { GamesStatsPanel } from './GamesStatsPanel';
 import { UsersPanel } from './UsersPanel';
 import { NewDropsPanel } from './NewDropsPanel';
+import { AllowlistsPanel } from './AllowlistsPanel';
 import { ConfigPanel } from './ConfigPanel';
 import PresetDropsPanel from './PresetDropsPanel';
 import CreateDropPanel from './CreateDropPanel';
@@ -44,6 +45,9 @@ export function DashBoardPage() {
             <Tab className='dashboard-page__tab' selectedClassName='dashboard-page__tab--selected'>
               New Drops
             </Tab>
+            <Tab className='dashboard-page__tab' selectedClassName='dashboard-page__tab--selected'>
+              Allowlists
+            </Tab>
             {process.env.NEXT_PUBLIC_APP_MODE !== 'production' && (
               <Tab
                 className='dashboard-page__tab'
@@ -70,6 +74,9 @@ export function DashBoardPage() {
           </TabPanel>
           <TabPanel className='dashboard-panel'>
             <NewDropsPanel />
+          </TabPanel>
+          <TabPanel className='dashboard-panel'>
+            <AllowlistsPanel />
           </TabPanel>
           {process.env.NEXT_PUBLIC_APP_MODE !== 'production' && (
             <TabPanel className='dashboard-panel'>

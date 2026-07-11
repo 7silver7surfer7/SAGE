@@ -8,8 +8,10 @@ import {
 import { useGetUserDisplayInfoQuery } from '@/store/usersReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import shortenAddress from '@/utilities/shortenAddress';
+import { parseAddressList, ALLOWLIST_MAX_ADDRESSES } from '@/utilities/allowlist';
 import LoaderSpinner from '../LoaderSpinner';
 import DropProgressLog from './DropProgressLog';
+import AllowlistEditor from './AllowlistEditor';
 
 const ACCEPTED_MEDIA = 'image/png,image/jpeg,image/gif,image/svg+xml,video/mp4';
 
@@ -30,6 +32,8 @@ export default function CreateDropPanel() {
   const [artworks, setArtworks] = useState<ArtworkRow[]>([]);
   const [durationHours, setDurationHours] = useState(24);
   const [approveNow, setApproveNow] = useState(true);
+  const [allowlistEnabled, setAllowlistEnabled] = useState(false);
+  const [allowlistText, setAllowlistText] = useState('');
   const [goLiveAtInput, setGoLiveAtInput] = useState(''); // datetime-local; empty = immediately
   const [saleStartAtInput, setSaleStartAtInput] = useState(''); // datetime-local; empty = same as go-live
   const [nextKey, setNextKey] = useState(0);
@@ -116,6 +120,23 @@ export default function CreateDropPanel() {
         return;
       }
     }
+    let allowlist: { enabled: boolean; addresses: string[] } | undefined;
+    if (allowlistEnabled) {
+      const parsed = parseAddressList(allowlistText);
+      if (parsed.invalid.length > 0) {
+        toast.warn('Fix or remove the invalid allowlist addresses.');
+        return;
+      }
+      if (parsed.valid.length === 0) {
+        toast.warn('The allowlist is enabled but empty — add addresses or turn it off.');
+        return;
+      }
+      if (parsed.valid.length > ALLOWLIST_MAX_ADDRESSES) {
+        toast.warn(`The allowlist is capped at ${ALLOWLIST_MAX_ADDRESSES} addresses.`);
+        return;
+      }
+      allowlist = { enabled: true, addresses: parsed.valid };
+    }
     const result = await createDrop({
       artistWallet: artistWallet.trim() || (walletAddress as string),
       artistDisplayName: artistDisplayName.trim() || undefined,
@@ -132,6 +153,7 @@ export default function CreateDropPanel() {
       // the mutation falls back to a DB-only approval (still stays hidden
       // from the storefront's contract-address checks until deployed).
       signer: approveNow ? (signer as any) : undefined,
+      allowlist,
     });
     if ('data' in result && result.data) {
       setName('');
@@ -142,6 +164,8 @@ export default function CreateDropPanel() {
       setSaleStartAtInput('');
       setArtistDisplayName('');
       setArtistIconFile(null);
+      setAllowlistEnabled(false);
+      setAllowlistText('');
     }
   }
 
@@ -463,6 +487,12 @@ export default function CreateDropPanel() {
               onChange={(e) => setSaleStartAtInput(e.target.value)}
             />
           </label>
+          <AllowlistEditor
+            enabled={allowlistEnabled}
+            text={allowlistText}
+            onEnabledChange={setAllowlistEnabled}
+            onTextChange={setAllowlistText}
+          />
           <label className='create-drop-panel__checkbox-label'>
             <input
               type='checkbox'

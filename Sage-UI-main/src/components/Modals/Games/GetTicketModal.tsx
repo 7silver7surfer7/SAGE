@@ -26,6 +26,7 @@ import CheckSVG from '@/public/icons/check.svg';
 import { useRouter } from 'next/router';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import useLottery from '@/hooks/useLottery';
+import useAllowlistGate from '@/hooks/useAllowlistGate';
 import { toast } from 'react-toastify';
 import { parameters } from '@/constants/config';
 
@@ -190,7 +191,13 @@ function GetTicketModal({
     }
   };
 
-  const buttonText = errorState.isError
+  // Allowlist gate — the Lottery contract enforces the list on-chain; this
+  // keeps the UX honest before the wallet prompt instead of a revert.
+  const allowlistGate = useAllowlistGate(lottery.dropId);
+  const isAllowlistBlocked = allowlistGate.gated && !allowlistGate.allowed;
+  const buttonText = isAllowlistBlocked
+    ? 'allowlist only'
+    : errorState.isError
     ? errorState.message
     : needsAllowance
     ? 'approve'
@@ -273,7 +280,7 @@ function GetTicketModal({
                     <PlusSVG onClick={handleTicketAddClick} className='games-modal__tickets-add' />
                   </div>
                   <button
-                    disabled={isBuyTicketsLoading || errorState.isError}
+                    disabled={isBuyTicketsLoading || errorState.isError || isAllowlistBlocked}
                     onClick={handleBuyTicketClick}
                     className='games-modal__buy-tickets-button'
                   >

@@ -21,6 +21,7 @@ import {
   getOpenEditionContract,
 } from '@/utilities/contracts';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
+import useAllowlistGate from '@/hooks/useAllowlistGate';
 
 interface Props extends ModalProps {
   openEdition: OpenEdition_include_Nft;
@@ -179,7 +180,18 @@ export default function MintOpenEditionModal({
     }
   }
 
-  const buttonText = errorState.isError ? errorState.message : isMinting ? 'minting…' : 'mint';
+  // Allowlist gate — the SAGEOpenEdition contract enforces the list on-chain
+  // ("Not whitelisted" revert); this keeps the UX honest before the wallet
+  // prompt instead of failing at transaction time.
+  const allowlistGate = useAllowlistGate(openEdition.dropId);
+  const isAllowlistBlocked = allowlistGate.gated && !allowlistGate.allowed;
+  const buttonText = isAllowlistBlocked
+    ? 'allowlist only'
+    : errorState.isError
+    ? errorState.message
+    : isMinting
+    ? 'minting…'
+    : 'mint';
   const mintedCount = liveMintCount ?? openEdition.mintCount;
 
   return (
@@ -252,7 +264,7 @@ export default function MintOpenEditionModal({
                     <PlusSVG onClick={handleAddClick} className='games-modal__tickets-add' />
                   </div>
                   <button
-                    disabled={isMinting || errorState.isError}
+                    disabled={isMinting || errorState.isError || isAllowlistBlocked}
                     onClick={handleMintClick}
                     className='games-modal__buy-tickets-button'
                   >

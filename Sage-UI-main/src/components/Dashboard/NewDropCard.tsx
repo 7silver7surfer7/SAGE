@@ -7,6 +7,7 @@ import { useSigner } from 'wagmi';
 import LoaderSpinner from '../LoaderSpinner';
 import { BaseMedia, PfpImage } from '../Media/BaseMedia';
 import { NewDropDetailsModal } from './NewDropDetailsModal';
+import { AllowlistModal } from './AllowlistModal';
 
 interface Props {
   drop: Drop_include_GamesAndArtist;
@@ -17,6 +18,11 @@ export default function NewDropCard({ drop }: Props) {
   const [approveAndDeployDrop, { isLoading: isDeploying }] = useApproveAndDeployDropMutation();
   const [deleteDrop, { isLoading: isDeleting }] = useDeleteDropMutation();
   const { isOpen, closeModal, openModal } = useModal();
+  const {
+    isOpen: isAllowlistOpen,
+    closeModal: closeAllowlistModal,
+    openModal: openAllowlistModal,
+  } = useModal();
 
   const handleApproveBtnClick = async () => {
     if (!signer) {
@@ -64,6 +70,21 @@ export default function NewDropCard({ drop }: Props) {
       >
         {isDeploying ? <LoaderSpinner /> : 'approve & deploy drop'}
       </button>
+      <button
+        onClick={openAllowlistModal}
+        disabled={isDeploying || isDeleting}
+        className='dashboard__submit-button'
+        style={{ width: '100%', display: 'inline-block', height: '50px' }}
+      >
+        {(drop as any).allowlistEnabled ? 'allowlist (gated)' : 'allowlist'}
+      </button>
+      <AllowlistModal
+        isOpen={isAllowlistOpen}
+        closeModal={closeAllowlistModal}
+        dropId={drop.id}
+        dropName={drop.name}
+        deployed={!!drop.approvedAt}
+      />
       <button
         onClick={handleDeleteBtnClick}
         disabled={isDeploying || isDeleting}

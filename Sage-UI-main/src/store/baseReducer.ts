@@ -9,6 +9,7 @@ export const baseApi = createApi({
     'Auction',
     'AuctionState',
     'Config',
+    'DropAllowlist',
     'EscrowPoints',
     'Following',
     'Nfts',
