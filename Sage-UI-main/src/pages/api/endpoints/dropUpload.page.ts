@@ -200,6 +200,15 @@ function createArweaveManifest(nftMetadataFiles: any[]): string {
 async function insertDrop(data: any, response: NextApiResponse) {
   console.log('insertDrop()');
   try {
+    // Hard gate on the artist wallet: it gets baked into the NFT contract at
+    // deploy and receives the artist share of every sale — an invalid or
+    // typo'd address burns those funds permanently (isAddress also enforces
+    // the EIP-55 checksum on mixed-case input). Normalize to checksummed form.
+    if (typeof data.artistWallet !== 'string' || !ethers.utils.isAddress(data.artistWallet)) {
+      response.json({ error: 'Invalid artist wallet address' });
+      return;
+    }
+    data.artistWallet = ethers.utils.getAddress(data.artistWallet);
     // Create user if it doesn't exist. Site-wide username is untouched here —
     // an optional per-drop display name (artistDisplayName below) is stored
     // on the Drop itself instead, so it doesn't rename the wallet's profile.

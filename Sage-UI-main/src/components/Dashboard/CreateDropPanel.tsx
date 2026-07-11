@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { ethers } from 'ethers';
 import { toast } from 'react-toastify';
 import {
   ArtworkSaleType,
@@ -146,8 +147,25 @@ export default function CreateDropPanel() {
       }
       allowlist = { enabled: true, addresses: parsed.valid };
     }
+    // The artist wallet gets BAKED INTO the NFT contract at deploy and receives
+    // the artist share of every sale — a typo'd address burns those funds
+    // forever (this is exactly how a placeholder address became a paid "artist"
+    // once). isAddress rejects malformed input AND, for the normal case of a
+    // checksummed address pasted from a wallet, verifies the EIP-55 checksum so
+    // a single wrong character fails validation. Normalize to checksummed form.
+    let checkedArtistWallet = walletAddress as string;
+    if (artistWallet.trim()) {
+      const input = artistWallet.trim();
+      if (!ethers.utils.isAddress(input)) {
+        toast.warn(
+          'That artist wallet is not a valid address — copy it directly from the wallet (a single wrong character is rejected).'
+        );
+        return;
+      }
+      checkedArtistWallet = ethers.utils.getAddress(input);
+    }
     const result = await createDrop({
-      artistWallet: artistWallet.trim() || (walletAddress as string),
+      artistWallet: checkedArtistWallet,
       artistDisplayName: artistDisplayName.trim() || undefined,
       artistIconFile,
       name,
