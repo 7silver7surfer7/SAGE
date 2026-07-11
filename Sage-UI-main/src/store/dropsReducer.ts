@@ -866,8 +866,22 @@ async function getMediaDimensions(file: File): Promise<{ width: number | null; h
 }
 
 async function updateDbApprovedDateAndIsLiveFlags(drop: DropFull, fetchWithBQ: any): Promise<Date> {
-  const { data } = await fetchWithBQ(`drops?action=UpdateApprovedDateAndIsLiveFlags&id=${drop.id}`);
-  return data.approvedAt;
+  // This is the FINAL step, run AFTER the games are already minted on-chain. If
+  // it fails, the drop is minted but never marked live — invisible on the
+  // storefront with no auto-recovery (exactly what stranded a drop once). Retry
+  // so a transient failure on this last flag update doesn't strand the drop.
+  let lastErr = '';
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetchWithBQ(`drops?action=UpdateApprovedDateAndIsLiveFlags&id=${drop.id}`);
+    if (res?.data?.approvedAt) return res.data.approvedAt;
+    lastErr = (res?.error && JSON.stringify(res.error)) || 'no approvedAt returned';
+    console.warn(`approval-flags attempt ${attempt + 1} failed (${lastErr}), retrying…`);
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+  }
+  throw new Error(
+    `The drop was minted on-chain, but marking it live failed after retries (${lastErr}). ` +
+      `Re-approve it from the New Drops tab to finish — the on-chain steps are already done and will be skipped.`
+  );
 }
 
 export const {
