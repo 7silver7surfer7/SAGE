@@ -1,0 +1,38 @@
+@use '@/styles/abstracts/mixins' as m;
+
+// Marketplace reuses the drops-page template (drop-page__* classes) but has no
+// dark hero banner, so its header text must follow the theme (dark on light,
+// light on dark) instead of the drops page's forced white.
+//
+// The bare `color` is the classless default: the app's default canvas is dark
+// (html bg #0e1412), so before the theme class mounts the text must be light
+// to stay readable. The theme() rules then set the exact per-theme contrast
+// (dark text in light mode, light text in dark mode) once body.light/.dark is
+// applied — this is what makes the header black on the light homepage-style bg.
+.mkt__header-info {
+  display: flex;
+  flex: 1;
+  color: #f2f7f3;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+}
+
+.mkt__details {
+  text-transform: uppercase;
+  font-size: clamp(9px, 1vw, 12px);
+  letter-spacing: 0.04em;
+  margin-top: 10px;
+  display: grid;
+  gap: 2px;
+  opacity: 0.6;
+  color: #f2f7f3;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+}
+
+.mkt__detail-item {
+  display: flex;
+  gap: 5px;
+}
