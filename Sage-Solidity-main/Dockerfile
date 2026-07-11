@@ -1,4 +1,7 @@
-# syntax=docker/dockerfile:1
+# NOTE: no `# syntax=docker/dockerfile:1` directive — it forces a Docker Hub
+# frontend-image resolve on every build and stalls the whole build when Hub's
+# CDN is unreachable (same fix as Sage-UI-main/Dockerfile, 2026-07-11).
+#
 # SAGE settlement cron — Cloud Run Job image.
 #
 # Runs scripts/update_games.js on a schedule: requests lottery randomness,

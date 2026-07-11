@@ -138,31 +138,75 @@ async function updateAuctions() {
             let auctionInfo = await auctionContract.getAuction(auction.id);
             const endTime = auctionInfo.endTime;
             // if we're past endTime, inspect the auction and take the required actions
-            if (
-                endTime > 0 &&
-                now >= endTime &&
-                auction.winnerAddress == null
-            ) {
-                await updateAuctionInfo(auction);
+            if (endTime > 0 && now >= endTime) {
+                await settleAndRecordAuction(auction, auctionInfo);
             }
         }
     }
 }
 
-async function updateAuctionInfo(auction) {
-    let blockchainAuction = await auctionContract.getAuction(auction.id);
-    if (blockchainAuction.highestBidder != auction.winnerAddress) {
+/**
+ * Auto-settles an ended auction and books the result, so the winner receives
+ * their NFT minutes after close with no manual "claim" click. settleAuction is
+ * permissionless — it mints the NFT to the highest bidder and pays the artist/
+ * platform split regardless of who calls it. Mirrors the DB bookkeeping the
+ * UI's claimAuction flow performs (auction row + SaleEvent).
+ */
+async function settleAndRecordAuction(auction, auctionInfo) {
+    const winner =
+        auctionInfo.highestBidder !==
+        "0x0000000000000000000000000000000000000000"
+            ? auctionInfo.highestBidder
+            : null;
+
+    let txHash = null;
+    let blockTimestamp = Math.floor(Date.now() / 1000);
+    if (!auctionInfo.settled) {
         logger.info(
-            `Updating auction #${auction.id} with highest bidder ${blockchainAuction.highestBidder}`
+            `Settling auction #${auction.id} for winner ${winner || "(no bids)"}`
         );
+        const tx = await auctionContract.settleAuction(auction.id);
+        const receipt = await tx.wait(1);
+        txHash = tx.hash;
+        blockTimestamp = (await ethers.provider.getBlock(receipt.blockNumber))
+            .timestamp;
+    }
+
+    if (auction.claimedAt == null) {
         await prisma.auction.update({
-            where: {
-                id: auction.id
-            },
-            data: {
-                winnerAddress: blockchainAuction.highestBidder
-            }
+            where: { id: auction.id },
+            data: winner
+                ? {
+                      winnerAddress: winner,
+                      claimedAt: new Date(),
+                      settled: true
+                  }
+                : { settled: true }
         });
+        if (winner && txHash) {
+            const dbAuction = await prisma.auction.findUnique({
+                where: { id: auction.id },
+                include: { Drop: true }
+            });
+            await prisma.saleEvent.create({
+                data: {
+                    eventType: "AUCTION",
+                    eventId: auction.id,
+                    seller: dbAuction.Drop.artistAddress,
+                    buyer: winner,
+                    txHash,
+                    blockTimestamp,
+                    amountUSD: null,
+                    amountPoints: null,
+                    amountTokens: parseFloat(
+                        ethers.utils.formatUnits(auctionInfo.highestBid)
+                    )
+                }
+            });
+            logger.info(
+                `Auction #${auction.id} settled: NFT minted to ${winner} for ${ethers.utils.formatUnits(auctionInfo.highestBid)} tokens`
+            );
+        }
     }
 }
 
