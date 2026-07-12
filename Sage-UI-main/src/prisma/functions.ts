@@ -126,6 +126,8 @@ export async function getDropsPageData(prisma: PrismaClient) {
       Lotteries: { include: { Nfts: true } },
       Auctions: { include: { Nft: true } },
       OpenEditions: { include: { Nft: true } },
+      // collection drops need these for status (LIVE/sold-out) + tile preview
+      CollectionMints: true,
     },
     where: {
       ...FilterDropContractValidation,

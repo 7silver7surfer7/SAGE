@@ -23,6 +23,10 @@ function collectArtworks(drop: Drop_include_GamesAndArtist): { src: string; name
   drop.Auctions.forEach((a) => push(a.Nft));
   drop.Lotteries.forEach((l) => l.Nfts.forEach(push));
   (drop.OpenEditions || []).forEach((oe) => push(oe.Nft));
+  // collection drops have no Nft rows until minted — show the zip's preview image
+  ((drop as any).CollectionMints || []).forEach((cm: any) => {
+    if (cm.previewImagePath) push({ s3PathOptimized: cm.previewImagePath, name: drop.name });
+  });
   return artworks;
 }
 
@@ -65,7 +69,9 @@ export default function Drop({ drop }: Props) {
         </div>
         <div className='drop__status' data-status='drawn'>
           {status === 'Done' && <h1>DRAWN – {new Date(endTime).toLocaleDateString()}</h1>}
-          {status === 'Live' && (
+          {/* endTime 0 = live with NO deadline (collection open until sold out) */}
+          {status === 'Live' && endTime === 0 && <h1>LIVE</h1>}
+          {status === 'Live' && endTime > 0 && (
             <Countdown className='status__countdown' endTime={endTime} data-color='purple' />
           )}
           {status === 'Upcoming' && <Countdown className='status__countdown' endTime={startTime} />}

@@ -11,13 +11,19 @@ interface Args {
   Lotteries: Lottery_include_Nft[];
   Auctions: Auction_include_Nft[];
   OpenEditions?: OpenEdition_include_Nft[];
+  CollectionMints?: any[];
 }
 
 export type UseDropArgs = Parameters<typeof useDrop>['0'];
 
-function useDrop({ drop, artist, Lotteries, Auctions, OpenEditions }: Args) {
+function useDrop({ drop, artist, Lotteries, Auctions, OpenEditions, CollectionMints }: Args) {
   const { pushToCreators, pushToDrops } = useSageRoutes();
-  const { startTime, endTime, status } = computeDropStatus({ Lotteries, Auctions, OpenEditions });
+  const { startTime, endTime, status } = computeDropStatus({
+    Lotteries,
+    Auctions,
+    OpenEditions,
+    CollectionMints,
+  });
   const dropName: string = transformTitle(drop.name);
   const artistName: string = transformTitle(artist.username);
   const bannerImgSrc: string = drop.bannerImageS3Path;

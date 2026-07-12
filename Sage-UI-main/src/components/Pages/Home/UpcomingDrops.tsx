@@ -33,6 +33,7 @@ export default function UpcomingDrops({ upcomingDrops }: Props) {
                       Lotteries={d.Lotteries}
                       Auctions={d.Auctions}
                       OpenEditions={d.OpenEditions}
+                      CollectionMints={(d as any).CollectionMints}
                       drop={d}
                       artist={d.NftContract.Artist}
                     />
@@ -65,6 +66,7 @@ export default function UpcomingDrops({ upcomingDrops }: Props) {
             Lotteries={d.Lotteries}
             Auctions={d.Auctions}
             OpenEditions={d.OpenEditions}
+            CollectionMints={(d as any).CollectionMints}
             drop={d}
             artist={d.NftContract.Artist}
           />

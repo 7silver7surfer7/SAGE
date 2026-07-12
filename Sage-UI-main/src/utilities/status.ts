@@ -9,41 +9,64 @@ type Game = Partial<LotteryType> | Partial<AuctionType> | Partial<OpenEditionTyp
 
 type Status = 'Done' | 'Live' | 'Unknown' | 'Upcoming' | 'Settled';
 
+/** Minimal shape of a CollectionMint row this fn needs (endTime null = no deadline). */
+interface CollectionMintLike {
+  startTime: Date | string | number;
+  endTime?: Date | string | number | null;
+  maxSupply: number;
+  mintCount: number;
+}
+
+/**
+ * Returned endTime of 0 with status 'Live' means "no deadline" — a collection
+ * that stays open until it sells out. Renderers should show a plain LIVE
+ * label instead of a countdown for that case.
+ */
 export function computeDropStatus({
   Lotteries,
   Auctions,
   OpenEditions,
+  CollectionMints,
 }: {
   Lotteries: Lottery_include_Nft[];
   Auctions: Auction_include_Nft[];
   OpenEditions?: OpenEdition_include_Nft[];
+  CollectionMints?: CollectionMintLike[];
 }) {
   const now = Date.now();
-  let games: Game[] = [...Lotteries, ...Auctions, ...(OpenEditions || [])];
-  let startTime: number;
-  let endTime: number;
+  const games: { start: number; end: number }[] = [
+    ...Lotteries,
+    ...Auctions,
+    ...(OpenEditions || []),
+  ].map((g: Game) => ({ start: +g.startTime!, end: +(g as any).endTime! }));
+  // Collection drops previously weren't counted at all, so a pure collection
+  // drop (e.g. the first mainnet drop "rMonet") showed UNKNOWN forever. A
+  // collection with no endTime runs until sold out: model that as an
+  // infinite end while supply remains, and as already-ended once sold out.
+  for (const cm of CollectionMints || []) {
+    const soldOut = cm.maxSupply > 0 && cm.mintCount >= cm.maxSupply;
+    games.push({
+      start: +new Date(cm.startTime as any),
+      end: cm.endTime ? +new Date(cm.endTime as any) : soldOut ? now - 1 : Infinity,
+    });
+  }
+
   let status: Status = 'Unknown';
   if (games.length === 0) {
     return { startTime: 0, endTime: 0, status };
   }
-  games.sort((a: any, b: any) => +a.startTime - +b.startTime);
-  startTime = +games[0].startTime;
-  games.sort((a: any, b: any) => +b.endTime + a.endTime);
-  endTime = +games[0].endTime!;
-  //TODO: status countdown
-  if (new Date(startTime).getHours() - now < 92) {
+  const startTime = Math.min(...games.map((g) => g.start));
+  const maxEnd = Math.max(...games.map((g) => g.end));
+  // endTime 0 = "live with no deadline" (see doc comment)
+  const endTime = Number.isFinite(maxEnd) ? maxEnd : 0;
+
+  if (startTime > now) {
     status = 'Upcoming';
-  }
-  if (startTime < now) {
+  } else {
     status = 'Live';
-    let openAuction = false;
-    for (const a of Auctions) {
-      if (!a.winnerAddress) {
-        openAuction = true;
-        break;
-      }
-    }
-    if (!openAuction && endTime < now) {
+    const openAuction = Auctions.some((a) => !a.winnerAddress);
+    const allEnded = games.every((g) => g.end < now);
+    if (!openAuction && allEnded) {
       status = 'Done';
     }
   }
