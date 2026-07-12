@@ -1,0 +1,10 @@
+[Unit]
+Description=SAGE pixels (staking points) updater
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/sage
+ExecStart=/usr/bin/docker compose run --rm pixels-cron
+TimeoutStartSec=1800

@@ -1,0 +1,47 @@
+# SAGE marketplace — Raspberry Pi (arm64) image.
+#
+# Cross-build this on a fast x86/ARM Mac and SHIP it — never `next build` on
+# the Pi itself (DB-prerendering every ISR page under Terser-era tooling is
+# the single heaviest job in the stack):
+#
+#   cd Sage-UI-main
+#   docker build --platform linux/arm64 -f ../deploy/pi/Dockerfile.pi \
+#     --secret id=buildenv,src=.env.deploy -t sage-ui:pi .
+#   docker save sage-ui:pi | gzip > sage-ui-pi.tar.gz   # scp to the Pi
+#   # on the Pi: docker load < sage-ui-pi.tar.gz
+#
+# Multi-stage: the runner carries only .next/standalone (the traced subset of
+# node_modules), .next/static and public — a fraction of the full tree.
+FROM node:20-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY . .
+RUN npm ci --legacy-peer-deps
+
+ARG NEXT_PUBLIC_APP_MODE=staging
+ARG NEXT_PUBLIC_MAINTENANCE_ON=false
+ENV NEXT_PUBLIC_APP_MODE=$NEXT_PUBLIC_APP_MODE \
+    NEXT_PUBLIC_MAINTENANCE_ON=$NEXT_PUBLIC_MAINTENANCE_ON \
+    NODE_ENV=production
+
+# next build needs DB access for ISR prerender — mounted as a BuildKit secret,
+# never written to a layer
+RUN --mount=type=secret,id=buildenv \
+    sh -c 'set -a && . /run/secrets/buildenv && set +a && npm run build'
+
+FROM node:20-slim AS runner
+# ffmpeg/ffprobe: the /api/media proxy transcodes oversized video on demand
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+# the pixels cron runs inside this same image (docker compose run pixels-cron);
+# its deps (@prisma/client, ethers) are already traced into standalone
+COPY --from=builder /app/scripts ./scripts
+
+ENV PORT=3000
+EXPOSE 3000
+CMD ["node", "server.js"]

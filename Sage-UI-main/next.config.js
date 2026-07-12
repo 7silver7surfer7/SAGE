@@ -37,7 +37,13 @@ const nextConfig = {
     };
   },
   staticPageGenerationTimeout: 180,
-  swcMinify: false,
+  // SWC minifier: multi-threaded and far lighter on RAM than Terser during
+  // `next build` — matters when cross-building the arm64 (Raspberry Pi) image.
+  swcMinify: true,
+  // Standalone output: .next/standalone carries only the node_modules the
+  // server actually imports, shrinking the runtime image (Pi and Cloud Run
+  // both) — the Dockerfile can copy it instead of the full node_modules tree.
+  output: 'standalone',
 };
 
 module.exports = nextConfig;

@@ -40,8 +40,13 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 };
 export const COLLECTION_MAX_IMAGES = 5000;
 export const COLLECTION_MAX_IMAGE_BYTES = 25 * 1024 * 1024;
-export const COLLECTION_MAX_ZIP_BYTES = 1024 * 1024 * 1024; // 1GB
-const BUNDLE_TARGET_BYTES = 200 * 1024 * 1024; // ~200MB per bundle tx
+export const COLLECTION_MAX_ZIP_BYTES = 1024 * 1024 * 1024; // 1GB (zip is streamed, never held in RAM)
+// Per-bundle batch target. Peak RAM during a flush is roughly 3× this (item
+// buffers + assembled bundle + its raw copy), so the old 200MB target peaked
+// near half a GB — too hot for an 8GB Raspberry Pi sharing RAM with Postgres.
+// 50MB keeps the peak ~150MB at the cost of a few more Arweave bundle txs.
+const BUNDLE_TARGET_BYTES =
+  (parseInt(process.env.COLLECTION_BUNDLE_TARGET_MB || '', 10) || 50) * 1024 * 1024;
 const MIRROR_CONCURRENCY = 8;
 
 export interface PathMapEntry {
@@ -203,12 +208,16 @@ export async function processCollectionZip(args: ProcessArgs): Promise<ProcessRe
         { name: 'Bundle-Version', value: '2.0.0' },
       ]
     );
-    // best-effort S3 mirror of every item in the batch (bytes still in hand)
+    // best-effort S3 mirror of every item in the batch (bytes still in hand);
+    // drop each buffer ref the moment its upload finishes so GC can reclaim
+    // the batch progressively instead of all-at-once at reset below
     await mapWithConcurrency(batchMirrors, MIRROR_CONCURRENCY, async (m) => {
       try {
         await uploadBufferToS3('arweave-mirror', m.id, m.type, m.bytes);
       } catch (e: any) {
         console.warn(`collection mirror ${m.id} failed (non-fatal):`, e?.message || e);
+      } finally {
+        (m as any).bytes = null;
       }
     });
     const cp: BatchCheckpoint = {

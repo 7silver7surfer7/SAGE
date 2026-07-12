@@ -1,0 +1,94 @@
+# SAGE marketplace — full self-hosted stack for a Raspberry Pi 5 (8GB, arm64).
+#
+#   app       — the Next.js marketplace (image built off-device, see Dockerfile.pi)
+#   postgres  — local Postgres 16, tuned down for an 8GB shared box
+#   games-cron / pixels-cron — one-shot settlement/points jobs; NOT long-running
+#                services. The systemd timers in ./systemd invoke them with
+#                `docker compose run --rm`.
+#   cloudflared (optional) — Cloudflare Tunnel ingress for sageart.xyz: no
+#                port-forwarding, and the existing CF cache rules keep working.
+#
+# Usage:
+#   cp .env.pi.example .env   # fill in secrets
+#   docker compose up -d app postgres
+#   sudo cp systemd/* /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now sage-update-games.timer sage-update-pixels.timer
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sage
+      POSTGRES_USER: sage
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    # 8GB Pi shares RAM with node + ffmpeg: keep PG modest
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c work_mem=8MB
+      -c max_connections=40
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sage']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: sage-ui:pi
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # media cache on the (NVMe-backed) volume below, NOT tmpfs — see
+      # src/pages/api/media/[txid].page.ts. Disk is cheap: raise the cap.
+      MEDIA_CACHE_DIR: /media-cache
+      MEDIA_CACHE_LIMIT_MB: '4096'
+      # keep collection-bundling RAM peaks small on the Pi
+      COLLECTION_BUNDLE_TARGET_MB: '50'
+      PORT: '3000'
+    volumes:
+      - media-cache:/media-cache
+    ports:
+      - '3000:3000'
+
+  # One-shot: settles ended auctions, draws lotteries, pays refunds.
+  # Invoked by systemd/sage-update-games.timer (every 10 min).
+  games-cron:
+    image: sage-cron:pi # built from Sage-Solidity-main/Dockerfile (bullseye — Prisma 4 needs OpenSSL 1.1)
+    profiles: ['cron']
+    env_file: .env
+    environment:
+      HARDHAT_NETWORK: ${HARDHAT_NETWORK:-robinhoodTestnet}
+
+  # One-shot: scans SAGE transfers + updates pixels. Reuses the app image.
+  # Invoked by systemd/sage-update-pixels.timer (hourly).
+  pixels-cron:
+    image: sage-ui:pi
+    profiles: ['cron']
+    env_file: .env
+    entrypoint: ['node', 'scripts/update_pixels.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Optional public ingress: `cloudflared tunnel create sage` on any machine,
+  # put the tunnel token in .env, point the tunnel's hostname at
+  # http://app:3000 in the Cloudflare dashboard.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ['public']
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  media-cache:

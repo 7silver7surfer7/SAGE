@@ -1,0 +1,10 @@
+[Unit]
+Description=SAGE settlement cron (auctions/lotteries/refunds)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/sage
+ExecStart=/usr/bin/docker compose run --rm games-cron
+TimeoutStartSec=540
