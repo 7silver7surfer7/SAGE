@@ -115,6 +115,17 @@ function commit(key: string, tmp: string, type: string, protectKeys: Set<string>
   return { file, type, size };
 }
 
+/** Public S3 mirror GET; null when the object doesn't exist / S3 hiccups. */
+async function fetchFromS3Mirror(txid: string): Promise<Response | null> {
+  try {
+    const s3res = await fetch(s3MirrorUrl(txid));
+    if (s3res.ok && s3res.body) return s3res;
+  } catch {
+    /* mirror unreachable — caller falls back to Arweave handling */
+  }
+  return null;
+}
+
 async function fetchFromGateway(txid: string): Promise<Response> {
   // The gateway load-balances across edge nodes; an unhealthy one can 404 or
   // serve an HTML error page for content that IS available elsewhere. Retry a
@@ -130,23 +141,29 @@ async function fetchFromGateway(txid: string): Promise<Response> {
     } catch (e: any) {
       last = e?.message || 'fetch failed';
     }
+    // FIRST failure: try the S3 mirror IMMEDIATELY. Fresh uploads routinely
+    // lag Arweave gateway propagation, and the old order (full retry ladder
+    // with backoff — ~30s worst case — before ever touching S3) outlasted
+    // browser <video> elements' patience, so viewers saw "media could not be
+    // loaded" while a perfectly good mirror copy sat unused. Content that was
+    // never mirrored (NFT metadata) just misses here and keeps the ladder.
+    if (i === 0) {
+      const s3res = await fetchFromS3Mirror(txid);
+      if (s3res) {
+        console.log(`media proxy [${txid}]: gateway miss (${last}), served from S3 mirror`);
+        return s3res;
+      }
+    }
     if (i < 3) {
       console.warn(`media proxy [${txid}]: gateway attempt ${i + 1} failed (${last}), retrying…`);
       await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
     }
   }
-  // Every Arweave gateway retry failed — before giving up, try the S3 mirror
-  // (display-only backup; a GET here is a plain public request, no signing).
-  // A txid that was never mirrored (e.g. metadata) just 404s here too, and
-  // the original Arweave error below is what actually gets thrown/reported.
-  try {
-    const s3res = await fetch(s3MirrorUrl(txid));
-    if (s3res.ok && s3res.body) {
-      console.log(`media proxy [${txid}]: Arweave gateway exhausted, served from S3 mirror`);
-      return s3res;
-    }
-  } catch {
-    /* no mirror available — fall through to the real error */
+  // Ladder exhausted — one last mirror look (covers an S3 blip on the early try).
+  const s3res = await fetchFromS3Mirror(txid);
+  if (s3res) {
+    console.log(`media proxy [${txid}]: Arweave gateway exhausted, served from S3 mirror`);
+    return s3res;
   }
   throw new Error(`gateway did not serve data after retries (${last})`);
 }
