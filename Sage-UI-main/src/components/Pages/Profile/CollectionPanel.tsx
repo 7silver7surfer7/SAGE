@@ -6,6 +6,7 @@ import { BaseMedia } from '@/components/Media/BaseMedia';
 import { useSession } from 'next-auth/react';
 import { useGetListingNftsByOwnerQuery } from '@/store/nftsReducer';
 import { Tabs, Tab, TabList, TabPanel } from 'react-tabs';
+import { useRouter } from 'next/router';
 import Gallery from './Gallery';
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export default function CollectionPanel({ collectionTabIndex, setCollectionTabIndex }: Props) {
+  const router = useRouter();
   const { data: sessionData } = useSession();
   const { data: claimedPrizes, isFetching: fetchingClaimedPrizes } = useGetClaimedPrizesQuery(
     undefined,
@@ -65,9 +67,16 @@ export default function CollectionPanel({ collectionTabIndex, setCollectionTabIn
                 if (!nft?.s3PathOptimized) return null;
                 return (
                   <>
-                    <div key={nft.nftId} className='collection-panel__tile'>
+                    {/* whole tile navigates to the piece's full view (was an
+                        in-place image zoom, which the /nft page supersedes) */}
+                    <div
+                      key={nft.nftId}
+                      className='collection-panel__tile'
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => router.push(`/nft/${nft.nftId}`)}
+                    >
                       <div className='collection-panel__img-container'>
-                        <BaseMedia src={nft.s3PathOptimized} isZoomable={true}></BaseMedia>
+                        <BaseMedia src={nft.s3PathOptimized}></BaseMedia>
                       </div>
                       <div className='collection-panel__tile-info'>
                         <p className='collection-panel__tile-nft-name'>{nft.nftName}</p>
