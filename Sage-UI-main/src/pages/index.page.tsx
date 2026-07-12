@@ -34,7 +34,7 @@ function home({
       const vibrates = navigator.vibrate(1000);
     }
   }
-  const { pushToCreators, pushToDrops, pushToHowToBuyAsh } = useSageRoutes();
+  const { pushToCreators, pushToDrops } = useSageRoutes();
 
   return (
     <div className='home-page' data-cy='home-page' data-on={coverOn}>
@@ -45,16 +45,6 @@ function home({
         removeCover={removeCover}
       />
       <div data-on={isMobile ? coverOn : false} className='home-page__main'>
-        <div
-          className='home-page__testnet-banner'
-          role='alert'
-          aria-label='Robinhood Testnet — for testing only'
-        >
-          <span className='home-page__testnet-banner-title'>Robinhood Testnet</span>
-          <span className='home-page__testnet-banner-note'>
-            Test network — for testing only, tokens have no real value
-          </span>
-        </div>
         <Logotype></Logotype>
         <LaunchTrailer
           src={featuredDrop?.featuredMediaS3Path}
@@ -83,16 +73,6 @@ function home({
         </h1>
         <div className='home-page__upcoming-drops-header'>
           <h1 className='home-page__upcoming-drops-header-left'>drops</h1>
-          <div className='home-page__upcoming-drops-header-right'>
-            <div className='home-page__upcoming-drops-header-right-dot'></div>
-            <h1
-              className='home-page__upcoming-drops-header-right-text home-page__upcoming-drops-header-right-text--link'
-              onClick={pushToHowToBuyAsh}
-            >
-              We only accept SAGE as a medium of exchange. SAGE is the native token of the SAGE
-              ecosystem on Robinhood Chain.
-            </h1>
-          </div>
         </div>
         <UpcomingDrops upcomingDrops={upcomingDrops}></UpcomingDrops>
         <NewArtworks newArtworks={newArtworks}></NewArtworks>
