@@ -1,7 +1,30 @@
-import { uploadBufferToS3 } from './awsS3-server';
+import { uploadBufferToS3, deleteObjectsFromS3 } from './awsS3-server';
 
-const S3_MIRROR_FOLDER = 'arweave-mirror';
+export const S3_MIRROR_FOLDER = 'arweave-mirror';
 const AWS_REGION = 'us-east-2'; // matches awsS3-server.ts
+
+/** The mirror object key for a txid (matches s3MirrorUrl's path). */
+export function s3MirrorKey(txid: string): string {
+  return `${S3_MIRROR_FOLDER}/${txid}`;
+}
+
+/**
+ * Deletes display-only mirror objects for the given Arweave txids. Best-effort
+ * and never throws — a cleanup failure must not block whatever DB deletion it
+ * accompanies (mirror is a disposable backup; Arweave is the record). Dedupes,
+ * ignores empties, and is safe to call with txids that were never mirrored
+ * (S3 treats an absent key as a successful delete).
+ */
+export async function deleteFromS3Mirror(txids: string[]): Promise<void> {
+  const unique = Array.from(new Set(txids.filter(Boolean)));
+  if (unique.length === 0) return;
+  try {
+    await deleteObjectsFromS3(unique.map(s3MirrorKey));
+    console.log(`deleteFromS3Mirror: removed ${unique.length} mirror object(s)`);
+  } catch (e: any) {
+    console.warn(`deleteFromS3Mirror failed (non-fatal):`, e?.message || e);
+  }
+}
 
 /**
  * Public GET URL for a display-only S3 mirror of an Arweave txid's bytes.

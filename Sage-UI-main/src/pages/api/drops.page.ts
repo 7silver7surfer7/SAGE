@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Nft, Prisma, Role } from '@prisma/client';
 import { readPresetDropsFromS3, uploadBufferToS3 } from '@/utilities/awsS3-server';
+import { deleteFromS3Mirror } from '@/utilities/s3Mirror';
 import { isVideoSrc } from '@/utilities/media';
 import { PresetDrop } from '@/store/dropsReducer';
 import { withArtistDisplayNameOverride } from '@/prisma/functions';
@@ -584,6 +585,12 @@ async function checkDropAllowlist(id: number, walletAddress: string, response: N
   }
 }
 
+/** Pulls a 43-char Arweave txid out of an arweave.net URL, or null. */
+function arweaveTxid(url?: string | null): string | null {
+  const m = url ? /arweave\.net\/([A-Za-z0-9_-]{43})/.exec(url) : null;
+  return m ? m[1] : null;
+}
+
 async function deleteDrop(id: number, response: NextApiResponse) {
   console.log(`deleteDrop(${id})`);
   const drop = await prisma.drop.findUnique({
@@ -592,25 +599,87 @@ async function deleteDrop(id: number, response: NextApiResponse) {
       Auctions: { include: { Nft: true } },
       OpenEditions: { include: { Nft: true } },
       Lotteries: { include: { Nfts: true } },
+      CollectionMints: true,
     },
   });
-  if (drop?.approvedAt) {
+  if (!drop) {
+    response.status(404);
+    return;
+  }
+  if (drop.approvedAt) {
     response.status(500);
     return;
   }
-  for (const a of drop?.Auctions!) {
+
+  // Collect every display-only S3 mirror this drop is responsible for, so it
+  // can be cleaned up AFTER the DB rows are gone (below). The mirror is keyed
+  // by Arweave txid; a re-upload gets fresh txids, so leaving these behind
+  // just accumulates orphans in the bucket. Media only — NFT metadata is
+  // never mirrored (collections are the exception: they mirror image, JSON
+  // AND manifest, so all three are reclaimed here).
+  const mirrorTxids: string[] = [];
+  const addFromUrl = (u?: string | null) => {
+    const t = arweaveTxid(u);
+    if (t) mirrorTxids.push(t);
+  };
+  // banner + its variants live on the drop row
+  addFromUrl(drop.bannerImageS3Path);
+  addFromUrl(drop.tileImageS3Path);
+  addFromUrl(drop.mobileCoverS3Path);
+  addFromUrl(drop.featuredMediaS3Path);
+  const nfts = [
+    ...drop.Auctions.map((a) => a.Nft),
+    ...drop.Lotteries.flatMap((l) => l.Nfts),
+    ...drop.OpenEditions.map((oe) => oe.Nft),
+  ].filter(Boolean);
+  for (const n of nfts) {
+    addFromUrl(n!.arweavePath);
+    addFromUrl(n!.s3Path);
+    addFromUrl(n!.s3PathOptimized); // optimized rendition is a separate mirror
+  }
+  for (const cm of drop.CollectionMints) {
+    if (cm.manifestId) mirrorTxids.push(cm.manifestId);
+    if (cm.pathMap) {
+      try {
+        const map = JSON.parse(cm.pathMap) as Record<string, { img?: string; json?: string }>;
+        for (const e of Object.values(map)) {
+          if (e.img) mirrorTxids.push(e.img);
+          if (e.json) mirrorTxids.push(e.json);
+        }
+      } catch {
+        /* malformed pathMap — skip its images, still clean everything else */
+      }
+    }
+  }
+
+  for (const a of drop.Auctions) {
     await prisma.auction.delete({ where: { id: a.id } });
     await prisma.nft.delete({ where: { id: a.nftId } });
   }
-  for (const l of drop?.Lotteries!) {
+  for (const l of drop.Lotteries) {
     for (const n of l.Nfts) {
       await prisma.nft.delete({ where: { id: n.id } });
     }
     await prisma.lottery.delete({ where: { id: l.id } });
   }
+  for (const oe of drop.OpenEditions) {
+    await prisma.openEdition.delete({ where: { id: oe.id } });
+    await prisma.nft.delete({ where: { id: oe.nftId } });
+  }
+  // CollectionMint rows FK to the drop — must go before the drop delete (this
+  // path previously didn't handle them at all, so deleting a collection draft
+  // FK-failed)
+  await prisma.collectionMint.deleteMany({ where: { dropId: id } });
   // allowlist entries reference the drop — must go first or the FK blocks this
   await prisma.dropAllowlistEntry.deleteMany({ where: { dropId: id } });
   await prisma.drop.delete({ where: { id } });
+
+  // Best-effort mirror cleanup — AFTER the DB delete succeeds so a slow/failed
+  // S3 call can never strand a half-deleted drop (deleteFromS3Mirror never
+  // throws). Orphaned mirrors are harmless (display-only), so DB is the
+  // source of truth for what's gone. Outer handler sends the response.
+  await deleteFromS3Mirror(mirrorTxids);
+  console.log(`deleteDrop(${id}) :: removed ${mirrorTxids.length} S3 mirror object(s)`);
 }
 
 async function deleteDrops(response: NextApiResponse) {

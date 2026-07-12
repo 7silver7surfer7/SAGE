@@ -53,6 +53,45 @@ export async function uploadBufferToS3(
   return getUrl;
 }
 
+/**
+ * Batch-deletes objects from the media bucket by full key. Idempotent: S3's
+ * deleteObjects treats a missing key as a successful no-op, so passing a key
+ * that was never written (or already gone) is harmless. Chunks to S3's
+ * 1,000-keys-per-request limit.
+ */
+export async function deleteObjectsFromS3(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  const s3 = new aws.S3();
+  const Bucket = process.env.S3_BUCKET as string;
+  for (let i = 0; i < keys.length; i += 1000) {
+    const chunk = keys.slice(i, i + 1000);
+    await s3
+      .deleteObjects({
+        Bucket,
+        Delete: { Objects: chunk.map((Key) => ({ Key })), Quiet: true },
+      })
+      .promise();
+  }
+}
+
+/** Lists every object key under a prefix, following pagination. */
+export async function listAllKeysUnderPrefix(prefix: string): Promise<string[]> {
+  const s3 = new aws.S3();
+  const Bucket = process.env.S3_BUCKET as string;
+  const keys: string[] = [];
+  let ContinuationToken: string | undefined;
+  do {
+    const page = await s3
+      .listObjectsV2({ Bucket, Prefix: prefix, ContinuationToken })
+      .promise();
+    for (const obj of page.Contents || []) {
+      if (obj.Key) keys.push(obj.Key);
+    }
+    ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (ContinuationToken);
+  return keys;
+}
+
 export async function readPresetDropsFromS3(): Promise<PresetDrop[]> {
   var presetDrops = [];
   const s3 = new aws.S3();
