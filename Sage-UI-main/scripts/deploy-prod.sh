@@ -17,15 +17,22 @@ cd "$(dirname "$0")/.."
 
 IMAGE=us-west1-docker.pkg.dev/sage-testnet-market/sage/sage-ui:testnet
 
-echo "==> building (linux/amd64)…"
-docker build --platform linux/amd64 --secret id=buildenv,src=.env.deploy -t "$IMAGE" .
+echo "==> building (linux/amd64, MAINNET production mode)…"
+# NEXT_PUBLIC_APP_MODE is inlined into the client bundle at BUILD time
+# (Dockerfile ARG, default staging = testnet config). Since the 2026-07-12
+# mainnet launch, sageart.xyz IS mainnet: bake production, and mirror the
+# same value into the runtime env below so server-side code (which reads
+# process.env at runtime) selects the same config block as the client.
+docker build --platform linux/amd64 --secret id=buildenv,src=.env.deploy \
+  --build-arg NEXT_PUBLIC_APP_MODE=production -t "$IMAGE" .
 
 echo "==> pushing…"
 docker push "$IMAGE"
 
 DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
 echo "==> deploying $DIGEST"
-gcloud run deploy sage-testnet --region us-west1 --image "$DIGEST" --timeout 3600
+gcloud run deploy sage-testnet --region us-west1 --image "$DIGEST" --timeout 3600 \
+  --update-env-vars NEXT_PUBLIC_APP_MODE=production
 
 echo "==> warming media cache (fresh instance = cold cache)…"
 bash scripts/warm-media.sh

@@ -86,21 +86,23 @@ const configuration: Configuration = {
     APP_URL: 'https://sage-staging.vercel.app/',
   },
   production: {
+    // Robinhood MAINNET suite — deployed + Blockscout-verified 2026-07-12
+    // (Sage-Solidity-main/contracts.js robinhood block is the source of truth)
     CHAIN_ID: '4663',
     NETWORK_NAME: 'robinhood',
     RPC_URL: 'https://rpc.mainnet.chain.robinhood.com',
     SUBGRAPH_URL: '',
     MEDIUM_URL: 'https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/@SAGE_WEB3',
-    MARKETPLACE_ADDRESS: '',
-    STORAGE_ADDRESS: '',
-    NFTFACTORY_ADDRESS: '',
-    LOTTERY_ADDRESS: '',
-    REWARDS_ADDRESS: '',
-    AUCTION_ADDRESS: '',
-    OPENEDITION_ADDRESS: '',
-    COLLECTION_ADDRESS: '', // fill after SageCollection mainnet deploy
+    MARKETPLACE_ADDRESS: '0x7da23353e7280d5074949eEaE765c08ABb373634',
+    STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
+    NFTFACTORY_ADDRESS: '0x2F529790849Ce3B6dFb226e76CcB36040df3F3Fd',
+    LOTTERY_ADDRESS: '0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54',
+    REWARDS_ADDRESS: '0x652595ffD447513DcA1B5e532618Af60C8791E60',
+    AUCTION_ADDRESS: '0x83Eac0DCfd0bC5D52Edf4e631CdDb6C0e6438E03',
+    OPENEDITION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
+    COLLECTION_ADDRESS: '0x2c25d08251a0a1B6Ef954811a177D85482a82373',
     ASHTOKEN_ADDRESS: '0x08deaa8250beAeD65366fbbde0088E76261637bA', // SAGE token (live on Robinhood mainnet)
-    APP_URL: 'https://www.sage.art/',
+    APP_URL: 'https://sageart.xyz/',
   },
 };
 
