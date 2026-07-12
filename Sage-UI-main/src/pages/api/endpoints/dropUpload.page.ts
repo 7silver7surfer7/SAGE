@@ -222,7 +222,10 @@ const TXID_RE = /^[A-Za-z0-9_-]{43}$/; // base64url tx id — also SSRF guard
 // Parse once per collection and reuse — the map is immutable once processing
 // hits 'done' (the only state registration accepts), so id+length is a safe
 // staleness key. Tiny cap: a marketplace has few active collections.
-const pathMapCache = new Map<string, Record<string, { img: string; json: string }>>();
+const pathMapCache = new Map<
+  string,
+  Record<string, { img: string; json: string; name?: string }>
+>();
 function getParsedPathMap(cmId: number, pathMap: string) {
   const key = `${cmId}:${pathMap.length}`;
   let parsed = pathMapCache.get(key);
@@ -979,7 +982,10 @@ async function registerCollectionMint(
     const imageUrl = `https://arweave.net/${entry.img}`;
     const record = await prisma.nft.create({
       data: {
-        name: `${cm.Drop.name} #${index}`,
+        // match the name baked into the token's Arweave metadata (from the
+        // source filename, when meaningful) so the site and external
+        // marketplaces agree; older pathMaps have no name -> index fallback
+        name: entry.name || `${cm.Drop.name} #${index}`,
         description: cm.Drop.description,
         tokenId,
         metadataPath: `${cm.baseUri}${index}.json`,

@@ -53,8 +53,27 @@ export interface PathMapEntry {
   img: string; // image DataItem id
   json: string; // metadata DataItem id
   ext: string; // original image extension (png/jpg/…)
+  name?: string; // token name baked into the metadata (from the source filename)
 }
 export type PathMap = Record<string, PathMapEntry>; // key: 1-based index as string
+
+/**
+ * Token name for image i: the source FILENAME when it carries meaning
+ * ("water-lilies_dusk.png" → "Water Lilies Dusk"), else "{drop} #{i}".
+ * Purely numeric/generic camera names (1.png, 0042.jpg, IMG_1234, DSC0001)
+ * don't count as meaningful — external marketplaces showing a wall of
+ * "rMonet #7" was the complaint that motivated this (2026-07-12; that
+ * collection's metadata is already permanent and keeps its index names).
+ */
+export function tokenNameFor(entryPath: string, dropName: string, i: number): string {
+  const base = (entryPath.split('/').pop() || '').replace(/\.[^.]+$/, '');
+  const cleaned = base.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const generic = /^(\d+|img[ ]?\d*|image[ ]?\d*|dsc[ ]?\d*|untitled[ ]?\d*)$/i.test(cleaned);
+  if (!cleaned || generic) return `${dropName} #${i}`;
+  // Title Case without mangling existing capitals ("NYC at dusk" stays "NYC At Dusk")
+  const pretty = cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+  return pretty;
+}
 
 export interface BatchCheckpoint {
   firstIndex: number; // 1-based, inclusive
@@ -250,8 +269,9 @@ export async function processCollectionZip(args: ProcessArgs): Promise<ProcessRe
     });
     await imgItem.sign(signer);
 
+    const tokenName = tokenNameFor(entry.path, dropName, i);
     const metadata = buildNftMetadata(
-      `${dropName} #${i}`,
+      tokenName,
       description,
       `https://arweave.net/${imgItem.id}`,
       false
@@ -263,7 +283,9 @@ export async function processCollectionZip(args: ProcessArgs): Promise<ProcessRe
     await metaItem.sign(signer);
 
     batchItems.push(imgItem, metaItem);
-    batchEntries[String(i)] = { img: imgItem.id, json: metaItem.id, ext };
+    // name rides along so mint registration can label the Nft row without
+    // re-fetching the metadata JSON from Arweave
+    batchEntries[String(i)] = { img: imgItem.id, json: metaItem.id, ext, name: tokenName };
     batchMirrors.push(
       { id: imgItem.id, type: mime, bytes },
       { id: metaItem.id, type: 'application/json', bytes: metaBytes }
