@@ -89,16 +89,19 @@ async function getSearchableNftData(response: NextApiResponse) {
       if (n.Auction && !n.Auction.Drop.approvedAt) continue;
       if (n.Lottery && !n.Lottery.Drop.approvedAt) continue;
       result.push({
+        id: n.id,
         name: n.name,
         width: n.width,
         height: n.height,
         s3PathOptimized: n.s3PathOptimized,
-        // Never emit undefined: a collection-minted NFT has no Auction/Lottery
-        // and its artist may lack a username — an absent field here crashed
-        // the /search page client-side (item.artist.toLowerCase()) as soon as
-        // the first mainnet collection mints appeared. Fall back to the
-        // artist's wallet address so the piece stays searchable.
+        // Prefer the drop's artist pseudonym stamped on the row at mint time
+        // (collection/OE mints carry it; e.g. "Silver Surfer"), then profile
+        // usernames. Never emit undefined — an absent field here crashed the
+        // /search page client-side (item.artist.toLowerCase()) as soon as the
+        // first mainnet collection mints appeared; the wallet address is the
+        // last-resort fallback so the piece stays searchable.
         artist:
+          n.artistDisplayName ||
           n.NftContract?.Artist?.username ||
           n.Auction?.Drop.NftContract.Artist.username ||
           n.Lottery?.Drop.NftContract.Artist.username ||

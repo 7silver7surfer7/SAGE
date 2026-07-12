@@ -1,6 +1,6 @@
 import { SearchableNftData } from '@/store/nftsReducer';
 import { BaseMedia } from '@/components/Media/BaseMedia';
-import useSageRoutes from '@/hooks/useSageRoutes';
+import { useRouter } from 'next/router';
 import { transformTitle } from '@/utilities/strings';
 
 interface Props {
@@ -30,13 +30,10 @@ function computeSearchTileAspectRatio(width: number, height: number): ImgAspectR
   return dataAspect;
 }
 export default function SearchResultsTile({ nft, i }: Props) {
-  const { pushToDrops, pushToCreators } = useSageRoutes();
+  const router = useRouter();
   const handleClick = async () => {
-    if (nft.dId) {
-      pushToDrops(nft.dId);
-    } else {
-      pushToCreators(nft.artist);
-    }
+    // straight to the piece itself (was: drop page / artist page guesswork)
+    router.push(`/nft/${nft.id}`);
   };
   const { width, height } = nft;
   const dataAspect = computeSearchTileAspectRatio(width, height);

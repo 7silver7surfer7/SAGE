@@ -44,7 +44,8 @@ export interface OfferRequest {
 
 export interface SearchableNftData
   extends Pick<Nft, 'name' | 's3PathOptimized' | 'width' | 'height'> {
-  artist: string; // username
+  id: number; // Nft id — search tiles link to /nft/{id}
+  artist: string; // display name: drop pseudonym > profile username > wallet address
   dId?: number; // dropId
   dName?: string; // dropName
 }
