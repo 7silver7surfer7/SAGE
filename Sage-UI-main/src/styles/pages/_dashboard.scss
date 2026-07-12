@@ -492,10 +492,15 @@
 }
 
 .create-drop-panel__banner-preview {
-  width: 100%;
-  max-height: 180px;
-  object-fit: cover;
+  // contain, don't crop: show the WHOLE banner scaled down and centered in
+  // the uploader box (cover used to chop wide/tall uploads at the edges)
+  max-width: 100%;
+  max-height: 220px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
   display: block;
+  margin: 0 auto;
 }
 
 .create-drop-panel__banner-placeholder {
