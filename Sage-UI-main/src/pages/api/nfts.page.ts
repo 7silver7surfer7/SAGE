@@ -93,10 +93,17 @@ async function getSearchableNftData(response: NextApiResponse) {
         width: n.width,
         height: n.height,
         s3PathOptimized: n.s3PathOptimized,
+        // Never emit undefined: a collection-minted NFT has no Auction/Lottery
+        // and its artist may lack a username — an absent field here crashed
+        // the /search page client-side (item.artist.toLowerCase()) as soon as
+        // the first mainnet collection mints appeared. Fall back to the
+        // artist's wallet address so the piece stays searchable.
         artist:
-          n.NftContract?.Artist.username! ||
-          n.Auction?.Drop.NftContract.Artist.username! ||
-          n.Lottery?.Drop.NftContract.Artist.username!,
+          n.NftContract?.Artist?.username ||
+          n.Auction?.Drop.NftContract.Artist.username ||
+          n.Lottery?.Drop.NftContract.Artist.username ||
+          n.artistAddress ||
+          '',
         dId: n.Auction?.Drop.id || n.Lottery?.Drop.id || undefined,
         dName: n.Auction?.Drop.name || n.Lottery?.Drop.name || undefined,
       });

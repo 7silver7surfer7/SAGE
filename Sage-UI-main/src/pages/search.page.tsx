@@ -79,11 +79,12 @@ function performSearch(data: SearchableNftData[], query: string): SearchableNftD
     return [];
   }
   query = query.toLowerCase();
+  // null-safe: older cached API payloads (or any future gap) may lack fields —
+  // a missing artist crashed the whole page here rather than skipping the item
   return data.filter((item) => {
     return (
-      item.artist.toLowerCase().indexOf(query) != -1 ||
-      item.name.toLowerCase().indexOf(query) != -1 ||
-      // item.tags.toLowerCase().indexOf(query) != -1 ||
+      (item.artist || '').toLowerCase().indexOf(query) != -1 ||
+      (item.name || '').toLowerCase().indexOf(query) != -1 ||
       (item.dName && item.dName.toLowerCase().indexOf(query) != -1)
     );
   });
