@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# One-command production deploy for sageart.xyz — build, push, deploy, WARM.
+#
+# Exists because the steps are individually easy to fumble and the last one is
+# easy to forget: every deploy starts a Cloud Run instance with an EMPTY tmpfs
+# media cache, and an unwarmed cache is exactly how "The media could not be
+# loaded" reappeared on 2026-07-11 (deploy went out, warm-media.sh didn't).
+#
+# Notes baked in from past incidents:
+#  - run from Sage-UI-main (needs .env.deploy for the build secret)
+#  - deploy by DIGEST, not tag: a failed build otherwise silently re-deploys
+#    whatever the local tag still points at (also happened 2026-07-11)
+#  - NEVER pass --env-vars-file here — it REPLACES all runtime env vars
+#    (the NEXTAUTH_URL outage). Surgical changes only, via --update-env-vars.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+IMAGE=us-west1-docker.pkg.dev/sage-testnet-market/sage/sage-ui:testnet
+
+echo "==> building (linux/amd64)…"
+docker build --platform linux/amd64 --secret id=buildenv,src=.env.deploy -t "$IMAGE" .
+
+echo "==> pushing…"
+docker push "$IMAGE"
+
+DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
+echo "==> deploying $DIGEST"
+gcloud run deploy sage-testnet --region us-west1 --image "$DIGEST" --timeout 3600
+
+echo "==> warming media cache (fresh instance = cold cache)…"
+bash scripts/warm-media.sh
+
+echo "==> smoke checks…"
+curl -s https://sageart.xyz/api/auth/providers/ | grep -q 'sageart.xyz' \
+  && echo "auth URLs OK" || { echo "AUTH URLS BROKEN — check NEXTAUTH_URL"; exit 1; }
+curl -s -o /dev/null -w "homepage: %{http_code}\n" https://sageart.xyz/
+echo "done."
