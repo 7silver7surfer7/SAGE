@@ -75,6 +75,20 @@ contract Lottery is
     // APPEND-ONLY: declared after all pre-existing state vars (UUPS layout).
     mapping(uint256 => uint256) public lotteryArtistShare;
 
+    // Payment currency per lottery. address(0) = the SAGE token (mapping
+    // default, so every lottery created before this feature keeps its
+    // original currency); NATIVE_CURRENCY = native ETH. APPEND-ONLY.
+    mapping(uint256 => address) public lotteryCurrency;
+
+    // ETH owed to addresses whose refund/payout .call failed (reverting
+    // receiver). Pull-payment escape hatch so one bad receiver can never
+    // block refunds or prize claims. APPEND-ONLY.
+    mapping(address => uint256) public pendingReturns;
+
+    // Sentinel meaning "native ETH" (constants use no storage slots).
+    address public constant NATIVE_CURRENCY =
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
     // Information about lotteries
     struct LotteryInfo {
         uint32 startTime; // Timestamp where users can start buying tickets
@@ -338,7 +352,7 @@ contract Lottery is
         uint256 _lotteryId,
         uint256 _numberOfTicketsToBuy,
         bytes calldata _sig
-    ) public {
+    ) public payable {
         address _user = msg.sender;
         bytes32 message = prefixed(keccak256(abi.encode(_user, _points)));
         require(
@@ -395,6 +409,49 @@ contract Lottery is
         // freeze the platform split for this lottery at its creation-time value
         lotteryArtistShare[_lotteryInfo.lotteryID] = _primaryArtistShare();
         emit LotteryStatusChanged(_lotteryInfo.lotteryID, Status.Created);
+    }
+
+    /** Creates a lottery priced in an explicit currency: address(0) for the
+     *  SAGE token or NATIVE_CURRENCY for native ETH. The original
+     *  createLottery stays SAGE-only for back-compat. */
+    function createLotteryWithCurrency(
+        LotteryInfo calldata _lotteryInfo,
+        address _currency
+    ) external onlyAdmin {
+        require(
+            _currency == address(0) || _currency == NATIVE_CURRENCY,
+            "Unsupported currency"
+        );
+        createLottery(_lotteryInfo);
+        lotteryCurrency[_lotteryInfo.lotteryID] = _currency;
+    }
+
+    /** Pays out `_amount` of a lottery's currency. ETH payouts that fail
+     *  (reverting receiver) are credited to pendingReturns instead of
+     *  reverting, so a hostile receiver can't lock refunds or claims. */
+    function _payOut(
+        address _currency,
+        address _to,
+        uint256 _amount
+    ) internal {
+        if (_amount == 0) return;
+        if (_currency == NATIVE_CURRENCY) {
+            (bool ok, ) = _to.call{value: _amount, gas: 30000}("");
+            if (!ok) {
+                pendingReturns[_to] += _amount;
+            }
+        } else {
+            token.transfer(_to, _amount);
+        }
+    }
+
+    /** Claims ETH credited after a failed refund/payout .call. */
+    function withdrawPendingReturns() external {
+        uint256 amount = pendingReturns[msg.sender];
+        require(amount > 0, "Nothing to withdraw");
+        pendingReturns[msg.sender] = 0;
+        (bool ok, ) = msg.sender.call{value: amount}("");
+        require(ok, "ETH transfer failed");
     }
 
     /** Corrective/backfill setter for a lottery's frozen artist share.
@@ -510,6 +567,7 @@ contract Lottery is
      */
     function buyTickets(uint256 _lotteryId, uint256 _numberOfTicketsToBuy)
         public
+        payable
         whenNotPaused
         isWhitelisted(_lotteryId)
     {
@@ -554,8 +612,19 @@ contract Lottery is
         lottery.numberOfTicketsSold += uint32(_numberOfTicketsToBuy);
         if (costPerTicketTokens > 0) {
             totalCostInTokens = _numberOfTicketsToBuy * costPerTicketTokens;
-            token.transferFrom(msg.sender, address(this), totalCostInTokens);
+            if (lotteryCurrency[_lotteryId] == NATIVE_CURRENCY) {
+                require(msg.value == totalCostInTokens, "Wrong ETH amount");
+            } else {
+                require(msg.value == 0, "Lottery is not priced in ETH");
+                token.transferFrom(
+                    msg.sender,
+                    address(this),
+                    totalCostInTokens
+                );
+            }
             refunds[_lotteryId][msg.sender] += totalCostInTokens;
+        } else {
+            require(msg.value == 0, "Tickets are free");
         }
 
         if (numTicketsBought == 0) {
@@ -597,20 +666,25 @@ contract Lottery is
         LotteryInfo storage lottery = lotteryHistory[_lotteryId];
         INFT nftContract = lottery.nftContract;
         uint256 ticketCostTokens = lottery.ticketCostTokens;
+        // checks-effects-interactions: mark the prize claimed BEFORE any
+        // value leaves the contract (payouts can be native-ETH calls into
+        // arbitrary receiver code now)
+        claimedPrizes[_lotteryId][_proofData.ticketNumber] = true;
         if (ticketCostTokens > 0) {
             // Reverts if the user doesn't have enough refundable balance.
             refunds[_lotteryId][msg.sender] -= ticketCostTokens;
             uint256 share = lotteryArtistShare[_lotteryId];
             if (share == 0) share = _primaryArtistShare();
             uint256 artistShare = (ticketCostTokens * share) / 10000;
-            token.transfer(nftContract.artist(), artistShare);
-            token.transfer(
+            address currency = lotteryCurrency[_lotteryId];
+            _payOut(currency, nftContract.artist(), artistShare);
+            _payOut(
+                currency,
                 sageStorage.multisig(),
                 ticketCostTokens - artistShare
             );
         }
 
-        claimedPrizes[_lotteryId][_proofData.ticketNumber] = true;
         nftContract.safeMint(_proofData.winner, _proofData.uri);
         emit PrizeClaimed(
             _lotteryId,
@@ -659,6 +733,15 @@ contract Lottery is
         token.transfer(sageStorage.multisig(), _amount);
     }
 
+    /**
+     * @notice Emergency function called to withdraw native ETH to multisig.
+     * @param _amount Amount to withdraw
+     */
+    function withdrawNative(uint256 _amount) external onlyAdmin {
+        (bool ok, ) = sageStorage.multisig().call{value: _amount}("");
+        require(ok, "ETH transfer failed");
+    }
+
     function refund(
         address _assetOwner,
         uint256 _lotteryId,
@@ -672,7 +755,7 @@ contract Lottery is
             "Can't refund the amount requested"
         );
         refunds[_lotteryId][_assetOwner] -= _amount;
-        token.transfer(_assetOwner, _amount);
+        _payOut(lotteryCurrency[_lotteryId], _assetOwner, _amount);
         emit Refunded(_lotteryId, _assetOwner, _amount);
     }
 

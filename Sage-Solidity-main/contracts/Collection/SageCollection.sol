@@ -40,9 +40,14 @@ contract SageCollection is Pausable {
         string baseUri; // e.g. https://arweave.net/{manifestId}/ — token i's metadata at {baseUri}{i}.json
         INFT nftContract; // the artist's SageNFT contract
         IWhitelist whitelist; // optional allowlist gate (AddressZero = open)
-        uint256 costTokens; // Mint price in SAGE (wei units)
+        uint256 costTokens; // Mint price in SAGE wei (or ETH wei for ETH collections)
         uint256 id; // Collection id
+        address currency; // address(0) = SAGE token, NATIVE_CURRENCY = native ETH
     }
+
+    // Sentinel meaning "native ETH"
+    address public constant NATIVE_CURRENCY =
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     event CollectionCreated(uint256 indexed id, address indexed nftContract);
     event CollectionMint(
@@ -106,6 +111,10 @@ contract SageCollection is Pausable {
         );
         require(c.maxSupply > 0, "Invalid supply");
         require(bytes(c.baseUri).length > 0, "Invalid baseUri");
+        require(
+            c.currency == address(0) || c.currency == NATIVE_CURRENCY,
+            "Unsupported currency"
+        );
         collections[c.id] = c;
         // freeze the platform split for this collection at its creation-time value
         collectionArtistShare[c.id] = _primaryArtistShare();
@@ -139,7 +148,7 @@ contract SageCollection is Pausable {
         return collections[_id].mintCount;
     }
 
-    function mint(uint256 _id, uint256 _amount) public whenNotPaused {
+    function mint(uint256 _id, uint256 _amount) public payable whenNotPaused {
         require(_amount > 0, "Can't mint 0");
         Collection storage c = collections[_id];
         // closeTime 0 = no deadline: the mint stays open until the supply cap
@@ -172,16 +181,31 @@ contract SageCollection is Pausable {
             uint256 share = collectionArtistShare[_id];
             if (share == 0) share = _primaryArtistShare();
             uint256 artistShare = (totalCostInTokens * share) / 10000;
-            token.transferFrom(
-                msg.sender,
-                c.nftContract.artist(),
-                artistShare
-            );
-            token.transferFrom(
-                msg.sender,
-                sageStorage.multisig(),
-                totalCostInTokens - artistShare
-            );
+            if (c.currency == NATIVE_CURRENCY) {
+                require(msg.value == totalCostInTokens, "Wrong ETH amount");
+                (bool okArtist, ) = c.nftContract.artist().call{
+                    value: artistShare
+                }("");
+                require(okArtist, "Artist ETH transfer failed");
+                (bool okPlatform, ) = sageStorage.multisig().call{
+                    value: totalCostInTokens - artistShare
+                }("");
+                require(okPlatform, "Platform ETH transfer failed");
+            } else {
+                require(msg.value == 0, "Collection is not priced in ETH");
+                token.transferFrom(
+                    msg.sender,
+                    c.nftContract.artist(),
+                    artistShare
+                );
+                token.transferFrom(
+                    msg.sender,
+                    sageStorage.multisig(),
+                    totalCostInTokens - artistShare
+                );
+            }
+        } else {
+            require(msg.value == 0, "Mint is free");
         }
 
         // sequential assignment: token k (k = firstIndex..firstIndex+amount-1)

@@ -248,6 +248,124 @@ describe("Auction Contract", function() {
         expect(await nft.balanceOf(addr2.address)).to.equal(1);
     });
 
+    describe("ETH-priced auctions", () => {
+        const NATIVE_CURRENCY = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+
+        async function createEthAuction(auctionId) {
+            const chainNow = (await ethers.provider.getBlock("latest")).timestamp;
+            await auction.createAuctionWithCurrency(
+                {
+                    ...auctionInfo,
+                    auctionId,
+                    startTime: chainNow,
+                    endTime: chainNow + 86400,
+                    nftUri: "ipfs://eth-auction",
+                },
+                NATIVE_CURRENCY
+            );
+        }
+
+        it("Should escrow ETH bids and refund the outbid bidder in ETH", async function() {
+            await createEthAuction(10);
+            await auction.connect(addr1).bid(10, 100, { value: 100 });
+            expect(await ethers.provider.getBalance(auction.address)).to.equal(100);
+
+            const addr1Before = await addr1.getBalance();
+            await auction.connect(addr2).bid(10, 200, { value: 200 });
+            // previous bidder got their 100 wei back instantly
+            expect((await addr1.getBalance()).sub(addr1Before)).to.equal(100);
+            expect(await ethers.provider.getBalance(auction.address)).to.equal(200);
+            const resp = await auction.getAuction(10);
+            expect(resp.highestBidder).to.equal(addr2.address);
+        });
+
+        it("Should reject a bid with mismatched msg.value", async function() {
+            await createEthAuction(11);
+            await expect(
+                auction.connect(addr1).bid(11, 100, { value: 50 })
+            ).to.be.revertedWith("Wrong ETH amount");
+        });
+
+        it("Should reject ETH sent to a SAGE auction", async function() {
+            const chainNow = (await ethers.provider.getBlock("latest")).timestamp;
+            await auction.createAuction({
+                ...auctionInfo,
+                auctionId: 12,
+                startTime: chainNow,
+                endTime: chainNow + 86400,
+            });
+            await expect(
+                auction.connect(addr1).bid(12, 100, { value: 100 })
+            ).to.be.revertedWith("Auction is not priced in ETH");
+        });
+
+        it("Should reject an unsupported currency at creation", async function() {
+            await expect(
+                auction.createAuctionWithCurrency(
+                    { ...auctionInfo, auctionId: 13 },
+                    mockERC20.address
+                )
+            ).to.be.revertedWith("Unsupported currency");
+        });
+
+        it("Should settle an ETH auction with the frozen split", async function() {
+            await createEthAuction(14);
+            await auction.connect(addr2).bid(14, 1000, { value: 1000 });
+            await ethers.provider.send("evm_increaseTime", [86401]);
+            const artistBefore = await artist.getBalance();
+            const multisigBefore = await multisig.getBalance();
+            await auction.settleAuction(14);
+            expect(await nft.balanceOf(addr2.address)).to.equal(1);
+            expect((await artist.getBalance()).sub(artistBefore)).to.equal(800);
+            expect((await multisig.getBalance()).sub(multisigBefore)).to.equal(200);
+            expect(await ethers.provider.getBalance(auction.address)).to.equal(0);
+        });
+
+        it("Should refund ETH on cancel", async function() {
+            await createEthAuction(15);
+            await auction.connect(addr1).bid(15, 100, { value: 100 });
+            const before = await addr1.getBalance();
+            await auction.cancelAuction(15);
+            expect((await addr1.getBalance()).sub(before)).to.equal(100);
+            expect(await ethers.provider.getBalance(auction.address)).to.equal(0);
+        });
+
+        it("Should credit pendingReturns when the outbid receiver reverts, and let it withdraw later", async function() {
+            await createEthAuction(16);
+            const Bidder = await ethers.getContractFactory("MockAuctionBidder");
+            const hostile = await Bidder.deploy(auction.address);
+            // hostile contract bids and then refuses all incoming ETH
+            await hostile.makeEthBid(16, 100, true, { value: 100 });
+
+            // a higher bid must SUCCEED despite the failed refund
+            await auction.connect(addr2).bid(16, 200, { value: 200 });
+            expect(await auction.pendingReturns(hostile.address)).to.equal(100);
+            const resp = await auction.getAuction(16);
+            expect(resp.highestBidder).to.equal(addr2.address);
+
+            // withdraw fails while still rejecting, succeeds once it accepts
+            await expect(hostile.withdrawPending()).to.be.reverted;
+            await hostile.acceptPayments();
+            await hostile.withdrawPending();
+            expect(await auction.pendingReturns(hostile.address)).to.equal(0);
+            expect(await ethers.provider.getBalance(hostile.address)).to.equal(100);
+            // auction still holds exactly the live highest bid
+            expect(await ethers.provider.getBalance(auction.address)).to.equal(200);
+        });
+
+        it("Should credit pendingReturns on cancel with a hostile bidder", async function() {
+            await createEthAuction(17);
+            const Bidder = await ethers.getContractFactory("MockAuctionBidder");
+            const hostile = await Bidder.deploy(auction.address);
+            await hostile.makeEthBid(17, 100, true, { value: 100 });
+
+            await auction.cancelAuction(17); // must not revert
+            expect(await auction.pendingReturns(hostile.address)).to.equal(100);
+            const resp = await auction.getAuction(17);
+            expect(resp.settled).to.equal(true);
+        });
+    });
+
     it("Should allow late bids when no endTime was set and have extensions", async function() {
         await mockERC20.connect(addr1).approve(auction.address, 20);
         await ethers.provider.send("evm_increaseTime", [30 * 86400]);

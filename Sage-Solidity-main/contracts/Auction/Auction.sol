@@ -39,6 +39,20 @@ contract Auction is
     // APPEND-ONLY: declared after all pre-existing state vars (UUPS layout).
     mapping(uint256 => uint256) public auctionArtistShare;
 
+    // Payment currency per auction. address(0) = the SAGE token (mapping
+    // default, so every auction created before this feature keeps its
+    // original currency); NATIVE_CURRENCY = native ETH. APPEND-ONLY.
+    mapping(uint256 => address) public auctionCurrency;
+
+    // ETH owed to addresses whose refund/payout .call failed (e.g. a
+    // contract bidder with a reverting receive()). Pull-payment escape
+    // hatch so one bad receiver can never block bids, cancels or settles.
+    mapping(address => uint256) public pendingReturns;
+
+    // Sentinel meaning "native ETH" (constants use no storage slots).
+    address public constant NATIVE_CURRENCY =
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
     struct AuctionInfo {
         address highestBidder;
         INFT nftContract;
@@ -134,6 +148,49 @@ contract Auction is
         );
     }
 
+    /** Creates an auction priced in an explicit currency: address(0) for the
+     *  SAGE token or NATIVE_CURRENCY for native ETH. The original
+     *  createAuction stays SAGE-only for back-compat. */
+    function createAuctionWithCurrency(
+        AuctionInfo calldata _auctionInfo,
+        address _currency
+    ) external onlyAdmin {
+        require(
+            _currency == address(0) || _currency == NATIVE_CURRENCY,
+            "Unsupported currency"
+        );
+        createAuction(_auctionInfo);
+        auctionCurrency[_auctionInfo.auctionId] = _currency;
+    }
+
+    /** Pays out `_amount` of an auction's currency. ETH payouts that fail
+     *  (reverting receiver) are credited to pendingReturns instead of
+     *  reverting, so a hostile receiver can't lock the auction. */
+    function _payOut(
+        address _currency,
+        address _to,
+        uint256 _amount
+    ) internal {
+        if (_amount == 0) return;
+        if (_currency == NATIVE_CURRENCY) {
+            (bool ok, ) = _to.call{value: _amount, gas: 30000}("");
+            if (!ok) {
+                pendingReturns[_to] += _amount;
+            }
+        } else {
+            token.transfer(_to, _amount);
+        }
+    }
+
+    /** Claims ETH credited after a failed refund/payout .call. */
+    function withdrawPendingReturns() external nonReentrant {
+        uint256 amount = pendingReturns[msg.sender];
+        require(amount > 0, "Nothing to withdraw");
+        pendingReturns[msg.sender] = 0;
+        (bool ok, ) = msg.sender.call{value: amount}("");
+        require(ok, "ETH transfer failed");
+    }
+
     /** Corrective/backfill setter for a game's frozen artist share.
      *  0 resets the game to follow the live SageConfig value. */
     function setAuctionArtistShare(uint256 _auctionId, uint256 _shareBps)
@@ -155,7 +212,11 @@ contract Auction is
         }
     }
 
-    function settleAuction(uint256 _auctionId) public whenNotPaused {
+    function settleAuction(uint256 _auctionId)
+        public
+        nonReentrant
+        whenNotPaused
+    {
         AuctionInfo storage auction = auctions[_auctionId];
         require(!auction.settled, "Auction already settled");
         uint256 highestBid = auction.highestBid;
@@ -172,8 +233,9 @@ contract Auction is
             uint256 share = auctionArtistShare[_auctionId];
             if (share == 0) share = _primaryArtistShare();
             uint256 artistShare = (highestBid * share) / 10000;
-            token.transfer(auction.nftContract.artist(), artistShare);
-            token.transfer(sageStorage.multisig(), highestBid - artistShare);
+            address currency = auctionCurrency[_auctionId];
+            _payOut(currency, auction.nftContract.artist(), artistShare);
+            _payOut(currency, sageStorage.multisig(), highestBid - artistShare);
         }
 
         emit AuctionSettled(_auctionId, highestBidder, highestBid);
@@ -199,23 +261,27 @@ contract Auction is
         auction.endTime = _endTime;
     }
 
-    function cancelAuction(uint256 _auctionId) public onlyAdmin {
+    function cancelAuction(uint256 _auctionId) public nonReentrant onlyAdmin {
         AuctionInfo storage auction = auctions[_auctionId];
         require(!auction.settled, "Auction is already finished");
         address previousBidder = auction.highestBidder;
         uint256 previousBid = auction.highestBid;
+        // checks-effects-interactions: close the auction out completely
+        // BEFORE the refund leaves the contract (mandatory now that the
+        // refund can be a native-ETH call into arbitrary receiver code)
         auction.highestBidder = address(0);
         auction.highestBid = 0;
+        auction.settled = true;
 
         if (previousBidder != address(0)) {
-            token.transfer(previousBidder, previousBid);
+            _payOut(auctionCurrency[_auctionId], previousBidder, previousBid);
         }
-        auctions[_auctionId].settled = true;
         emit AuctionCancelled(_auctionId, previousBidder);
     }
 
     function bid(uint256 _auctionId, uint256 _amount)
         public
+        payable
         nonReentrant
         whenNotPaused
     {
@@ -237,7 +303,13 @@ contract Auction is
                 (auction.highestBid * (10000 + bidIncrementPercentage)) / 10000,
             "Bid is lower than highest bid increment"
         );
-        token.transferFrom(msg.sender, address(this), _amount);
+        address currency = auctionCurrency[_auctionId];
+        if (currency == NATIVE_CURRENCY) {
+            require(msg.value == _amount, "Wrong ETH amount");
+        } else {
+            require(msg.value == 0, "Auction is not priced in ETH");
+            token.transferFrom(msg.sender, address(this), _amount);
+        }
 
         // revert previous bid
         address previousBidder = auction.highestBidder;
@@ -246,7 +318,7 @@ contract Auction is
         auction.highestBid = _amount;
 
         if (previousBidder != address(0)) {
-            token.transfer(previousBidder, previousBid);
+            _payOut(currency, previousBidder, previousBid);
         }
 
         if (endTime == 0) {

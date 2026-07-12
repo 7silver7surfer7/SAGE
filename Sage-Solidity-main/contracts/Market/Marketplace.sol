@@ -27,6 +27,12 @@ contract Marketplace {
 
     mapping(bytes32 => bool) private cancelledOrders;
 
+    // Sentinel meaning "native ETH". address(0) = the SAGE token. The
+    // currency is part of the SIGNED offer message, so a listing priced in
+    // one currency can never be executed as a payment in the other.
+    address public constant NATIVE_CURRENCY =
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
     event ListedNFTSold(
         address indexed seller,
         address indexed buyer,
@@ -55,6 +61,7 @@ contract Marketplace {
         uint256 tokenId,
         uint256 expiresAt,
         uint256 chainId,
+        address currency,
         bool sellOrder,
         bytes calldata signature
     ) internal pure returns (bytes32) {
@@ -67,6 +74,7 @@ contract Marketplace {
                     tokenId,
                     expiresAt,
                     chainId,
+                    currency,
                     sellOrder
                 )
             )
@@ -85,6 +93,7 @@ contract Marketplace {
         uint256 tokenId,
         uint256 expiresAt,
         uint256 chainId,
+        address currency,
         bool isSellOffer,
         bytes calldata signature
     ) public {
@@ -97,6 +106,7 @@ contract Marketplace {
             tokenId,
             expiresAt,
             chainId,
+            currency,
             isSellOffer,
             signature
         );
@@ -131,18 +141,37 @@ contract Marketplace {
         return dest == address(0) ? sageStorage.multisig() : dest;
     }
 
+    /** Moves `amount` of the sale currency from the buyer to `to`. For SAGE
+     *  this pulls via transferFrom; for native ETH it forwards a slice of the
+     *  msg.value already held by this contract. */
+    function _pay(
+        address currency,
+        address payer,
+        address to,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        if (currency == NATIVE_CURRENCY) {
+            (bool ok, ) = to.call{value: amount}("");
+            require(ok, "ETH transfer failed");
+        } else {
+            token.transferFrom(payer, to, amount);
+        }
+    }
+
     function _settleSale(
         address payer,
         address seller,
         address contractAddress,
         uint256 tokenId,
-        uint256 price
+        uint256 price,
+        address currency
     ) internal {
         address artist = INFT(contractAddress).artist();
         if (seller == artist) {
             uint256 artistCut = (price * _primaryArtistShare()) / 10000;
-            token.transferFrom(payer, artist, artistCut);
-            token.transferFrom(payer, sageStorage.multisig(), price - artistCut);
+            _pay(currency, payer, artist, artistCut);
+            _pay(currency, payer, sageStorage.multisig(), price - artistCut);
             return;
         }
         (address royaltyDest, uint256 royaltyValue) = IERC2981(contractAddress)
@@ -153,20 +182,21 @@ contract Marketplace {
                     uint256 share
                 ) {
                     uint256 toArtist = (royaltyValue * share) / 10000;
-                    token.transferFrom(payer, artist, toArtist);
-                    token.transferFrom(
+                    _pay(currency, payer, artist, toArtist);
+                    _pay(
+                        currency,
                         payer,
                         _platformRoyaltyDest(),
                         royaltyValue - toArtist
                     );
                 } catch {
-                    token.transferFrom(payer, royaltyDest, royaltyValue);
+                    _pay(currency, payer, royaltyDest, royaltyValue);
                 }
             } else {
-                token.transferFrom(payer, royaltyDest, royaltyValue);
+                _pay(currency, payer, royaltyDest, royaltyValue);
             }
         }
-        token.transferFrom(payer, seller, price - royaltyValue);
+        _pay(currency, payer, seller, price - royaltyValue);
     }
 
     function buyFromSellOffer(
@@ -176,9 +206,16 @@ contract Marketplace {
         uint256 tokenId,
         uint256 expiresAt,
         uint256 chainId,
+        address currency,
         bytes calldata signature
-    ) public {
+    ) public payable {
         require(expiresAt > block.timestamp, "Offer expired");
+        if (currency == NATIVE_CURRENCY) {
+            require(msg.value == price, "Wrong ETH amount");
+        } else {
+            require(currency == address(0), "Unsupported currency");
+            require(msg.value == 0, "Listing is not priced in ETH");
+        }
         bytes32 message = verifySignature(
             signer,
             contractAddress,
@@ -186,6 +223,7 @@ contract Marketplace {
             tokenId,
             expiresAt,
             chainId,
+            currency,
             true,
             signature
         );
@@ -196,7 +234,14 @@ contract Marketplace {
         require(!cancelledOrders[message], "Offer was cancelled");
         cancelledOrders[message] = true;
         nftContract.safeTransferFrom(currentOwner, msg.sender, tokenId, "");
-        _settleSale(msg.sender, signer, contractAddress, tokenId, price);
+        _settleSale(
+            msg.sender,
+            signer,
+            contractAddress,
+            tokenId,
+            price,
+            currency
+        );
         emit ListedNFTSold(
             currentOwner,
             msg.sender,
@@ -213,9 +258,14 @@ contract Marketplace {
         uint256 tokenId,
         uint256 expiresAt,
         uint256 chainId,
+        address currency,
         bytes calldata signature
     ) public {
         require(expiresAt > block.timestamp, "Offer expired");
+        // A buy offer is executed by the SELLER, so the buyer's ETH cannot
+        // ride along as msg.value — native-ETH buy offers are impossible
+        // without a wrapped token. SAGE only.
+        require(currency == address(0), "ETH buy offers not supported");
         bytes32 message = verifySignature(
             buyer,
             contractAddress,
@@ -223,6 +273,7 @@ contract Marketplace {
             tokenId,
             expiresAt,
             chainId,
+            currency,
             false,
             signature
         );
@@ -233,7 +284,14 @@ contract Marketplace {
         require(!cancelledOrders[message], "Offer was cancelled");
         cancelledOrders[message] = true;
         nftContract.safeTransferFrom(currentOwner, buyer, tokenId, "");
-        _settleSale(buyer, currentOwner, contractAddress, tokenId, price);
+        _settleSale(
+            buyer,
+            currentOwner,
+            contractAddress,
+            tokenId,
+            price,
+            currency
+        );
         emit ListedNFTSold(
             currentOwner,
             buyer,

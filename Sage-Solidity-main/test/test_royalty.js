@@ -7,11 +7,14 @@ const uri = "ipfs://aaaa/";
 const futureTimestamp = Math.round(new Date().getTime() / 1000) + 10000000;
 const ONE = ethers.utils.parseEther("1");
 
+// address(0) = SAGE token (offers here are all SAGE-denominated)
+const SAGE_CURRENCY = ethers.constants.AddressZero;
+
 async function signSellOffer(signer, contractAddress, price, tokenId) {
     const message = keccak256(
         ethers.utils.defaultAbiCoder.encode(
-            ["address", "address", "uint256", "uint256", "uint256", "uint256", "bool"],
-            [signer.address, contractAddress, price, tokenId, futureTimestamp, 1, true]
+            ["address", "address", "uint256", "uint256", "uint256", "uint256", "address", "bool"],
+            [signer.address, contractAddress, price, tokenId, futureTimestamp, 1, SAGE_CURRENCY, true]
         )
     );
     return signer.signMessage(message);
@@ -28,6 +31,7 @@ async function buyFromSellOffer(market, buyer, seller, contractAddress, price, t
             tokenId,
             futureTimestamp,
             1,
+            SAGE_CURRENCY,
             signedOffer
         );
 }

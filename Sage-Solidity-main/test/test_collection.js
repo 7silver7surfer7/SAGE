@@ -47,6 +47,7 @@ describe("SageCollection Contract", function () {
             whitelist: ethers.constants.AddressZero,
             costTokens: 10,
             id: 1,
+            currency: ethers.constants.AddressZero,
         };
         await collection.createCollection(collectionInfo);
         await mockERC20.connect(addr2).approve(collection.address, 1000);
@@ -192,6 +193,61 @@ describe("SageCollection Contract", function () {
         } finally {
             await ethers.provider.send("evm_revert", [snapshot]);
         }
+    });
+
+    describe("ETH-priced collections", () => {
+        const NATIVE_CURRENCY = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+        const PRICE = ethers.utils.parseEther("0.05");
+
+        beforeEach(async () => {
+            await collection.createCollection({
+                ...collectionInfo,
+                id: 8,
+                costTokens: PRICE,
+                currency: NATIVE_CURRENCY,
+            });
+        });
+
+        it("Should mint with ETH, split 80/20, keep sequential URIs", async function () {
+            const artistBefore = await artist.getBalance();
+            const multisigBefore = await multisig.getBalance();
+            await collection
+                .connect(addr2)
+                .mint(8, 2, { value: PRICE.mul(2) });
+            expect(await nft.tokenURI(1)).to.equal(`${BASE_URI}1.json`);
+            expect(await nft.tokenURI(2)).to.equal(`${BASE_URI}2.json`);
+            expect((await artist.getBalance()).sub(artistBefore)).to.equal(
+                PRICE.mul(2).mul(8000).div(10000)
+            );
+            expect((await multisig.getBalance()).sub(multisigBefore)).to.equal(
+                PRICE.mul(2).mul(2000).div(10000)
+            );
+            expect(
+                await ethers.provider.getBalance(collection.address)
+            ).to.equal(0);
+        });
+
+        it("Should reject wrong ETH amount", async function () {
+            await expect(
+                collection.connect(addr2).mint(8, 2, { value: PRICE })
+            ).to.be.revertedWith("Wrong ETH amount");
+        });
+
+        it("Should reject ETH sent to a SAGE collection", async function () {
+            await expect(
+                collection.connect(addr2).mint(1, 1, { value: PRICE })
+            ).to.be.revertedWith("Collection is not priced in ETH");
+        });
+
+        it("Should reject an unsupported currency at creation", async function () {
+            await expect(
+                collection.createCollection({
+                    ...collectionInfo,
+                    id: 9,
+                    currency: mockERC20.address,
+                })
+            ).to.be.revertedWith("Unsupported currency");
+        });
     });
 
     it("Should gate createCollection to admins", async function () {

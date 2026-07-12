@@ -34,9 +34,14 @@ contract SAGEOpenEdition is Pausable {
         string nftUri; // URI of the NFT to be minted
         INFT nftContract; // reference to the NFT Contract
         IWhitelist whitelist; // whitelist contract address
-        uint256 costTokens; // Cost per mint in ASH
+        uint256 costTokens; // Cost per mint (SAGE wei, or ETH wei for ETH editions)
         uint256 id; // Open edition id
+        address currency; // address(0) = SAGE token, NATIVE_CURRENCY = native ETH
     }
+
+    // Sentinel meaning "native ETH"
+    address public constant NATIVE_CURRENCY =
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     event OpenEditionCreated(uint256 indexed id, address indexed nftContract);
     event BatchMint(address indexed user, uint256 indexed id, uint256 amount);
@@ -116,7 +121,7 @@ contract SAGEOpenEdition is Pausable {
         uint256 _amount,
         uint256 _points,
         bytes calldata _sig
-    ) public {
+    ) public payable {
         address _user = msg.sender;
         bytes32 message = prefixed(keccak256(abi.encode(_user, _points)));
         require(
@@ -135,6 +140,10 @@ contract SAGEOpenEdition is Pausable {
         require(
             oe.startTime > 0 && oe.closeTime > oe.startTime,
             "Invalid times"
+        );
+        require(
+            oe.currency == address(0) || oe.currency == NATIVE_CURRENCY,
+            "Unsupported currency"
         );
         openEditions[oe.id] = oe;
         // freeze the platform split for this edition at its creation-time value
@@ -168,7 +177,11 @@ contract SAGEOpenEdition is Pausable {
         return openEditions[_id].mintCount;
     }
 
-    function batchMint(uint256 _id, uint256 _amount) public whenNotPaused {
+    function batchMint(uint256 _id, uint256 _amount)
+        public
+        payable
+        whenNotPaused
+    {
         require(_amount > 0, "Can't mint 0");
         OpenEdition storage oe = openEditions[_id];
         require(
@@ -202,16 +215,31 @@ contract SAGEOpenEdition is Pausable {
             uint256 share = editionArtistShare[_id];
             if (share == 0) share = _primaryArtistShare();
             uint256 artistShare = (totalCostInTokens * share) / 10000;
-            token.transferFrom(
-                msg.sender,
-                oe.nftContract.artist(),
-                artistShare
-            );
-            token.transferFrom(
-                msg.sender,
-                sageStorage.multisig(),
-                totalCostInTokens - artistShare
-            );
+            if (oe.currency == NATIVE_CURRENCY) {
+                require(msg.value == totalCostInTokens, "Wrong ETH amount");
+                (bool okArtist, ) = oe.nftContract.artist().call{
+                    value: artistShare
+                }("");
+                require(okArtist, "Artist ETH transfer failed");
+                (bool okPlatform, ) = sageStorage.multisig().call{
+                    value: totalCostInTokens - artistShare
+                }("");
+                require(okPlatform, "Platform ETH transfer failed");
+            } else {
+                require(msg.value == 0, "Edition is not priced in ETH");
+                token.transferFrom(
+                    msg.sender,
+                    oe.nftContract.artist(),
+                    artistShare
+                );
+                token.transferFrom(
+                    msg.sender,
+                    sageStorage.multisig(),
+                    totalCostInTokens - artistShare
+                );
+            }
+        } else {
+            require(msg.value == 0, "Mint is free");
         }
         for (uint256 i = 0; i < _amount; i++) {
             oe.nftContract.safeMint(msg.sender, nftUri);

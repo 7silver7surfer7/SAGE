@@ -525,6 +525,125 @@ describe("Lottery Contract", function() {
         });
     });
 
+    describe("ETH-priced lotteries", () => {
+        const NATIVE_CURRENCY = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+        const TICKET = ethers.utils.parseEther("0.01");
+
+        beforeEach(async () => {
+            await lottery.createLotteryWithCurrency(
+                {
+                    ...lotteryInfo,
+                    lotteryID: 60,
+                    ticketCostPoints: 0,
+                    ticketCostTokens: TICKET,
+                },
+                NATIVE_CURRENCY
+            );
+        });
+
+        it("Should sell tickets for ETH and escrow the funds", async function() {
+            await lottery
+                .connect(addr2)
+                .buyTickets(60, 3, { value: TICKET.mul(3) });
+            expect(await lottery.getLotteryTicketCount(60)).to.equal(3);
+            expect(
+                await ethers.provider.getBalance(lottery.address)
+            ).to.equal(TICKET.mul(3));
+            expect(await lottery.refunds(60, addr2.address)).to.equal(
+                TICKET.mul(3)
+            );
+        });
+
+        it("Should reject mismatched msg.value", async function() {
+            await expect(
+                lottery.connect(addr2).buyTickets(60, 2, { value: TICKET })
+            ).to.be.revertedWith("Wrong ETH amount");
+        });
+
+        it("Should reject ETH sent to a SAGE lottery", async function() {
+            await expect(
+                lottery.connect(addr2).buyTickets(2, 1, { value: TICKET })
+            ).to.be.revertedWith("Lottery is not priced in ETH");
+        });
+
+        it("Should reject an unsupported currency at creation", async function() {
+            await expect(
+                lottery.createLotteryWithCurrency(
+                    { ...lotteryInfo, lotteryID: 61 },
+                    mockERC20.address
+                )
+            ).to.be.revertedWith("Unsupported currency");
+        });
+
+        it("Should refund non-winning tickets in ETH", async function() {
+            await lottery
+                .connect(addr2)
+                .buyTickets(60, 2, { value: TICKET.mul(2) });
+            // flip the lottery out of Created so refunds open (status = 3)
+            await lottery.updateLottery(
+                60,
+                0,
+                TICKET,
+                block.timestamp,
+                block.timestamp + 86400 * 3,
+                nft.address,
+                0,
+                3,
+                2
+            );
+            const before = await addr2.getBalance();
+            // executed by another signer so addr2 pays no gas
+            await lottery
+                .connect(addr3)
+                .refund(addr2.address, 60, TICKET.mul(2));
+            expect((await addr2.getBalance()).sub(before)).to.equal(
+                TICKET.mul(2)
+            );
+            expect(
+                await ethers.provider.getBalance(lottery.address)
+            ).to.equal(0);
+        });
+
+        it("Should pay the artist/platform split in ETH on prize claim", async function() {
+            await lottery
+                .connect(addr2)
+                .buyTickets(60, 1, { value: TICKET });
+
+            const abiCoder = ethers.utils.defaultAbiCoder;
+            const leaf = abiCoder.encode(
+                ["uint256", "address", "uint256", "string"],
+                [60, addr2.address, 1, "ipfs://eth-prize"]
+            );
+            const leaves = [leaf].map(l => keccak256(l));
+            const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+            await lottery.setPrizeMerkleRoot(60, tree.getHexRoot());
+            const proof = tree
+                .getProof(keccak256(leaf))
+                .map(x => "0x" + x.data.toString("hex"));
+
+            const artistBefore = await artist.getBalance();
+            const multisigBefore = await multisig.getBalance();
+            // artist is addr1 in this fixture, so claim from addr2 only
+            await lottery.connect(addr2).claimPrize({
+                lotteryId: 60,
+                winner: addr2.address,
+                ticketNumber: 1,
+                uri: "ipfs://eth-prize",
+                proof,
+            });
+            expect(await nft.balanceOf(addr2.address)).to.equal(1);
+            expect((await artist.getBalance()).sub(artistBefore)).to.equal(
+                TICKET.mul(8000).div(10000)
+            );
+            expect(
+                (await multisig.getBalance()).sub(multisigBefore)
+            ).to.equal(TICKET.mul(2000).div(10000));
+            expect(
+                await ethers.provider.getBalance(lottery.address)
+            ).to.equal(0);
+        });
+    });
+
     describe("Whitelist", () => {
         beforeEach(async () => {
             await lottery.setWhitelist(1, whitelist.address);

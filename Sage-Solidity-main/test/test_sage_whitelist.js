@@ -144,7 +144,8 @@ describe("SageWhitelist + OpenEdition integration", function() {
             nftContract: nft.address,
             whitelist: sageWhitelist.address,
             costTokens: 10,
-            id: 1
+            id: 1,
+            currency: ethers.constants.AddressZero
         });
         await mockERC20.connect(addr1).approve(openEdition.address, 1000);
         await mockERC20.connect(addr2).approve(openEdition.address, 1000);

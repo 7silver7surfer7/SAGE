@@ -88,6 +88,7 @@ describe("OpenEdition Contract", function() {
             whitelist: ethers.constants.AddressZero,
             costTokens: 0,
             id: 1,
+            currency: ethers.constants.AddressZero,
         };
         await openEdition.createOpenEdition(openEditionInfo);
         openEditionInfo.id = 2;
@@ -151,6 +152,62 @@ describe("OpenEdition Contract", function() {
         const a2 = await mockERC20.balanceOf(artist.address);
         await openEdition.connect(addr2).batchMint(2, 10);
         expect((await mockERC20.balanceOf(artist.address)).sub(a2)).to.equal(80);
+    });
+
+    describe("ETH-priced editions", () => {
+        const NATIVE_CURRENCY = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+        const PRICE = ethers.utils.parseEther("0.1");
+
+        beforeEach(async () => {
+            await openEdition.createOpenEdition({
+                ...openEditionInfo,
+                id: 50,
+                costPoints: 0,
+                costTokens: PRICE,
+                currency: NATIVE_CURRENCY,
+            });
+        });
+
+        it("Should mint with ETH and split 80/20", async function() {
+            const artistBefore = await artist.getBalance();
+            const multisigBefore = await multisig.getBalance();
+            await openEdition
+                .connect(addr2)
+                .batchMint(50, 2, { value: PRICE.mul(2) });
+            expect(await openEdition.getMintCount(50)).to.equal(2);
+            expect((await artist.getBalance()).sub(artistBefore)).to.equal(
+                PRICE.mul(2).mul(8000).div(10000)
+            );
+            expect((await multisig.getBalance()).sub(multisigBefore)).to.equal(
+                PRICE.mul(2).mul(2000).div(10000)
+            );
+            // no ETH stuck in the contract
+            expect(
+                await ethers.provider.getBalance(openEdition.address)
+            ).to.equal(0);
+        });
+
+        it("Should reject wrong ETH amount", async function() {
+            await expect(
+                openEdition.connect(addr2).batchMint(50, 2, { value: PRICE })
+            ).to.be.revertedWith("Wrong ETH amount");
+        });
+
+        it("Should reject ETH sent to a SAGE edition", async function() {
+            await expect(
+                openEdition.connect(addr2).batchMint(2, 1, { value: PRICE })
+            ).to.be.revertedWith("Edition is not priced in ETH");
+        });
+
+        it("Should reject an unsupported currency at creation", async function() {
+            await expect(
+                openEdition.createOpenEdition({
+                    ...openEditionInfo,
+                    id: 51,
+                    currency: mockERC20.address,
+                })
+            ).to.be.revertedWith("Unsupported currency");
+        });
     });
 
     it("Should throw if minting more than user limit", async function() {

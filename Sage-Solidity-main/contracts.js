@@ -25,12 +25,12 @@ CONTRACTS = {
     robinhoodTestnet: {
         adminAddress: "0xBC98E7213CB80ed5DEB649acEdC2dF9FCA1410dc", // hardware wallet: gets role.admin
         whitelistAddress: "0xDA0d07dF56c01fb8278731626b81215d32A3de6a",
-        marketplaceAddress: "0xc6BF09D06eB7151a3B0d881A8501198197639691",
+        marketplaceAddress: "0x5812c7B4ce6386fD6A49Cc62c0457f47c3927FFd",
         storageAddress: "0x43E26D8B5c559DECb09d65F325e1405589775BA2",
         factoryAddress: "0x21e8Bb18193Db10ddecACE141EDE66882c08D991",
         lotteryAddress: "0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E",
-        openEditionAddress: "0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9",
-        collectionAddress: "0x27A18bAC34e61F42519D9E3B264511673D917595",
+        openEditionAddress: "0x33d2739244f69Ed71DCC877a30691D2A5dc9b11e",
+        collectionAddress: "0x5aC7DB61278fFd8F19f6d93957Cd47263C62c3Bf",
         randomnessAddress: "0xB438593B6ceea256A65dE8E722f8F1718f963773",
         rewardsAddress: "0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC",
         auctionAddress: "0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD",

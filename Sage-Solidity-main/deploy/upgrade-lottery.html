@@ -30,14 +30,15 @@
 </head>
 <body>
   <h1>Upgrade Lottery Contract 🎟️</h1>
-  <p class="sub">Points the Lottery proxy at the new implementation (platform cut now
-  FROZEN per drawing at creation). Must be signed by the CURRENT multisig wallet.
-  All live lottery state is preserved — this only swaps the code.</p>
+  <p class="sub">Points the Lottery proxy at the new implementation (adds per-lottery
+  ETH pricing: tickets, refunds and prize payouts in native ETH). Must be signed by
+  the CURRENT multisig wallet. All live lottery state is preserved — this only swaps
+  the code.</p>
 
   <div class="card">
     <div class="row"><span>Network</span><b>Robinhood Chain testnet (46630)</b></div>
     <div class="row"><span>Lottery proxy</span><code>0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E</code></div>
-    <div class="row"><span>New implementation</span><code>0xB5A1D86aED9FB8E7CbD28a76606A4c98e4961DEA</code></div>
+    <div class="row"><span>New implementation</span><code>0x688f1Ebfe459941b89F85feBAf06EB023E622cEE</code></div>
     <div class="row"><span>Required signer (current multisig)</span><code id="multisig">—</code></div>
     <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
   </div>
@@ -49,7 +50,7 @@
 (async function () {
   const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
   const LOTTERY_PROXY = '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E';
-  const NEW_IMPL = '0xb5a1d86aed9fb8e7cbd28a76606a4c98e4961dea';
+  const NEW_IMPL = '0x688f1ebfe459941b89f85febaf06eb023e622cee';
   const CHAIN_ID = '0xb626'; // 46630
   const SEL_MULTISIG = '0x4783c35b';   // multisig()
   const SEL_UPGRADE_TO = '0x3659cfe6'; // upgradeTo(address)
@@ -121,7 +122,7 @@
         if (rcpt) {
           if (rcpt.status === '0x1') {
             const impl = await readImpl();
-            say('Confirmed ✓  implementation is now ' + impl + '\nLottery payouts now honor the dashboard platform-cut setting.', 'ok');
+            say('Confirmed ✓  implementation is now ' + impl + '\nThe Lottery can now run drawings priced in native ETH.', 'ok');
           } else {
             say('Transaction reverted. Is the connected wallet the current multisig?', 'err');
             btn.disabled = false;
