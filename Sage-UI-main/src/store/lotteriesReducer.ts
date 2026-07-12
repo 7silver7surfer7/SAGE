@@ -12,6 +12,7 @@ import { baseApi } from './baseReducer';
 import { promiseToast } from '@/utilities/toast';
 import { registerLotterySale, registerRefund } from '@/utilities/sales';
 import { Refund } from '@prisma/client';
+import { NATIVE_CURRENCY_SENTINEL } from '@/constants/config';
 
 export interface BuyTicketRequest {
   lotteryId: number;
@@ -72,27 +73,35 @@ const lotteriesApi = baseApi.injectEndpoints({
         const purchaseCostPoints = Boolean(Number(ticketCostPoints) > 0)
           ? Number(numTickets) * Number(ticketCostPoints)
           : null;
+        let isEthLottery = false;
         try {
-          console.log(`buyTickets() :: ${purchaseCostTokens} SAGE + ${purchaseCostPoints} PIXEL`);
+          console.log(`buyTickets() :: ${purchaseCostTokens} tokens + ${purchaseCostPoints} PIXEL`);
           const lotteryContract = await getLotteryContract(signer);
-          const tokenAddress = await lotteryContract.token();
-          await approveERC20Transfer(
-            tokenAddress,
-            lotteryContract.address,
-            purchaseCostTokens,
-            signer
-          );
+          // ETH lotteries pay via msg.value — no ERC-20 approval step
+          const currency = await lotteryContract.lotteryCurrency(lotteryId);
+          isEthLottery =
+            currency?.toLowerCase() === NATIVE_CURRENCY_SENTINEL.toLowerCase();
+          if (!isEthLottery && purchaseCostTokens.gt(0)) {
+            const tokenAddress = await lotteryContract.token();
+            await approveERC20Transfer(
+              tokenAddress,
+              lotteryContract.address,
+              purchaseCostTokens,
+              signer
+            );
+          }
         } catch (e) {
           console.error(e);
           toast.error(`Error approving transfer`);
           return { data: false };
         }
+        const ethValue = isEthLottery ? purchaseCostTokens : undefined;
         try {
           if (purchaseCostPoints) {
             dispatch(pointsApi.endpoints.withholdEscrowPoints.initiate(purchaseCostPoints));
-            var tx = await buyTicketsUsingPoints(signer, lotteryId, numTickets, earnedPoints);
+            var tx = await buyTicketsUsingPoints(signer, lotteryId, numTickets, earnedPoints, ethValue);
           } else {
-            var tx = await buyTicketsWithoutPoints(signer, lotteryId, numTickets);
+            var tx = await buyTicketsWithoutPoints(signer, lotteryId, numTickets, ethValue);
           }
           promiseToast(tx, `You obtained ${numTickets} ${numTickets > 1 ? 'entries' : 'entry'}!`);
           await tx.wait();
@@ -136,17 +145,23 @@ const lotteriesApi = baseApi.injectEndpoints({
 async function buyTicketsWithoutPoints(
   signer: Signer,
   lotteryId: number,
-  numberOfTickets: number
+  numberOfTickets: number,
+  ethValue?: BigNumber
 ): Promise<ContractTransaction> {
   const contract = await getLotteryContract(signer);
-  return await contract.buyTickets(lotteryId, numberOfTickets);
+  return await contract.buyTickets(
+    lotteryId,
+    numberOfTickets,
+    ethValue ? { value: ethValue } : {}
+  );
 }
 
 async function buyTicketsUsingPoints(
   signer: Signer,
   lotteryId: number,
   numberOfTickets: number,
-  earnedPoints: GetEarnedPointsResponse
+  earnedPoints: GetEarnedPointsResponse,
+  ethValue?: BigNumber
 ): Promise<ContractTransaction> {
   try {
     const contract = await getLotteryContract(signer);
@@ -155,7 +170,8 @@ async function buyTicketsUsingPoints(
       points,
       lotteryId,
       numberOfTickets,
-      earnedPoints.signedMessage
+      earnedPoints.signedMessage,
+      ethValue ? { value: ethValue } : {}
     );
     return tx;
   } catch (e) {

@@ -15,9 +15,11 @@ interface Props {
   drawing: Lottery_include_Nft;
   tickets: number;
   className: string;
+  /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
+  currency?: string;
 }
 
-export default function DrawingTile({ artistName, dropName, drawing, tickets, className }: Props) {
+export default function DrawingTile({ artistName, dropName, drawing, tickets, className, currency }: Props) {
   const { isOpen, closeModal, openModal } = useModal();
   const {
     isStarted,
@@ -51,6 +53,7 @@ export default function DrawingTile({ artistName, dropName, drawing, tickets, cl
         lottery={drawing}
         dropName={dropName}
         artistName={artistName}
+        currency={currency}
         isOpen={isOpen}
         closeModal={closeModal}
         ticketCount={tickets}

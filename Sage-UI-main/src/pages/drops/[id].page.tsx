@@ -196,6 +196,7 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, c
             {auctions.map((a) => {
               return (
                 <AuctionTile
+                  currency={(drop as any).currency || 'SAGE'}
                   key={a.id}
                   className={tileClassName}
                   dropName={drop.name}
@@ -207,6 +208,7 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, c
             {openEditions.map((oe) => {
               return (
                 <OpenEditionTile
+                  currency={(drop as any).currency || 'SAGE'}
                   key={`oe-${oe.id}`}
                   className={tileClassName}
                   dropName={drop.name}
@@ -218,6 +220,7 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, c
             {collections.map((c) => {
               return (
                 <CollectionMintTile
+                  currency={(drop as any).currency || 'SAGE'}
                   key={`cm-${c.id}`}
                   className={tileClassName}
                   dropName={drop.name}
@@ -229,6 +232,7 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, c
             {drawings.map((d) => {
               return (
                 <DrawingTile
+                  currency={(drop as any).currency || 'SAGE'}
                   className={tileClassName}
                   key={d.id}
                   dropName={drop.name}

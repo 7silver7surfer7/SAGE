@@ -10,9 +10,11 @@ interface Props {
   artist: User;
   openEdition: OpenEdition_include_Nft;
   className: string;
+  /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
+  currency?: string;
 }
 
-export default function OpenEditionTile({ artist, dropName, openEdition, className }: Props) {
+export default function OpenEditionTile({ artist, dropName, openEdition, className, currency }: Props) {
   const { isOpen, closeModal, openModal } = useModal();
   const startTime = new Date(openEdition.startTime).getTime();
   const endTime = new Date(openEdition.endTime).getTime();
@@ -23,9 +25,10 @@ export default function OpenEditionTile({ artist, dropName, openEdition, classNa
   const { displayValue: countdownUntilOpen } = useCountdown({ targetDate: startTime });
   const { displayValue: countdownUntilClose } = useCountdown({ targetDate: endTime });
 
+  const currencySymbol = currency === 'ETH' ? 'ETH' : 'SAGE';
   const priceText =
     openEdition.costTokens > 0
-      ? `${openEdition.costTokens} SAGE`
+      ? `${openEdition.costTokens} ${currencySymbol}`
       : openEdition.costPoints > 0
       ? `${openEdition.costPoints} pixels`
       : 'free mint';
@@ -36,6 +39,7 @@ export default function OpenEditionTile({ artist, dropName, openEdition, classNa
         openEdition={openEdition}
         artist={artist}
         dropName={dropName}
+        currency={currency}
         isOpen={isOpen}
         closeModal={closeModal}
       />

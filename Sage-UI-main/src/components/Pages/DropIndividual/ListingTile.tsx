@@ -76,7 +76,7 @@ export default function ListingTile({ nft, artist }: Props) {
               {hasOffers ? (
                 <h2 className='artist-page__grid-tile-info-price'>
                   {sellOffer
-                    ? `BUY NOW: ${nft.price} SAGE`
+                    ? `BUY NOW: ${nft.price} ${(sellOffer as any).currency === 'ETH' ? 'ETH' : 'SAGE'}`
                     : `HIGHEST BID: ${highestOffer.price} SAGE`}
                 </h2>
               ) : (

@@ -149,6 +149,7 @@ export default function NewDropCard({ drop }: Props) {
           <div className='dashboard__tile-nft-name'>{drop.name}</div>
           <div className='dashboard__tile-artist-name'>
             by {drop.NftContract.Artist.username || 'anon'}
+            {(drop as any).currency === 'ETH' ? ' · priced in ETH' : ''}
           </div>
         </div>
       </div>

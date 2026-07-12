@@ -16,6 +16,13 @@ interface RequestWithFile extends NextApiRequest {
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// Bound libvips on memory-tight hosts: one decode at a time, no decoded-image
+// cache (each upload is unique anyway), and refuse decompression-bomb inputs
+// (a small PNG can decode to a multi-GB raster).
+sharp.concurrency(1);
+sharp.cache(false);
+const SHARP_MAX_INPUT_PIXELS = 12000 * 12000;
+
 // Formats we transcode to a smaller browser-friendly JPEG for display.
 // TIFF must be transcoded (browsers can't render it); animated GIF/SVG/MP4 are
 // left untouched so animation and vector quality are preserved.
@@ -38,7 +45,9 @@ async function handler(req: RequestWithFile, res: NextApiResponse) {
       res.status(400).json({ error: 'No file provided' });
       return;
     }
-    const buffer: Buffer = Buffer.from(file.buffer);
+    // multer's memoryStorage already hands us a Buffer — the old
+    // Buffer.from(file.buffer) duplicated the entire upload in RAM
+    const buffer: Buffer = file.buffer;
     const mimeType: string = file.mimetype;
     const filename: string = file.originalname || `${Date.now()}`;
 
@@ -63,7 +72,9 @@ async function handler(req: RequestWithFile, res: NextApiResponse) {
     // Produce a resized JPEG for display, when the format benefits from it.
     let optimizedUrl = url;
     if (OPTIMIZABLE.includes(mimeType)) {
-      const jpegBuffer: Buffer = await sharp(buffer)
+      const jpegBuffer: Buffer = await sharp(buffer, {
+        limitInputPixels: SHARP_MAX_INPUT_PIXELS,
+      })
         .jpeg()
         .resize(OPTIMIZED_IMAGE_WIDTH)
         .toBuffer();

@@ -27,6 +27,8 @@ interface Props extends ModalProps {
   openEdition: OpenEdition_include_Nft;
   artist: User;
   dropName: string;
+  /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
+  currency?: string;
 }
 
 interface ErrorState {
@@ -44,7 +46,9 @@ export default function MintOpenEditionModal({
   openEdition,
   artist,
   dropName,
+  currency,
 }: Props) {
+  const isEthEdition = currency === 'ETH';
   const { signer, isSignedIn, sessionData } = useSAGEAccount();
   const dispatch = useDispatch();
   const [quantity, setQuantity] = useState(1);
@@ -69,7 +73,7 @@ export default function MintOpenEditionModal({
   const maxPerUser = openEdition.maxPerUser;
   const requiresSAGE = openEdition.costTokens > 0;
   const requiresPoints = openEdition.costPoints > 0;
-  const sagePriceDisplay = `${openEdition.costTokens * quantity} SAGE`;
+  const sagePriceDisplay = `${openEdition.costTokens * quantity} ${isEthEdition ? 'ETH' : 'SAGE'}`;
   const pixelPriceDisplay = `${openEdition.costPoints * quantity} PIXEL`;
 
   // "3 days" / "1 week" for whole-day windows, hours otherwise ("1.5 hours")
@@ -144,10 +148,12 @@ export default function MintOpenEditionModal({
     setIsMinting(true);
     try {
       const contract = await getOpenEditionContract(signer);
-      if (requiresSAGE) {
-        const weiTotal = ethers.utils.parseEther(String(openEdition.costTokens * quantity));
+      const weiTotal = ethers.utils.parseEther(String(openEdition.costTokens * quantity));
+      // ETH editions carry the payment as msg.value — no ERC-20 approval step
+      if (requiresSAGE && !isEthEdition) {
         await approveERC20Transfer(parameters.ASHTOKEN_ADDRESS, contract.address, weiTotal, signer);
       }
+      const ethOverrides = isEthEdition && requiresSAGE ? { value: weiTotal } : {};
       // batchMint alone checks the Rewards contract's on-chain points ledger,
       // which starts at zero for every wallet until claimed — the pixel
       // balance shown in the UI is computed off-chain and never reaches the
@@ -159,9 +165,10 @@ export default function MintOpenEditionModal({
             openEdition.editionId,
             quantity,
             earnedPoints!.totalPointsEarned,
-            earnedPoints!.signedMessage
+            earnedPoints!.signedMessage,
+            ethOverrides
           )
-        : await contract.batchMint(openEdition.editionId, quantity);
+        : await contract.batchMint(openEdition.editionId, quantity, ethOverrides);
       const receipt = await tx.wait(1);
       dispatch(
         dropsApi.util.invalidateTags([

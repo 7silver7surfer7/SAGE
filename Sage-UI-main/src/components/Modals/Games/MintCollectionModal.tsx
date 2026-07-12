@@ -26,6 +26,8 @@ interface Props extends ModalProps {
   collection: CollectionMint;
   artist: User;
   dropName: string;
+  /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
+  currency?: string;
 }
 
 interface ErrorState {
@@ -47,7 +49,9 @@ export default function MintCollectionModal({
   collection,
   artist,
   dropName,
+  currency,
 }: Props) {
+  const isEthCollection = currency === 'ETH';
   const { signer, isSignedIn } = useSAGEAccount();
   const dispatch = useDispatch();
   const [quantity, setQuantity] = useState(1);
@@ -71,7 +75,7 @@ export default function MintCollectionModal({
 
   const maxPerUser = collection.limitPerUser;
   const requiresSAGE = collection.costTokens > 0;
-  const sagePriceDisplay = `${collection.costTokens * quantity} SAGE`;
+  const sagePriceDisplay = `${collection.costTokens * quantity} ${isEthCollection ? 'ETH' : 'SAGE'}`;
 
   const gameInfo =
     `A collection of ${collection.maxSupply} unique artworks minted in order — every mint ` +
@@ -130,11 +134,16 @@ export default function MintCollectionModal({
     setIsMinting(true);
     try {
       const contract = await getCollectionContract(signer);
-      if (requiresSAGE) {
-        const weiTotal = ethers.utils.parseEther(String(collection.costTokens * quantity));
+      const weiTotal = ethers.utils.parseEther(String(collection.costTokens * quantity));
+      // ETH collections carry the payment as msg.value — no ERC-20 approval step
+      if (requiresSAGE && !isEthCollection) {
         await approveERC20Transfer(parameters.ASHTOKEN_ADDRESS, contract.address, weiTotal, signer);
       }
-      const tx = await contract.mint(collection.collectionId, quantity);
+      const tx = await contract.mint(
+        collection.collectionId,
+        quantity,
+        isEthCollection && requiresSAGE ? { value: weiTotal } : {}
+      );
       const receipt = await tx.wait(1);
       dispatch(
         dropsApi.util.invalidateTags([

@@ -14,7 +14,7 @@ import { Offer } from '@prisma/client';
 import { baseApi } from './baseReducer';
 import { promiseToast } from '@/utilities/toast';
 import { registerMarketplaceSale } from '@/utilities/sales';
-import { parameters } from '@/constants/config';
+import { parameters, currencyAddressFor } from '@/constants/config';
 import { NFTFactory } from '@/types/contracts';
 import { name } from 'aws-sdk/clients/importexport';
 
@@ -122,17 +122,22 @@ export const nftsApi = baseApi.injectEndpoints({
       queryFn: async ({ tokenId, offer, signer }, {}, _, fetchWithBQ) => {
         const marketplaceContract = await getMarketplaceContract(signer);
         const weiPrice = ethers.utils.parseEther(offer.price.toString());
-        try {
-          const tokenAddress = await marketplaceContract.token();
-          await approveERC20Transfer(tokenAddress, marketplaceContract.address, weiPrice, signer);
-        } catch (e) {
-          console.error(e);
-          toast.error(`Error approving transfer`);
-          return { data: false };
+        // the currency is baked into the SIGNED offer — replay it exactly
+        const offerCurrency = (offer as any).currency || 'SAGE';
+        const isEthListing = offerCurrency === 'ETH';
+        if (!isEthListing) {
+          try {
+            const tokenAddress = await marketplaceContract.token();
+            await approveERC20Transfer(tokenAddress, marketplaceContract.address, weiPrice, signer);
+          } catch (e) {
+            console.error(e);
+            toast.error(`Error approving transfer`);
+            return { data: false };
+          }
         }
         try {
           console.log(
-            `buyFromSellOffer(${offer.signer}, ${offer.nftContractAddress}, ${weiPrice}, ${tokenId}, ${offer.expiresAt}, ${offer.signedOffer})`
+            `buyFromSellOffer(${offer.signer}, ${offer.nftContractAddress}, ${weiPrice}, ${tokenId}, ${offer.expiresAt}, ${offerCurrency}, ${offer.signedOffer})`
           );
           const tx = await marketplaceContract.buyFromSellOffer(
             offer.signer,
@@ -141,7 +146,9 @@ export const nftsApi = baseApi.injectEndpoints({
             tokenId,
             offer.expiresAt,
             CHAIN_ID,
-            offer.signedOffer
+            currencyAddressFor(offerCurrency),
+            offer.signedOffer,
+            isEthListing ? { value: weiPrice } : {}
           );
           promiseToast(tx, `You've bought an NFT!`);
           await tx.wait(1);
@@ -170,6 +177,8 @@ export const nftsApi = baseApi.injectEndpoints({
           console.log(
             `sellFromBuyOffer(${offer.signer}, ${offer.nftContractAddress}, ${weiPrice}, ${tokenId}, ${offer.expiresAt}, ${CHAIN_ID}, ${offer.signedOffer})`
           );
+          // buy offers are SAGE-only (a seller-executed call can't carry the
+          // buyer's ETH), so the currency here is always the SAGE sentinel
           const tx = await marketplaceContract.sellFromBuyOffer(
             offer.signer,
             offer.nftContractAddress,
@@ -177,6 +186,7 @@ export const nftsApi = baseApi.injectEndpoints({
             tokenId,
             offer.expiresAt,
             CHAIN_ID,
+            currencyAddressFor((offer as any).currency || 'SAGE'),
             offer.signedOffer
           );
           promiseToast(tx, `You've sold an NFT!`);
@@ -305,7 +315,8 @@ async function createSignedOffer(
   amount: number,
   signer: Signer,
   isSellOffer: boolean,
-  fetchWithBQ: any
+  fetchWithBQ: any,
+  currency: 'SAGE' | 'ETH' = 'SAGE'
 ) {
   const weiAmount = ethers.utils.parseEther(amount.toString());
   var { signedOffer, expiresAt } = await signOffer(
@@ -313,7 +324,8 @@ async function createSignedOffer(
     tokenId,
     weiAmount,
     signer,
-    isSellOffer
+    isSellOffer,
+    currency
   );
   const { data } = await fetchWithBQ({
     url: `nfts?action=CreateOffer`,
@@ -326,6 +338,7 @@ async function createSignedOffer(
       expiresAt,
       signedOffer,
       isSellOffer,
+      currency,
     },
   });
   const id = parseInt((data as any).id);
@@ -340,20 +353,32 @@ async function signOffer(
   nftId: number,
   weiPrice: BigNumber,
   signer: Signer,
-  isSellOffer: boolean
+  isSellOffer: boolean,
+  currency: 'SAGE' | 'ETH' = 'SAGE'
 ): Promise<{ signedOffer: string; expiresAt: number }> {
   const oneWeekFromNow = new Date();
   oneWeekFromNow.setDate(oneWeekFromNow.getDate() + 7);
   const expiresAt = Math.floor(oneWeekFromNow.getTime() / 1000);
   const signerAddress = await signer.getAddress();
+  // the currency address is part of the signed payload (marketplace contract
+  // verifies it), so a SAGE-signed listing can never execute as ETH or vice versa
   const message = ethers.utils.defaultAbiCoder.encode(
-    ['address', 'address', 'uint256', 'uint256', 'uint256', 'uint256', 'bool'],
-    [signerAddress, nftContractAddress, weiPrice, nftId, expiresAt, CHAIN_ID, isSellOffer]
+    ['address', 'address', 'uint256', 'uint256', 'uint256', 'uint256', 'address', 'bool'],
+    [
+      signerAddress,
+      nftContractAddress,
+      weiPrice,
+      nftId,
+      expiresAt,
+      CHAIN_ID,
+      currencyAddressFor(currency),
+      isSellOffer,
+    ]
   );
   const encodedMessage = ethers.utils.keccak256(message);
   const signedOffer = await signer.signMessage(ethers.utils.arrayify(encodedMessage));
   console.log(
-    `signOffer(${signerAddress}, ${nftContractAddress}, ${weiPrice}, ${nftId}, ${expiresAt}, ${CHAIN_ID}, ${isSellOffer}) :: ${signedOffer}`
+    `signOffer(${signerAddress}, ${nftContractAddress}, ${weiPrice}, ${nftId}, ${expiresAt}, ${CHAIN_ID}, ${currency}, ${isSellOffer}) :: ${signedOffer}`
   );
   return { signedOffer, expiresAt };
 }

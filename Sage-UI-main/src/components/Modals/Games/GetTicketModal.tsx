@@ -36,6 +36,8 @@ interface Props extends ModalProps {
   dropName: string;
   ticketCount: number;
   systemType: SystemTypes;
+  /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
+  currency?: string;
 }
 
 interface ErrorState {
@@ -57,6 +59,7 @@ function GetTicketModal({
   closeModal,
   lottery,
   artistName,
+  currency,
   ticketCount,
   systemType,
 }: Props) {
@@ -103,7 +106,7 @@ function GetTicketModal({
     args: [walletAddress, parameters.LOTTERY_ADDRESS],
     watch: true,
   });
-  const ASHPriceDisplay = `${lottery.costPerTicketTokens * desiredTicketAmount} SAGE`;
+  const ASHPriceDisplay = `${lottery.costPerTicketTokens * desiredTicketAmount} ${currency === 'ETH' ? 'ETH' : 'SAGE'}`;
   const pixelPriceDisplay = `${lottery.costPerTicketPoints * desiredTicketAmount} PIXEL`;
   const needsAllowance = +allowance < desiredTicketAmount * costASH;
   function handleTicketSubClick() {
@@ -317,7 +320,7 @@ function GetTicketModal({
                 <>
                   <p className='games-modal__winners-label'>refund</p>
                   <div className='games-modal__winners-list'>
-                    {refund.refundableTokens} SAGE &nbsp; &nbsp;
+                    {refund.refundableTokens} {currency === 'ETH' ? 'ETH' : 'SAGE'} &nbsp; &nbsp;
                     <ClaimRefundButton refund={refund} />
                   </div>
                 </>

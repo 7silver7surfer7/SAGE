@@ -25,17 +25,25 @@ import { s3MirrorUrl } from '@/utilities/s3Mirror';
  *     this (see ?prewarm) at approval time so viewers never wait.
  */
 
-const CACHE_DIR = path.join(os.tmpdir(), 'arweave-media-cache');
+// Cache location + size are host-dependent, so both are env-overridable:
+//  - Cloud Run: os.tmpdir() is an in-memory tmpfs, so cached files count
+//    against the instance's RAM — the default 512MB cap protects RAM.
+//  - Raspberry Pi / bare Linux: /tmp is ON DISK, so the RAM assumption is
+//    wrong two ways: no RAM pressure, but SD-card write wear. Point
+//    MEDIA_CACHE_DIR at NVMe (or a mounted tmpfs) and raise
+//    MEDIA_CACHE_LIMIT_MB to taste.
+const CACHE_DIR =
+  process.env.MEDIA_CACHE_DIR || path.join(os.tmpdir(), 'arweave-media-cache');
 const TXID_RE = /^[A-Za-z0-9_-]{43}$/; // base64url tx id — also SSRF guard
 const MAX_BYTES = 200 * 1024 * 1024;
 // Cloud Run caps non-chunked (Content-Length) responses at 32MB; responses at
 // or above this threshold are streamed with chunked transfer-encoding instead
 const RESPONSE_LENGTH_DECLARE_MAX = 31 * 1024 * 1024;
-// On Cloud Run, os.tmpdir() is an in-memory tmpfs — cached files count against
-// the instance's RAM limit, NOT disk. Cap the on-tmpfs cache and evict the
-// least-recently-used entries so a burst of distinct large videos can't grow
-// the cache until the instance OOMs.
-const CACHE_LIMIT_BYTES = 512 * 1024 * 1024;
+// LRU cap for the cache dir; evicts least-recently-used entries so a burst of
+// distinct large videos can't grow the cache until the host OOMs (tmpfs) or
+// fills the disk.
+const CACHE_LIMIT_BYTES =
+  (parseInt(process.env.MEDIA_CACHE_LIMIT_MB || '', 10) || 512) * 1024 * 1024;
 const GATEWAY = 'https://arweave.net';
 
 // iOS-safe H.264 threshold: transcode when either dimension exceeds this or the

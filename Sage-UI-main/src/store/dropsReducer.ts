@@ -12,7 +12,7 @@ import {
 } from '@/utilities/contracts';
 import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.json';
 import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
-import { parameters } from '@/constants/config';
+import { parameters, currencyAddressFor, isEthCurrency } from '@/constants/config';
 import { chunk, ALLOWLIST_CHUNK_SIZE } from '@/utilities/allowlist';
 import { fetchOrCreateNftContract } from './nftsReducer';
 import { baseApi } from './baseReducer';
@@ -74,6 +74,9 @@ export interface CreateDropRequest {
    *  NFT contract (as basis points) at deploy; every token minted for this
    *  drop keeps it permanently. Marketplace re-sales only. */
   royaltyPercentage: number;
+  /** Payment currency for every game in this drop. "SAGE" (default) or "ETH"
+   *  (native). Baked into the game contracts at deploy. */
+  currency?: 'SAGE' | 'ETH';
   /** Collection drop mode: a ZIP of unique images bulk-uploaded to Arweave;
    *  collectors mint sequentially at a fixed SAGE price. When set, `artworks`
    *  is ignored — the zip IS the drop's content. */
@@ -161,6 +164,7 @@ export const dropsApi = baseApi.injectEndpoints({
                 tileImageS3Path: bannerUrl,
                 goLiveAt: req.goLiveAt,
                 royaltyPercentage: req.royaltyPercentage,
+                currency: req.currency || 'SAGE',
               },
             })
           );
@@ -999,6 +1003,7 @@ async function deployCollectionMints(
       whitelist: whitelistAddress,
       costTokens: ethers.utils.parseEther(String(cm.costTokens)),
       id: cm.id,
+      currency: currencyAddressFor((drop as any).currency),
     });
     await tx.wait();
     const { data: updated } = await fetchWithBQ(
@@ -1384,8 +1389,20 @@ async function deployAuctions(
   }
   if (createParams.length > 0) {
     console.log(`deployAuctions() :: Deploying batch of ${createParams.length}...`);
-    const tx = await auctionContract.createAuctionBatch(createParams);
-    await tx.wait();
+    if (isEthCurrency((drop as any).currency)) {
+      // ETH drops stamp the native-currency sentinel per auction — there is
+      // no batch variant of createAuctionWithCurrency, so create one by one
+      for (const p of createParams) {
+        const tx = await auctionContract.createAuctionWithCurrency(
+          p,
+          currencyAddressFor('ETH')
+        );
+        await tx.wait();
+      }
+    } else {
+      const tx = await auctionContract.createAuctionBatch(createParams);
+      await tx.wait();
+    }
     for (const { auctionId } of createParams) {
       const params = `id=${auctionId}&address=${auctionContract.address}`;
       await fetchWithBQ(`drops?action=UpdateAuctionContractAddress&${params}`);
@@ -1427,8 +1444,20 @@ async function deployLotteries(
   if (createParams.length > 0) {
     console.log(`deployLotteries() :: Deploying batch of ${createParams.length}...`);
     const lotteryContract = await getLotteryContract(signer);
-    const tx = await lotteryContract.createLotteryBatch(createParams);
-    await tx.wait();
+    if (isEthCurrency((drop as any).currency)) {
+      // ETH drops stamp the native-currency sentinel per lottery — no batch
+      // variant of createLotteryWithCurrency, so create one by one
+      for (const p of createParams) {
+        const tx = await lotteryContract.createLotteryWithCurrency(
+          p,
+          currencyAddressFor('ETH')
+        );
+        await tx.wait();
+      }
+    } else {
+      const tx = await lotteryContract.createLotteryBatch(createParams);
+      await tx.wait();
+    }
     for (const { lotteryID } of createParams) {
       const params = `id=${lotteryID}&address=${lotteryContract.address}`;
       await fetchWithBQ(`drops?action=UpdateLotteryContractAddress&${params}`);
@@ -1481,6 +1510,7 @@ async function deployOpenEditions(
       // contract enforces the allowlist on every mint path
       whitelist: whitelistAddress,
       costTokens,
+      currency: currencyAddressFor((drop as any).currency),
     });
     await tx.wait();
     const params = `id=${oe.id}&address=${openEditionContract.address}`;

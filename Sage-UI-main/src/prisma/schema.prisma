@@ -31,6 +31,10 @@ model Drop {
   // drop keeps the value permanently. Marketplace re-sales only — primary
   // sale splits are unaffected.
   royaltyPercentage                Float       @default(12)
+  // Payment currency for every game in this drop: "SAGE" (the ERC-20) or
+  // "ETH" (native). Chosen at creation, baked into the game contracts at
+  // deploy (on-chain: address(0) = SAGE, the 0xEeee..EEeE sentinel = ETH).
+  currency                         String      @default("SAGE")
   // Allowlist gating: when enabled, only wallets in AllowlistEntries may
   // mint/bid/buy (on-chain via a per-drop SageWhitelist contract for open
   // editions + lotteries; UI-gate for auctions). Editable pre- and post-deploy.
@@ -264,6 +268,25 @@ model RewardType {
   contract           String    @db.Char(42)
   startingBlock      Int
   positionSizeLimit  String    @default("0")
+  // watermark for the pixels ACCRUAL pass (distinct from lastBlockInspected,
+  // which tracks Transfer-event SCANNING): transactions at or below this
+  // block are already folded into PixelAccrual rows
+  pointsBlockProcessed Int     @default(0)
+}
+
+// Per-(holder, asset) pixels checkpoint. The updater used to reload the whole
+// TokenTransaction table and replay every holder's full history on every run
+// (unbounded, grows forever); with this it folds only NEW transfers into each
+// holder's running state. `pixels` is the total accrued through `refTime`
+// (the last balance change); live balances keep accruing from there.
+model PixelAccrual {
+  id        Int       @id @default(autoincrement())
+  address   String    @db.Char(42) // lowercase holder address
+  assetType AssetType
+  balance   String    @default("0") // wei, decimal string
+  pixels    Float     @default(0)
+  refTime   Int       @default(0) // unix seconds of last balance change; 0 = none yet
+  @@unique([address, assetType])
 }
 
 model User {
@@ -302,9 +325,13 @@ model Offer {
   expiresAt                Int
   isSellOffer              Boolean
   signedOffer              String
+  // Currency the offer was SIGNED in ("SAGE" | "ETH") — part of the signed
+  // message on the new marketplace contract, so it must be replayed exactly.
+  // ETH is only valid for sell offers (listings); buy offers are SAGE-only.
+  currency                 String @default("SAGE")
   state                    OfferState @default(ACTIVE)
   Nft                      Nft   @relation(fields:[nftId], references: [id])
-  
+
 }
 
 enum OfferState {

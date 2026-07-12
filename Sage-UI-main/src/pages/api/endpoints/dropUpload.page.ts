@@ -217,6 +217,25 @@ async function copyFromS3toArweave(s3Path: string, response: NextApiResponse) {
 
 const TXID_RE = /^[A-Za-z0-9_-]{43}$/; // base64url tx id — also SSRF guard
 
+// A collection's pathMap can hold thousands of entries (hundreds of KB of
+// JSON); registration used to re-parse the whole blob for every single mint.
+// Parse once per collection and reuse — the map is immutable once processing
+// hits 'done' (the only state registration accepts), so id+length is a safe
+// staleness key. Tiny cap: a marketplace has few active collections.
+const pathMapCache = new Map<string, Record<string, { img: string; json: string }>>();
+function getParsedPathMap(cmId: number, pathMap: string) {
+  const key = `${cmId}:${pathMap.length}`;
+  let parsed = pathMapCache.get(key);
+  if (!parsed) {
+    parsed = JSON.parse(pathMap);
+    if (pathMapCache.size >= 8) {
+      pathMapCache.delete(pathMapCache.keys().next().value as string);
+    }
+    pathMapCache.set(key, parsed!);
+  }
+  return parsed!;
+}
+
 /**
  * Deploy-time backstop for the S3 display-mirror: if a txid's upload-time
  * mirror write failed (network blip, etc.), re-derive it here by fetching
@@ -330,6 +349,9 @@ async function insertDrop(data: any, response: NextApiResponse) {
     const dropRoyalty = parseFloat(data.royaltyPercentage);
     const royaltyPercentage =
       isNaN(dropRoyalty) ? 12 : Math.min(Math.max(dropRoyalty, 0), 20);
+    // Payment currency for the whole drop — reject anything but the two
+    // supported values so a client bug can't bake garbage into the deploy.
+    const currency = data.currency === 'ETH' ? 'ETH' : 'SAGE';
     // Create drop
     var record = await prisma.drop.create({
       data: {
@@ -343,6 +365,7 @@ async function insertDrop(data: any, response: NextApiResponse) {
         mobileCoverS3Path: data.mobileCoverS3Path || null,
         artistDisplayName: data.artistDisplayName?.trim() || null,
         royaltyPercentage,
+        currency,
         NftContract: { connect: { artistAddress: data.artistWallet } },
       },
     });
@@ -948,7 +971,7 @@ async function registerCollectionMint(
       response.json({ nftId: existing.id });
       return;
     }
-    const entry = JSON.parse(cm.pathMap)[String(index)];
+    const entry = getParsedPathMap(cm.id, cm.pathMap)[String(index)];
     if (!entry) {
       response.status(400).json({ error: 'Unknown collection index' });
       return;

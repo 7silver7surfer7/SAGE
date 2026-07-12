@@ -52,7 +52,9 @@ export default function BuyNowModal({ isOpen, closeModal, artist, nft, offer }: 
             {nft.description && (
               <p className='games-modal__game-description'>{nft.description}</p>
             )}
-            <p className='games-modal__price-fixed'>{nft.price} SAGE</p>
+            <p className='games-modal__price-fixed'>
+              {nft.price} {(offer as any).currency === 'ETH' ? 'ETH' : 'SAGE'}
+            </p>
             <div
               className='games-modal__game-description'
               style={{ textAlign: 'right', fontSize: '80%' }}

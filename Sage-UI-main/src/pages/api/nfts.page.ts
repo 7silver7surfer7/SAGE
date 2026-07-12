@@ -157,6 +157,9 @@ async function createOffer(request: NextApiRequest, response: NextApiResponse) {
   }
   try {
     const { price, expiresAt, isSellOffer, signedOffer, nftContractAddress, nftId } = request.body;
+    // currency the offer was signed in; buy offers must stay SAGE (the
+    // marketplace contract rejects ETH buy offers — no msg.value path)
+    const currency = request.body.currency === 'ETH' && isSellOffer ? 'ETH' : 'SAGE';
     var record = await prisma.offer.create({
       data: {
         signer: address,
@@ -165,6 +168,7 @@ async function createOffer(request: NextApiRequest, response: NextApiResponse) {
         isSellOffer,
         signedOffer,
         nftContractAddress,
+        currency,
         Nft: { connect: { id: +nftId } },
       },
     });

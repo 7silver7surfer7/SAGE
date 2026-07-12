@@ -3,6 +3,17 @@ import { Configuration, Parameters } from './types';
 export const DEFAULT_PROFILE_PICTURE = '/branding/sage-icon.svg';
 export const OPTIMIZED_IMAGE_WIDTH = 487;
 
+// On-chain currency sentinels shared by every game contract: address(0) means
+// the SAGE ERC-20, this constant means native ETH. A drop's DB `currency`
+// column ("SAGE" | "ETH") maps to these at deploy time.
+export const NATIVE_CURRENCY_SENTINEL = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+export type DropCurrency = 'SAGE' | 'ETH';
+export const currencyAddressFor = (currency?: string | null) =>
+  currency === 'ETH'
+    ? NATIVE_CURRENCY_SENTINEL
+    : '0x0000000000000000000000000000000000000000';
+export const isEthCurrency = (currency?: string | null) => currency === 'ETH';
+
 // USD price lookups must always use the MAINNET token: the testnet deployment
 // in ASHTOKEN_ADDRESS has no DEX pair, so it has no price.
 // NOTE: DexScreener does NOT index Robinhood Chain, so it returns no pairs for
@@ -29,14 +40,14 @@ const configuration: Configuration = {
     RPC_URL: 'https://rpc.testnet.chain.robinhood.com',
     SUBGRAPH_URL: '',
     MEDIUM_URL: 'https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/@SAGE_WEB3',
-    MARKETPLACE_ADDRESS: '0xc6BF09D06eB7151a3B0d881A8501198197639691',
+    MARKETPLACE_ADDRESS: '0x5812c7B4ce6386fD6A49Cc62c0457f47c3927FFd',
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0x21e8Bb18193Db10ddecACE141EDE66882c08D991',
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
-    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9',
-    COLLECTION_ADDRESS: '0x27A18bAC34e61F42519D9E3B264511673D917595', // SageCollection (deployed 2026-07-11)
+    OPENEDITION_ADDRESS: '0x33d2739244f69Ed71DCC877a30691D2A5dc9b11e',
+    COLLECTION_ADDRESS: '0x5aC7DB61278fFd8F19f6d93957Cd47263C62c3Bf', // SageCollection (ETH-currency redeploy 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     APP_URL: 'http://localhost:3005/',
   },
@@ -46,14 +57,14 @@ const configuration: Configuration = {
     RPC_URL: 'https://rpc.testnet.chain.robinhood.com',
     SUBGRAPH_URL: '',
     MEDIUM_URL: 'https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/@SAGE_WEB3',
-    MARKETPLACE_ADDRESS: '0xc6BF09D06eB7151a3B0d881A8501198197639691',
+    MARKETPLACE_ADDRESS: '0x5812c7B4ce6386fD6A49Cc62c0457f47c3927FFd',
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0x21e8Bb18193Db10ddecACE141EDE66882c08D991',
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
-    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9',
-    COLLECTION_ADDRESS: '0x27A18bAC34e61F42519D9E3B264511673D917595', // SageCollection (deployed 2026-07-11)
+    OPENEDITION_ADDRESS: '0x33d2739244f69Ed71DCC877a30691D2A5dc9b11e',
+    COLLECTION_ADDRESS: '0x5aC7DB61278fFd8F19f6d93957Cd47263C62c3Bf', // SageCollection (ETH-currency redeploy 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     APP_URL: 'https://sage-dev.vercel.app/',
   },
@@ -63,14 +74,14 @@ const configuration: Configuration = {
     RPC_URL: 'https://rpc.testnet.chain.robinhood.com',
     SUBGRAPH_URL: '',
     MEDIUM_URL: 'https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/@SAGE_WEB3',
-    MARKETPLACE_ADDRESS: '0xc6BF09D06eB7151a3B0d881A8501198197639691',
+    MARKETPLACE_ADDRESS: '0x5812c7B4ce6386fD6A49Cc62c0457f47c3927FFd',
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0x21e8Bb18193Db10ddecACE141EDE66882c08D991',
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
-    OPENEDITION_ADDRESS: '0xAd99C2cE69473f9Eb44e7b1bf54940377FaC29b9',
-    COLLECTION_ADDRESS: '0x27A18bAC34e61F42519D9E3B264511673D917595', // SageCollection (deployed 2026-07-11)
+    OPENEDITION_ADDRESS: '0x33d2739244f69Ed71DCC877a30691D2A5dc9b11e',
+    COLLECTION_ADDRESS: '0x5aC7DB61278fFd8F19f6d93957Cd47263C62c3Bf', // SageCollection (ETH-currency redeploy 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     APP_URL: 'https://sage-staging.vercel.app/',
   },

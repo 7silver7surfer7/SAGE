@@ -10,7 +10,7 @@ import { BigNumber, ethers, Signer, utils } from 'ethers';
 import { baseApi } from './baseReducer';
 import { promiseToast } from '@/utilities/toast';
 import { registerAuctionSale } from '@/utilities/sales';
-import { parameters } from '@/constants/config';
+import { parameters, NATIVE_CURRENCY_SENTINEL } from '@/constants/config';
 
 export interface AuctionState {
   highestBidder: string; // wallet address
@@ -70,14 +70,21 @@ const auctionsApi = baseApi.injectEndpoints({
         console.log(`placeBid(${auctionId}, ${amount})`);
         if (!amount) new Error('Unspecified bid amount');
         const weiValue = ethers.utils.parseEther(amount.toString());
+        let isEthAuction = false;
         try {
           if (!signer) throw new Error('Please check wallet connection');
           const auctionContract = await getAuctionContract(signer);
           if (!auctionContract) throw new Error('Unable to reach Auction Contract');
-          const tokenAddress = await auctionContract.token();
-          if (!Boolean(tokenAddress == parameters.ASHTOKEN_ADDRESS))
-            throw new Error('incorrect SAGE Token address configuration');
-          await approveERC20Transfer(tokenAddress, auctionContract.address, weiValue, signer);
+          // ETH auctions carry the bid as msg.value — no ERC-20 approval step
+          const currency = await auctionContract.auctionCurrency(auctionId);
+          isEthAuction =
+            currency?.toLowerCase() === NATIVE_CURRENCY_SENTINEL.toLowerCase();
+          if (!isEthAuction) {
+            const tokenAddress = await auctionContract.token();
+            if (!Boolean(tokenAddress == parameters.ASHTOKEN_ADDRESS))
+              throw new Error('incorrect SAGE Token address configuration');
+            await approveERC20Transfer(tokenAddress, auctionContract.address, weiValue, signer);
+          }
         } catch (e) {
           console.error(e);
           toast.error(`Error: ${extractErrorMessage(e)}`, {
@@ -87,7 +94,11 @@ const auctionsApi = baseApi.injectEndpoints({
         }
         try {
           const auctionContract = await getAuctionContract(signer);
-          const tx = await auctionContract.bid(auctionId, weiValue);
+          const tx = await auctionContract.bid(
+            auctionId,
+            weiValue,
+            isEthAuction ? { value: weiValue } : {}
+          );
           promiseToast(tx, 'You are now the highest bidder!');
           await tx.wait();
           const blockTs = (await signer.provider.getBlock(tx.blockNumber)).timestamp;

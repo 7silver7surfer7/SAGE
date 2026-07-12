@@ -13,9 +13,11 @@ interface Props {
   artist: User;
   auction: Auction_include_Nft;
   className: string;
+  /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
+  currency?: string;
 }
 
-export default function AuctionTile({ artist, dropName, auction, className }: Props) {
+export default function AuctionTile({ artist, dropName, auction, className, currency }: Props) {
   const { isOpen, closeModal, openModal } = useModal();
 
   const {
@@ -47,6 +49,7 @@ export default function AuctionTile({ artist, dropName, auction, className }: Pr
         auction={auction}
         artist={artist}
         dropName={dropName}
+        currency={currency}
         isOpen={isOpen}
         closeModal={closeModal}
       />

@@ -11,9 +11,11 @@ interface Props {
   artist: User;
   collection: CollectionMint;
   className: string;
+  /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
+  currency?: string;
 }
 
-export default function CollectionMintTile({ artist, dropName, collection, className }: Props) {
+export default function CollectionMintTile({ artist, dropName, collection, className, currency }: Props) {
   const { isOpen, closeModal, openModal } = useModal();
   const startTime = new Date(collection.startTime).getTime();
   // null endTime = no deadline — the mint stays open until it sells out
@@ -27,14 +29,19 @@ export default function CollectionMintTile({ artist, dropName, collection, class
     targetDate: endTime ?? Number.MAX_SAFE_INTEGER,
   });
 
+  // 120s: the tile only needs a rough count — the mint modal itself polls
+  // every 15s while open, which covers anyone actively minting. The old 30s
+  // poll ran one RPC per tile per open tab indefinitely for no UX gain.
   const { data: liveMintCount } = useGetCollectionMintCountQuery(collection.collectionId!, {
     skip: collection.collectionId == null,
-    pollingInterval: 30000,
+    pollingInterval: 120000,
   });
   const mintedCount = liveMintCount ?? collection.mintCount;
   const isSoldOut = mintedCount >= collection.maxSupply;
 
-  const priceText = collection.costTokens > 0 ? `${collection.costTokens} SAGE` : 'free mint';
+  const currencySymbol = currency === 'ETH' ? 'ETH' : 'SAGE';
+  const priceText =
+    collection.costTokens > 0 ? `${collection.costTokens} ${currencySymbol}` : 'free mint';
 
   return (
     <div onClick={openModal} className={className}>
@@ -42,6 +49,7 @@ export default function CollectionMintTile({ artist, dropName, collection, class
         collection={collection}
         artist={artist}
         dropName={dropName}
+        currency={currency}
         isOpen={isOpen}
         closeModal={closeModal}
       />

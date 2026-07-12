@@ -26,6 +26,8 @@ interface Props extends ModalProps {
   auction: Auction_include_Nft;
   artist: User;
   dropName: string;
+  /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
+  currency?: string;
 }
 
 type DesiredBidValue = number;
@@ -62,7 +64,7 @@ const initialState: State = {
 const INITIAL_ERROR_STATE = { isError: false, errorMessage: '' };
 
 //@scss : '@/styles/components/_games-modal.scss'
-function PlaceBidModal({ isOpen, closeModal, auction, artist, dropName }: Props) {
+function PlaceBidModal({ isOpen, closeModal, auction, artist, dropName, currency }: Props) {
   const [state, setState] = useState<State>(initialState);
   const [errorState, setErrorState] = useState<ErrorState>(INITIAL_ERROR_STATE);
   const [placeBid, { isLoading: isPlaceBidLoading }] = usePlaceBidMutation();
@@ -217,7 +219,7 @@ function PlaceBidModal({ isOpen, closeModal, auction, artist, dropName }: Props)
                   <div className='games-modal__bid-info-group'>
                     <div className='games-modal__highest-bid'>
                       <p className='games-modal__highest-bid-label'>Highest Bid</p>
-                      <p className='games-modal__highest-bid-value'>{highestBid} SAGE</p>
+                      <p className='games-modal__highest-bid-value'>{highestBid} {currency === 'ETH' ? 'ETH' : 'SAGE'}</p>
                     </div>
                     <button
                       onClick={toggleBidHistory}

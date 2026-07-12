@@ -139,6 +139,9 @@ async function getApprovedDrops(response: NextApiResponse) {
       orderBy: {
         id: 'desc',
       },
+      // admin listing: bound the payload — every drop with every nested NFT
+      // otherwise ships on each dashboard load, growing with the catalog
+      take: 100,
     });
     result.forEach(withArtistDisplayNameOverride);
     response.json(result);
@@ -160,6 +163,8 @@ async function getDropsPendingApproval(response: NextApiResponse) {
         OpenEditions: { include: { Nft: true } },
         CollectionMints: true,
       },
+      orderBy: { id: 'desc' },
+      take: 100,
     });
     result.forEach(withArtistDisplayNameOverride);
     response.json(result);
@@ -296,17 +301,20 @@ async function findSplitterAddress(id: number, response: NextApiResponse) {
       response.json([]);
       return;
     }
-    var queryParams = '';
-    for (var i = 0; i < splitEntries.length; i++) {
-      queryParams += `SELECT "splitterId" FROM "SplitEntry" WHERE
-        ("percent", "destinationAddress") = (${splitEntries[i].percent}, '${splitEntries[i].destinationAddress}')`;
-      if (i != splitEntries.length - 1) {
-        queryParams += ` INTERSECT `;
-      }
-    }
-    const query = `SELECT "p".* FROM "Splitter" AS "p" JOIN (${queryParams}) AS "c"
-      ON ("p"."id" = "c"."splitterId") WHERE ("p"."splitterAddress" IS NOT NULL)`;
-    const result = await prisma.$queryRaw(Prisma.raw(query));
+    // parameterized (values used to be string-concatenated into the SQL);
+    // Prisma.join binds each percent/address pair instead of inlining it
+    const intersect = splitEntries.map(
+      (e) =>
+        Prisma.sql`SELECT "splitterId" FROM "SplitEntry" WHERE
+        ("percent", "destinationAddress") = (${e.percent}, ${e.destinationAddress})`
+    );
+    const result = await prisma.$queryRaw(
+      Prisma.sql`SELECT "p".* FROM "Splitter" AS "p" JOIN (${Prisma.join(
+        intersect,
+        ' INTERSECT '
+      )}) AS "c"
+      ON ("p"."id" = "c"."splitterId") WHERE ("p"."splitterAddress" IS NOT NULL)`
+    );
     response.json(result);
   } catch (e) {
     console.log(e);

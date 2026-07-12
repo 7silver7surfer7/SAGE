@@ -50,6 +50,8 @@ export default function CreateDropPanel() {
   const [allowlistEnabled, setAllowlistEnabled] = useState(false);
   const [allowlistText, setAllowlistText] = useState('');
   const [royaltyPercentage, setRoyaltyPercentage] = useState(12);
+  // payment currency for every game in this drop; baked on-chain at deploy
+  const [currency, setCurrency] = useState<'SAGE' | 'ETH'>('SAGE');
   const [goLiveAtInput, setGoLiveAtInput] = useState(''); // datetime-local; empty = immediately
   const [saleStartAtInput, setSaleStartAtInput] = useState(''); // datetime-local; empty = same as go-live
   const [nextKey, setNextKey] = useState(0);
@@ -201,6 +203,7 @@ export default function CreateDropPanel() {
       signer: approveNow ? (signer as any) : undefined,
       allowlist,
       royaltyPercentage,
+      currency,
       collection:
         dropStyle === 'collection'
           ? {
@@ -611,6 +614,21 @@ export default function CreateDropPanel() {
               <option value={72}>3 days</option>
               <option value={168}>1 week</option>
             </select>
+          </label>
+          <label className='create-drop-panel__label'>
+            payment currency
+            <select
+              className='create-drop-panel__input'
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value as 'SAGE' | 'ETH')}
+            >
+              <option value='SAGE'>SAGE (token)</option>
+              <option value='ETH'>ETH (native)</option>
+            </select>
+            <em className='create-drop-panel__section-hint'>
+              Every price in this drop (bids, tickets, mints) is charged in this currency.
+              Locked into the contracts at deploy — it cannot change afterwards.
+            </em>
           </label>
           <label className='create-drop-panel__label'>
             secondary-sale royalty %
