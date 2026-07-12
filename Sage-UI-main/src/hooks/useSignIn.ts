@@ -2,7 +2,7 @@ import { getCsrfToken, useSession } from 'next-auth/react';
 import { SiweMessage } from 'siwe';
 import { useSignInMutation } from '@/store/usersReducer';
 import { useEffect, useRef, useState } from 'react';
-import { useAccount, useNetwork, useSignMessage } from 'wagmi';
+import { useAccount, useNetwork, useSignMessage, useSwitchNetwork } from 'wagmi';
 import { parameters } from '@/constants/config';
 
 //This hook is dependent on a certain mounted component, and prompts a
@@ -12,6 +12,7 @@ export default function useSignIn(isOpen: boolean) {
   const { chain: activeChain } = useNetwork();
   const { address, isConnected } = useAccount();
   const { signMessageAsync, isLoading: isSigningMessage } = useSignMessage();
+  const { switchNetworkAsync } = useSwitchNetwork();
   const [signIn] = useSignInMutation();
   const { status: sessionStatus } = useSession();
   const [error, setError] = useState<string | null>(null);
@@ -22,9 +23,24 @@ export default function useSignIn(isOpen: boolean) {
     try {
       setError(null);
       if (!address) return;
-      // fall back to the configured chain so a missing/undefined activeChain
-      // (wallet still settling) can't silently abort sign-in
-      const chainId = activeChain?.id ?? Number(parameters.CHAIN_ID);
+      // Sign-in OWNS the network switch: signing while the wallet sat on
+      // another chain (Ledger defaults to Ethereum mainnet) minted a session
+      // whose every subsequent action failed until the user noticed the
+      // separate wrong-network toast — the "flaky sign-in" of 2026-07-12.
+      // Switch first (one extra wallet prompt, and wagmi adds the chain if
+      // the wallet lacks it); if the wallet can't or the user declines, say
+      // exactly what to do instead of proceeding into a broken state.
+      const chainId = Number(parameters.CHAIN_ID);
+      if (activeChain && activeChain.id !== chainId) {
+        try {
+          await switchNetworkAsync?.(chainId);
+        } catch {
+          setError(
+            `Switch your wallet to ${parameters.NETWORK_NAME} (chain ${chainId}) and try again.`
+          );
+          return;
+        }
+      }
       const issuedAt = new Date().toISOString();
       const nonce = await getCsrfToken();
       const message = new SiweMessage({
