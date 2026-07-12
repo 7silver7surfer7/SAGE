@@ -88,6 +88,9 @@ export async function getHomePageData(prisma: PrismaClient) {
       artistDisplayName: true,
     },
     orderBy: { createdAt: 'desc' },
+    // this feeds the "new artworks" strip only — without a cap it pulls EVERY
+    // approved drop with all nested NFTs on every 60s homepage revalidation
+    take: 12,
   });
   let newArtworks: NewArtwork[] = [];
   newDrops.forEach((d) => {
@@ -190,7 +193,9 @@ export async function getArtistsPageData(prisma: PrismaClient) {
 
 export async function getIndividualArtistsPagePaths(prisma: PrismaClient) {
   let artists = await prisma.user.findMany({
-    where: { ...FilterUserIsArtist },
+    // artists without a username have no page URL — String(null) used to
+    // prerender a literal /creators/null and crash the whole build
+    where: { ...FilterUserIsArtist, username: { not: null } },
     take: 20,
   });
 
@@ -206,6 +211,10 @@ export async function getIndividualArtistsPageData(prisma: PrismaClient, usernam
     where: { ...FilterUserIsArtist, username },
     include: { NftContract: true },
   });
+  // unknown/renamed artist: the page 404s on a null artist — don't crash here
+  if (!artist) {
+    return { artist: null, drops: [] };
+  }
   const drops = await prisma.drop.findMany({
     where: { artistAddress: artist.walletAddress },
   });

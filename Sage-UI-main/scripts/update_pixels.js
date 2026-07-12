@@ -18,7 +18,11 @@
  *   rewardRate        = pixels per whole SAGE token per DAY (0.25)
  *   positionSizeLimit = balance cap in wei ("100000" + 18 zeros)
  */
-require('dotenv').config();
+// dotenv is a dev convenience; inside the Pi/standalone container env vars
+// come from docker-compose and the package may not be traced into the image
+try {
+  require('dotenv').config();
+} catch {}
 const { PrismaClient } = require('@prisma/client');
 const { ethers } = require('ethers');
 const prisma = new PrismaClient();
@@ -158,30 +162,16 @@ async function scanTransfers(asset, rewardType) {
   console.log(`[${asset.label}] stored ${rows.length} new transactions; lastBlockInspected=${latest}.`);
 }
 
-/** Accrues pixels for one address from its transfer history up to `now`. */
-function computePixels(transactions, address, now) {
-  let balance = 0n;
-  let refTime = null;
-  let pixels = 0;
-  const addr = address.toLowerCase();
-  const perSecond = REWARD_RATE_PER_DAY / 86400;
+const PER_SECOND = REWARD_RATE_PER_DAY / 86400;
 
-  const accrue = (untilTs) => {
-    if (refTime === null || untilTs <= refTime) return;
-    const counted = balance > CAP_WEI ? CAP_WEI : balance;
-    const tokens = Number(counted / WEI) + Number(counted % WEI) / 1e18;
-    pixels += tokens * perSecond * (untilTs - refTime);
-  };
-
-  for (const tx of transactions) {
-    if (tx.from === tx.to) continue;
-    accrue(tx.blockTimestamp);
-    if (tx.from === addr) balance -= BigInt(tx.value);
-    else balance += BigInt(tx.value);
-    if (refTime === null || tx.blockTimestamp > refTime) refTime = tx.blockTimestamp;
-  }
-  accrue(now);
-  return { pixels, balance };
+/** Pixels earned by a wei balance over a time span (capped per asset). */
+function pixelsForSpan(balanceWei, fromTs, untilTs) {
+  if (fromTs <= 0 || untilTs <= fromTs) return 0;
+  let counted = balanceWei;
+  if (counted < 0n) counted = 0n;
+  if (counted > CAP_WEI) counted = CAP_WEI;
+  const tokens = Number(counted / WEI) + Number(counted % WEI) / 1e18;
+  return tokens * PER_SECOND * (untilTs - fromTs);
 }
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -222,38 +212,98 @@ async function isContract(address) {
   return contract;
 }
 
+/**
+ * Folds NEW transfers (since each asset's pointsBlockProcessed watermark)
+ * into per-(holder, asset) PixelAccrual checkpoints. The old version reloaded
+ * the ENTIRE TokenTransaction table and replayed every holder's full history
+ * every run — memory and time grew forever with chain activity. Now each run
+ * touches only the new rows; the first run after this change folds the whole
+ * backlog once and checkpoints it.
+ */
+async function foldNewTransfersIntoAccruals() {
+  for (const asset of ASSETS) {
+    const rt = await prisma.rewardType.findUnique({ where: { type: asset.type } });
+    const fromBlock = rt?.pointsBlockProcessed ?? 0;
+    const newTxns = await prisma.tokenTransaction.findMany({
+      where: { assetType: asset.type, blockNumber: { gt: fromBlock } },
+      orderBy: { blockNumber: 'asc' },
+    });
+    if (newTxns.length === 0) continue;
+
+    const touched = new Set();
+    for (const tx of newTxns) {
+      touched.add(tx.from.toLowerCase());
+      touched.add(tx.to.toLowerCase());
+    }
+    touched.delete(ZERO_ADDR);
+    const existing = await prisma.pixelAccrual.findMany({
+      where: { assetType: asset.type, address: { in: [...touched] } },
+    });
+    const state = new Map(existing.map((r) => [r.address, r]));
+
+    let maxBlock = fromBlock;
+    for (const tx of newTxns) {
+      if (tx.blockNumber > maxBlock) maxBlock = tx.blockNumber;
+      const from = tx.from.toLowerCase();
+      const to = tx.to.toLowerCase();
+      if (from === to) continue;
+      for (const [addr, delta] of [
+        [from, -BigInt(tx.value)],
+        [to, BigInt(tx.value)],
+      ]) {
+        if (addr === ZERO_ADDR) continue;
+        let s = state.get(addr);
+        if (!s) {
+          s = { address: addr, assetType: asset.type, balance: '0', pixels: 0, refTime: 0 };
+          state.set(addr, s);
+        }
+        // accrue the balance held since the last change, then apply this one
+        s.pixels += pixelsForSpan(BigInt(s.balance), s.refTime, tx.blockTimestamp);
+        s.balance = (BigInt(s.balance) + delta).toString();
+        if (tx.blockTimestamp > s.refTime) s.refTime = tx.blockTimestamp;
+      }
+    }
+
+    for (const s of state.values()) {
+      await prisma.pixelAccrual.upsert({
+        where: { address_assetType: { address: s.address, assetType: asset.type } },
+        update: { balance: s.balance, pixels: s.pixels, refTime: s.refTime },
+        create: {
+          address: s.address,
+          assetType: asset.type,
+          balance: s.balance,
+          pixels: s.pixels,
+          refTime: s.refTime,
+        },
+      });
+    }
+    await prisma.rewardType.update({
+      where: { type: asset.type },
+      data: { pointsBlockProcessed: maxBlock },
+    });
+    console.log(
+      `[${asset.label}] folded ${newTxns.length} new transfers into ${state.size} accruals; pointsBlockProcessed=${maxBlock}.`
+    );
+  }
+}
+
 async function updateEarnedPoints() {
   const now = Math.floor(Date.now() / 1000);
-  // Load ALL token transactions ONCE and bucket them in memory, instead of
-  // running two queries per holder per asset (the old O(holders × assets)
-  // N+1). Same inputs to computePixels — each address gets the txns where it
-  // is either sender or receiver, ordered by block — so the result is
-  // identical, just far fewer round-trips.
+  await foldNewTransfersIntoAccruals();
+
+  // One small row per (holder, asset) — bounded by holder count, not history.
   // Holders are derived from on-chain activity, NOT the User table: a wallet
   // earns pixels for HOLDING SAGE whether or not it ever visited the site.
-  const allTxns = await prisma.tokenTransaction.findMany({
-    orderBy: { blockNumber: 'asc' },
-  });
-  // assetType -> (addressLower -> txns[])
-  const byAssetAddr = new Map();
-  const holders = new Set();
-  for (const tx of allTxns) {
-    const from = tx.from.toLowerCase();
-    const to = tx.to.toLowerCase();
-    holders.add(from);
-    holders.add(to);
-    if (!byAssetAddr.has(tx.assetType)) byAssetAddr.set(tx.assetType, new Map());
-    const addrMap = byAssetAddr.get(tx.assetType);
-    for (const addr of [from, to]) {
-      if (!addrMap.has(addr)) addrMap.set(addr, []);
-      addrMap.get(addr).push(tx);
-    }
+  const accruals = await prisma.pixelAccrual.findMany();
+  const byHolder = new Map();
+  for (const a of accruals) {
+    if (!byHolder.has(a.address)) byHolder.set(a.address, []);
+    byHolder.get(a.address).push(a);
   }
-  holders.delete(ZERO_ADDR);
 
   // Classify contract-vs-EOA in parallel (bounded) rather than one blocking
   // eth_getCode per holder — each is an independent RPC.
-  const holderList = [...holders];
+  const holderList = [...byHolder.keys()];
   const contractFlags = await mapWithConcurrency(holderList, 8, (h) => isContract(h));
   const isContractByAddr = new Map(holderList.map((h, i) => [h, contractFlags[i]]));
 
@@ -266,16 +316,13 @@ async function updateEarnedPoints() {
     const walletAddress = ethers.utils.getAddress(lower);
     let totalPixels = 0;
     const balances = {};
-    let hasActivity = false;
-    for (const asset of ASSETS) {
-      const txs = byAssetAddr.get(asset.type)?.get(lower);
-      if (!txs || txs.length === 0) continue;
-      hasActivity = true;
-      const { pixels, balance } = computePixels(txs, lower, now);
-      totalPixels += pixels;
-      balances[asset.label] = (Number(balance / WEI) + Number(balance % WEI) / 1e18).toFixed(2);
+    for (const a of byHolder.get(lower)) {
+      const balance = BigInt(a.balance);
+      // stored pixels run through refTime; the held balance keeps earning to now
+      totalPixels += a.pixels + pixelsForSpan(balance, a.refTime, now);
+      const label = ASSETS.find((x) => x.type === a.assetType)?.label || a.assetType;
+      balances[label] = (Number(balance / WEI) + Number(balance % WEI) / 1e18).toFixed(2);
     }
-    if (!hasActivity) continue;
     const rounded = Math.floor(totalPixels);
     const signedMessage = await signPointsBalance(walletAddress, rounded);
     // EarnedPoints.address FKs to User.walletAddress, so ensure a minimal account
