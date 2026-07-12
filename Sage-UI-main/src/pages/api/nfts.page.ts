@@ -48,17 +48,22 @@ export default async function handler(request: NextApiRequest, response: NextApi
  */
 async function deployContractMetadata(request: NextApiRequest, response: NextApiResponse) {
   console.log(`deployContractMetadata()`);
-  const { artistAddress, contractAddress } = request.body;
+  const { artistAddress, contractAddress, displayName } = request.body;
   const artist = await prisma.user.findUnique({ where: { walletAddress: artistAddress } });
   if (!artist) {
     response.status(500).end();
     return;
   }
+  // pseudonym artists (display name on the drop, no profile username) used
+  // to produce name:null here — a nameless collection on marketplaces
+  const name = displayName || artist.username || 'SAGE';
   const contractMetadata = {
-    name: artist.username,
-    description: artist.bio,
-    image: artist.bannerImageS3Path,
-    external_link: `${process.env.NEXTAUTH_URL}creators/${artist.username}`,
+    name,
+    description: artist.bio || undefined,
+    image: artist.bannerImageS3Path || undefined,
+    external_link: artist.username
+      ? `${process.env.NEXTAUTH_URL}creators/${artist.username}`
+      : process.env.NEXTAUTH_URL,
     seller_fee_basis_points: 1200,
     fee_recipient: contractAddress,
   };

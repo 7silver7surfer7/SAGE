@@ -387,7 +387,12 @@ async function signOffer(
 export async function fetchOrCreateNftContract(
   artistAddress: string,
   signer: Signer,
-  fetchWithBQ: any
+  fetchWithBQ: any,
+  // On-chain ERC-721 name for a NEW contract — external marketplaces title
+  // the whole collection with it, so 'SAGE' for every artist made every drop
+  // show up as "SAGE" (2026-07-12 rMonet complaint). Callers that know the
+  // artist's display name (deployDrop knows the drop pseudonym) pass it here.
+  displayName?: string | null
 ): Promise<string> {
   // check db for existing nft contract
   const { data } = await fetchWithBQ(`drops?action=GetNftContractAddress&address=${artistAddress}`);
@@ -407,7 +412,8 @@ export async function fetchOrCreateNftContract(
       nftFactoryContract,
       signer,
       artistAddress,
-      fetchWithBQ
+      fetchWithBQ,
+      displayName
     );
   }
   // update db
@@ -422,9 +428,15 @@ async function createNftContract(
   factory: NFTFactory,
   signer: Signer,
   artistAddress: string,
-  fetchWithBQ: any
+  fetchWithBQ: any,
+  displayName?: string | null
 ): Promise<string> {
   var tx: ContractTransaction;
+  // ERC-721 name/symbol are immutable and title the artist's collection on
+  // external marketplaces — prefer the artist's display name over 'SAGE'.
+  const contractName = displayName?.trim() || 'SAGE';
+  const contractSymbol =
+    contractName.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'SAGE';
   // Pick the deploy path by the roles the signer actually holds on-chain,
   // not by self-vs-other: deployByArtist requires role.artist and reverts at
   // gas estimation otherwise (error with no wallet prompt). An admin deploying
@@ -435,11 +447,13 @@ async function createNftContract(
   const adminRole = ethers.utils.id('role.admin');
   const isSelf = artistAddress.toLowerCase() == signerAddress.toLowerCase();
   if (isSelf && (await storageContract.hasRole(artistRole, signerAddress))) {
-    console.log(`createNftContract() :: deployByArtist as ${signerAddress}`);
-    tx = await factory.deployByArtist('SAGE', 'SAGE');
+    console.log(`createNftContract() :: deployByArtist as ${signerAddress} ("${contractName}")`);
+    tx = await factory.deployByArtist(contractName, contractSymbol);
   } else if (await storageContract.hasRole(adminRole, signerAddress)) {
-    console.log(`createNftContract() :: deployByAdmin for artist ${artistAddress}`);
-    tx = await factory.deployByAdmin(artistAddress, 'SAGE', 'SAGE', 8333); // artist share is 83,33%
+    console.log(
+      `createNftContract() :: deployByAdmin for artist ${artistAddress} ("${contractName}")`
+    );
+    tx = await factory.deployByAdmin(artistAddress, contractName, contractSymbol, 8333); // artist share is 83,33%
   } else {
     throw new Error(
       `Wallet ${signerAddress} holds neither role.artist nor role.admin on-chain, ` +
@@ -455,7 +469,7 @@ async function createNftContract(
   const { data: response } = await fetchWithBQ({
     url: `nfts?action=DeployContractMetadata`,
     method: 'POST',
-    body: { artistAddress, contractAddress },
+    body: { artistAddress, contractAddress, displayName: contractName },
   });
   const metadataURL = (response as any).metadataURL;
   console.log(`createNftContract() :: Setting contract metadata to ${metadataURL}`);

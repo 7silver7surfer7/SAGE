@@ -609,7 +609,14 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   //await processSplitter(drop.SecondarySplitter, signer, fetchWithBQ);
   //await createNftCollection(drop, signer);
   const artistNftContractAddress = await deployStep('artist NFT contract', () =>
-    fetchOrCreateNftContract(drop.artistAddress, signer, fetchWithBQ)
+    // display name becomes the ERC-721 name of a NEW contract (external
+    // marketplaces title the collection with it — never plain 'SAGE')
+    fetchOrCreateNftContract(
+      drop.artistAddress,
+      signer,
+      fetchWithBQ,
+      (drop as any).artistDisplayName || drop.NftContract?.Artist?.username
+    )
   );
   if (artistNftContractAddress == ethers.constants.AddressZero) {
     throw new Error('Unable to deploy a new artist NFT contract');
