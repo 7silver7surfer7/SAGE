@@ -37,6 +37,9 @@ function shouldDeployContract(name) {
             return true;
         case "Collection":
             return true; // SageCollection — fixed-price sequential collection mints
+        case "Config":
+            return true; // SageConfig — uint KV (share.primaryArtist dial); was an
+        // ad-hoc step on testnet (0x3f7eAB9e...), baked in for fresh deploys
         case "RNGTemp":
             return false; // superseded by SageRNG (deployed via the "RNG" step)
     }
@@ -69,6 +72,28 @@ saveAddress = (key, newAddress) => {
     src = src.replace(blockRe, block);
     fse.writeFileSync(configPath, src);
     console.log(`  saved ${key} = ${newAddress}`);
+};
+
+// SageConfig: uint key-value store (role.admin/multisig gated) that the game
+// contracts read the platform primary-sale cut from (key share.primaryArtist,
+// fallback 8000 while unset). Must be registered in SageStorage under
+// address.config or every contract just uses the fallback.
+deployConfig = async storage => {
+    const configAddress = CONTRACTS[hre.network.name]["configAddress"];
+    const Config = await hre.ethers.getContractFactory("SageConfig");
+    if (shouldDeployContract("Config")) {
+        const config = await Config.deploy(storage.address);
+        await config.deployed();
+        console.log("SageConfig deployed to:", config.address);
+        saveAddress("configAddress", config.address);
+        await storage.setAddress(
+            ethers.utils.solidityKeccak256(["string"], ["address.config"]),
+            config.address
+        );
+        console.log("Registered address.config in SageStorage");
+        return [config, true];
+    }
+    return [configAddress ? Config.attach(configAddress) : null, false];
 };
 
 deployRewards = async (deployer, sageStorage) => {
@@ -346,6 +371,10 @@ async function main() {
     result = await deployStorage(deployer);
     storage = result[0];
     newStorage = result[1];
+
+    result = await deployConfig(storage);
+    sageConfig = result[0];
+    newConfig = result[1];
 
     result = await deployWhitelist();
     whitelist = result[0];

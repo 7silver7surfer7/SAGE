@@ -24,6 +24,7 @@ CONTRACTS = {
     },
     robinhoodTestnet: {
         adminAddress: "0xBC98E7213CB80ed5DEB649acEdC2dF9FCA1410dc", // hardware wallet: gets role.admin
+        configAddress: "0x3f7eAB9e5e577d91FE4f8aF59203aba1b352a3E0", // SageConfig (share.primaryArtist dial)
         whitelistAddress: "0xDA0d07dF56c01fb8278731626b81215d32A3de6a",
         marketplaceAddress: "0x5812c7B4ce6386fD6A49Cc62c0457f47c3927FFd",
         storageAddress: "0x43E26D8B5c559DECb09d65F325e1405589775BA2",
@@ -41,7 +42,13 @@ CONTRACTS = {
         chainlinkSubscriptionId: 0
     },
     robinhood: {
-        adminAddress: "0xBC98E7213CB80ed5DEB649acEdC2dF9FCA1410dc", // hardware wallet: gets role.admin
+        // Mainnet admin/multisig (user decision 2026-07-12): the 0x3E09 EOA that
+        // also receives platform primary cuts + royalties. Gets role.admin here;
+        // ALSO pass it as STORAGE_ADMIN at deploy so it becomes SageStorage's
+        // multisig() (2nd constructor arg) — otherwise that silently defaults to
+        // the hot deployer key.
+        adminAddress: "0x3E099aF007CaB8233D44782D8E6fe80FECDC321e",
+        configAddress: "",
         whitelistAddress: "",
         marketplaceAddress: "",
         storageAddress: "",
