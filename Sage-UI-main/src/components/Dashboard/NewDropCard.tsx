@@ -4,7 +4,7 @@ import { useApproveAndDeployDropMutation, useDeleteDropMutation } from '@/store/
 import { Signer } from 'ethers';
 import { useState } from 'react';
 import { toast } from 'react-toastify';
-import { useSigner } from 'wagmi';
+import { useConnect, useSigner } from 'wagmi';
 import LoaderSpinner from '../LoaderSpinner';
 import { BaseMedia, PfpImage } from '../Media/BaseMedia';
 import { NewDropDetailsModal } from './NewDropDetailsModal';
@@ -30,6 +30,28 @@ function arweaveTxid(url?: string | null): string | null {
 
 export default function NewDropCard({ drop }: Props) {
   const { data: signer } = useSigner();
+  const { connectAsync, connectors } = useConnect();
+
+  /**
+   * The dashboard has NO wallet-connect control of its own, and the SIWE
+   * session outlives wagmi's connection state — so a page load after the
+   * wagmi.connected flag was cleared (wallet switch, disconnect, network
+   * shuffle) left admins session-authenticated but signer-less, and the old
+   * `!signer → toast` dead-ended with a misleading "Sign In With Ethereum"
+   * (2026-07-12, blocked the rMonet mainnet deploy). Reconnect the injected
+   * wallet on demand instead — MetaMask already authorizes the site, so this
+   * is silent, no popup.
+   */
+  const ensureSigner = async (): Promise<Signer | null> => {
+    if (signer) return signer as Signer;
+    try {
+      const res = await connectAsync({ connector: connectors[0] });
+      return (await res.connector.getSigner()) as Signer;
+    } catch {
+      toast.info('Connect your wallet to continue');
+      return null;
+    }
+  };
   const [approveAndDeployDrop, { isLoading: isDeploying }] = useApproveAndDeployDropMutation();
   const [deleteDrop, { isLoading: isDeleting }] = useDeleteDropMutation();
   const { isOpen, closeModal, openModal } = useModal();
@@ -111,20 +133,16 @@ export default function NewDropCard({ drop }: Props) {
   };
 
   const handleApproveBtnClick = async () => {
-    if (!signer) {
-      toast.info('Sign In With Ethereum before continuing');
-      return;
-    }
+    const s = await ensureSigner();
+    if (!s) return;
     // success/failure toasts (with the failing step and reason) come from the
     // mutation itself
-    await approveAndDeployDrop({ dropId: drop.id, signer: signer as Signer });
+    await approveAndDeployDrop({ dropId: drop.id, signer: s });
   };
 
   const handleDeleteBtnClick = async () => {
-    if (!signer) {
-      toast.info('Sign In With Ethereum before continuing');
-      return;
-    }
+    const s = await ensureSigner();
+    if (!s) return;
     if (confirm(`Permanently delete drop ${drop.id}?`)) {
       await deleteDrop(drop.id);
       toast.success(`Drop ${drop.id} has been deleted.`);
