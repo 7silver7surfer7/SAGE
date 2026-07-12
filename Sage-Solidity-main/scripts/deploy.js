@@ -10,7 +10,30 @@ const MINTER_ROLE = keccak256("MINTER_ROLE");
 
 const timer = ms => new Promise(res => setTimeout(res, ms));
 
+// contracts.js key that records each contract's deployed address
+const ADDRESS_KEYS = {
+    Whitelist: "whitelistAddress",
+    Rewards: "rewardsAddress",
+    RNG: "randomnessAddress",
+    Lottery: "lotteryAddress",
+    Auction: "auctionAddress",
+    Factory: "factoryAddress",
+    Storage: "storageAddress",
+    Marketplace: "marketplaceAddress",
+    OpenEdition: "openEditionAddress",
+    Collection: "collectionAddress",
+    Config: "configAddress"
+};
+
 function shouldDeployContract(name) {
+    // RESUME-SAFE (2026-07-12, added for the mainnet rollout over a flaky
+    // RPC): a contract whose address is already saved for this network is
+    // NOT redeployed — saveAddress persists after every success, so simply
+    // re-running the script continues from the first missing contract.
+    // To force a redeploy, blank the address in contracts.js (that has
+    // always been the selective-redeploy lever anyway).
+    const saved = CONTRACTS[hre.network.name][ADDRESS_KEYS[name]];
+    if (saved) return false;
     // Fresh Robinhood Chain deploy: deploy the full suite. Flip individual
     // entries to false to re-run against an already-deployed contract.
     // (2026-07-11: Factory+Marketplace were redeployed alone twice — royalty
@@ -352,6 +375,55 @@ setRandomGenerator = async (lottery, rng) => {
     await lottery.setRandomGenerator(rng, { gasLimit: 4000000 });
 };
 
+/**
+ * Robinhood mainnet's public RPC intermittently drops requests under burst
+ * load (bare HttpProviderError, ~every 2nd-3rd call during the 2026-07-12
+ * deploy). Wrap the network provider with retry+backoff so one dropped HTTP
+ * request doesn't kill a 40-transaction deploy. Genuine reverts are NOT
+ * retried (they surface as provider errors with revert data, not HTTP
+ * failures). A re-sent eth_sendRawTransaction that the node already accepted
+ * ("already known"/"nonce too low") is treated as success — the tx hash is
+ * just the keccak of the signed payload we already hold.
+ */
+function installRpcRetry() {
+    // Patch the CLASS, not hre.network.provider: that object is a lazy-init
+    // Proxy whose property reads forward to an inner provider, so assigning
+    // a method on it never intercepts anything.
+    const { HttpProvider } = require("hardhat/internal/core/providers/http");
+    const orig = HttpProvider.prototype.request;
+    HttpProvider.prototype.request = async function (args) {
+        let lastErr;
+        for (let i = 0; i < 8; i++) {
+            try {
+                return await orig.call(this, args);
+            } catch (e) {
+                const msg = String((e && e.message) || e);
+                console.warn(
+                    `    rpc error on ${args.method}: msg="${msg.slice(0, 120)}" code=${e && e.code} data=${JSON.stringify(e && e.data || null).slice(0, 120)}`
+                );
+                if (
+                    args.method === "eth_sendRawTransaction" &&
+                    /already known|nonce too low|ALREADY_EXISTS/i.test(msg)
+                ) {
+                    // earlier attempt actually landed — recover its hash
+                    return ethers.utils.keccak256(args.params[0]);
+                }
+                const transient = /HttpProviderError|ETIMEDOUT|ECONNRESET|socket hang up|502|503|429|fetch failed|other side closed/i.test(
+                    msg
+                );
+                if (!transient) throw e;
+                lastErr = e;
+                const wait = 1500 * (i + 1);
+                console.warn(
+                    `    rpc retry ${i + 1}/8 for ${args.method} in ${wait}ms (${msg.slice(0, 80)})`
+                );
+                await timer(wait);
+            }
+        }
+        throw lastErr;
+    };
+}
+
 async function main() {
     // Hardhat always runs the compile task when running scripts with its command
     // line interface.
@@ -359,6 +431,8 @@ async function main() {
     // If this script is run directly using `node` you may want to call compile
     // manually to make sure everything is compiled
     //await hre.run('compile');
+
+    installRpcRetry();
 
     const deployer = await ethers.getSigner();
 
@@ -411,6 +485,41 @@ async function main() {
     result = await deployAuction(deployer, storage);
     auction = result[0];
     newAuction = result[1];
+
+    // FINALIZE=1: (re-)run EVERY wiring step against the saved addresses.
+    // Every call here is idempotent (setters + grantRole), so this is safe to
+    // repeat. Needed because a flaky RPC can split the deploy across several
+    // resume runs, leaving the all-new wiring branch below never taken and
+    // the per-contract else branch missing the one-time steps (role.admin,
+    // points signer, address.config/address.marketplace registrations).
+    if (process.env.FINALIZE) {
+        console.log("FINALIZE: wiring all references, roles and registrations");
+        const key = s => ethers.utils.solidityKeccak256(["string"], [s]);
+        await storage.setAddress(key("address.config"), sageConfig.address);
+        await storage.setAddress(key("address.marketplace"), marketplace.address);
+        await randomness.setLotteryAddress(lottery.address);
+        await lottery.setRandomGenerator(randomness.address);
+        await lottery.setRewardsContract(rewards.address);
+        await storage.grantRole(key("role.points"), lottery.address);
+        await storage.grantRole(key("role.minter"), lottery.address);
+        await storage.grantRole(key("role.minter"), auction.address);
+        await storage.grantRole(key("role.points"), openEdition.address);
+        await storage.grantRole(key("role.minter"), openEdition.address);
+        await storage.grantRole(key("role.minter"), collection.address);
+        const adminAddress = CONTRACTS[hre.network.name]["adminAddress"];
+        if (adminAddress) {
+            await storage.grantRole(key("role.admin"), adminAddress);
+            console.log("Granted role.admin to", adminAddress);
+        }
+        await lottery.setSignerAddress(deployer.address);
+        console.log("Lottery points signer set to deployer", deployer.address);
+        console.log("FINALIZE complete");
+        const artifactsPath = path.join(".", "artifacts", "contracts");
+        const webAssetPath = path.join("..", "Sage-UI-main", "src", "constants", "abis");
+        fse.copySync(artifactsPath, webAssetPath, { overwrite: true });
+        return;
+    }
+
     // if launching from scratch, update all contract references and roles just once
     if (newRandomness && newFactory && newLottery && newRewards) {
         console.log("Updating all references and roles");

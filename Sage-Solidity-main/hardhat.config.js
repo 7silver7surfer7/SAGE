@@ -47,7 +47,13 @@ module.exports = {
         robinhood: {
             url: "https://rpc.mainnet.chain.robinhood.com",
             accounts: process.env.DEPLOYER_PK ? [process.env.DEPLOYER_PK] : [],
-            chainId: 4663
+            chainId: 4663,
+            // Pin a legacy gas price: hardhat's EIP-1559 path calls
+            // eth_feeHistory, which crashes on this hardhat+Node combo
+            // ("Do not know how to serialize a BigInt", masked as
+            // HttpProviderError) and its fallback lowballs maxFeePerGas
+            // below the live base fee (~0.052 gwei). 0.15 gwei ≈ 3x base.
+            gasPrice: 150000000
         },
         robinhoodTestnet: {
             url: "https://rpc.testnet.chain.robinhood.com",
