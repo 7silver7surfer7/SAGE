@@ -142,9 +142,9 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, c
               )}
               {/* <p className='drop-page__header-drop-description'>{dropDescription}</p> */}
               <div className='drop-page__header-drop-details'>
-                <p className='drop-page__header-drop-details-item'>
-                  <strong>Minted by:</strong> {artistName}
-                </p>
+                {/* "Minted by: <artist>" removed 2026-07-12 (user request): the
+                    header already says "by <artist>", repeating it here read
+                    as if the artist had minted the pieces themselves */}
                 <p className='drop-page__header-drop-details-item'>
                   <strong>Creation date:</strong> {createdAt}
                 </p>
