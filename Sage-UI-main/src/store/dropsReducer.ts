@@ -926,15 +926,44 @@ async function runCollectionPipeline(
     )
   );
 
-  // Long-running server job; poll its DB-reported progress in parallel so the
-  // dashboard shows movement ("34/200 bundled") instead of a silent spinner.
+  // Long-running server job. The kickoff request is FIRE-AND-FORGET and the
+  // DB status poll is the source of truth for completion: Cloudflare cuts
+  // origin responses at ~100s, so awaiting the request itself made any zip
+  // that outlives that look like a failure in the dashboard while the server
+  // (which keeps running after the client disconnects, and checkpoints its
+  // work) actually finished fine — same shape as the 2026-07-12 "rMonet"
+  // banner-upload timeout.
   const stepId = dropProgress.begin('Bundling images to Arweave (this can take a while)');
-  const poller = setInterval(async () => {
-    try {
-      const { data } = await fetchWithBQ(
-        `endpoints/dropUpload?action=GetCollectionStatus&id=${collectionMintId}`
-      );
-      const progress = (data as any)?.progress ? JSON.parse((data as any).progress) : null;
+  // kickoff: swallow transport errors — the status poll decides success/failure
+  fetch(`/api/endpoints/dropUpload/?action=ProcessCollectionZip&id=${collectionMintId}`).catch(
+    () => {}
+  );
+  try {
+    // Poll until the job reports a terminal status. No client-side deadline —
+    // thousands-of-images zips legitimately take a long time, and the server
+    // marks status 'failed' (reason in progress.error) on any hard stop.
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 5000));
+      let cm: any;
+      try {
+        const { data } = await fetchWithBQ(
+          `endpoints/dropUpload?action=GetCollectionStatus&id=${collectionMintId}`
+        );
+        cm = data;
+      } catch {
+        continue; // transient poll failure — keep waiting
+      }
+      const progress = cm?.progress ? JSON.parse(cm.progress) : null;
+      if (cm?.status === 'done') {
+        dropProgress.complete(
+          stepId,
+          `${cm.maxSupply} images live — manifest ${String(cm.manifestId).slice(0, 8)}…`
+        );
+        return;
+      }
+      if (cm?.status === 'failed') {
+        throw new Error(progress?.error || 'processing failed — see server logs');
+      }
       if (progress?.imagesTotal) {
         dropProgress.update(
           stepId,
@@ -942,29 +971,10 @@ async function runCollectionPipeline(
             `${progress.bundlesPosted?.length ?? 0} bundle tx${(progress.bundlesPosted?.length ?? 0) === 1 ? '' : 's'} posted`
         );
       }
-    } catch {
-      /* polling is cosmetic */
     }
-  }, 5000);
-  try {
-    // plain fetch (not fetchWithBQ): this request stays open for the whole
-    // server-side job — possibly many minutes for thousands of images
-    const res = await fetch(
-      `/api/endpoints/dropUpload/?action=ProcessCollectionZip&id=${collectionMintId}`
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data?.error) {
-      throw new Error(data?.error || `processing failed (HTTP ${res.status})`);
-    }
-    dropProgress.complete(
-      stepId,
-      `${data.maxSupply} images live — manifest ${String(data.manifestId).slice(0, 8)}…`
-    );
   } catch (e: any) {
     dropProgress.fail(stepId, e?.message);
     throw e;
-  } finally {
-    clearInterval(poller);
   }
 }
 

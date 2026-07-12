@@ -92,10 +92,18 @@ export async function sendArweaveTransaction(
   // behind the committed tx (minutes+), so a still-lagging read here does NOT
   // mean the upload failed. Re-post once (often speeds availability); proceed
   // regardless. The pre-mint gate re-checks before any on-chain mint.
-  if (!(await isDataRetrievable(tx.id))) {
+  //
+  // KEEP THE PROBES SHORT: this runs inside synchronous dashboard requests
+  // and Cloudflare cuts origin responses at ~100s. The full default backoff
+  // (~35s per probe, two probes, and a banner uploads TWICE — raw+optimized)
+  // pushed one request to 144s: Cloud Run logged 200 but the browser saw a
+  // CF timeout and reported "Arweave upload failed" for an upload that had
+  // SUCCEEDED (2026-07-12 "rMonet"). Short probes are enough — the bytes are
+  // committed either way and the S3 mirror serves them immediately.
+  if (!(await isDataRetrievable(tx.id, 3))) {
     console.warn(`sendArweaveTransaction() :: ${tx.id} not readable yet, re-posting chunks…`);
     await postChunks();
-    const readable = await isDataRetrievable(tx.id);
+    const readable = await isDataRetrievable(tx.id, 2);
     console.log(
       `sendArweaveTransaction() :: ${tx.id} ${readable ? 'now readable' : 'still propagating (committed)'}`
     );
