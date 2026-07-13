@@ -12,7 +12,9 @@ import {
   addToWhitelistOnChain,
   isWhitelistedOnChain,
   setCollectionWhitelistOnChain,
+  setContractMetadataOnChain,
 } from '@/utilities/serverWallet';
+import { sendArweaveTransaction } from '@/utilities/arweave-server';
 import { createHash } from 'crypto';
 import prisma from '@/prisma/client';
 import sharp from 'sharp';
@@ -36,6 +38,7 @@ const ACTION_ROLES: Record<string, Role[]> = {
   UpdateLotteryContractAddress: [Role.ADMIN],
   UpdateOpenEditionContractAddress: [Role.ADMIN],
   UpdateCollectionContractAddress: [Role.ADMIN],
+  UpdateCollectionNftContract: [Role.ADMIN],
   UpdateApprovedDateAndIsLiveFlags: [Role.ADMIN],
   DeleteDrop: [Role.ADMIN],
   DeleteDrops: [Role.ADMIN],
@@ -112,6 +115,9 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       break;
     case 'UpdateCollectionContractAddress':
       await updateCollectionContractAddress(Number(id), address as string, response);
+      break;
+    case 'UpdateCollectionNftContract':
+      await updateCollectionNftContract(Number(id), address as string, response);
       break;
     case 'UpdateApprovedDateAndIsLiveFlags':
       await updateApprovedDateAndIsLiveFlags(Number(id), walletAddress as string, response);
@@ -410,6 +416,55 @@ async function updateOpenEditionContractAddress(
   } catch (e) {
     console.log(e);
     response.status(500);
+  }
+}
+
+/**
+ * Persists the DEDICATED per-drop SageNFT a collection mints into (deployed
+ * client-signed during drop approval, named after the DROP so marketplaces
+ * title the collection correctly), then uploads drop-level contract metadata
+ * to Arweave and sets contractURI server-side — that call needs storage
+ * DEFAULT_ADMIN, which only the platform key holds.
+ */
+async function updateCollectionNftContract(
+  id: number,
+  nftContractAddress: string,
+  response: NextApiResponse
+) {
+  console.log(`updateCollectionNftContract(${id}, ${nftContractAddress})`);
+  try {
+    const cm = await prisma.collectionMint.update({
+      where: { id },
+      data: { nftContractAddress: nftContractAddress.toLowerCase() },
+      include: { Drop: true },
+    });
+    try {
+      const metadata = {
+        name: cm.Drop.name,
+        description: cm.Drop.description || undefined,
+        image: cm.Drop.bannerImageS3Path || undefined,
+        external_link: `${process.env.NEXTAUTH_URL}drops/${cm.dropId}`,
+        seller_fee_basis_points: Math.round((cm.Drop.royaltyPercentage ?? 12) * 100),
+        fee_recipient: nftContractAddress,
+      };
+      const { tx } = await sendArweaveTransaction(
+        'contract-metadata.json',
+        Buffer.from(JSON.stringify(metadata), 'utf-8') as any,
+        'application/json'
+      );
+      const txHash = await setContractMetadataOnChain(
+        nftContractAddress,
+        `https://arweave.net/${tx.id}`
+      );
+      console.log(`updateCollectionNftContract() :: contractURI set (${txHash})`);
+    } catch (e: any) {
+      // metadata is display-sugar — its failure must not fail the deploy step
+      console.warn(`updateCollectionNftContract() :: contractURI skipped:`, e?.message || e);
+    }
+    response.json({ ok: true });
+  } catch (e) {
+    console.log(e);
+    response.status(500).json({ error: 'failed to update collection nft contract' });
   }
 }
 

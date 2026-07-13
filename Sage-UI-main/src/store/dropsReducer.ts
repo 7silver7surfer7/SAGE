@@ -12,6 +12,7 @@ import {
 } from '@/utilities/contracts';
 import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.json';
 import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
+import sageNftJson from '@/constants/abis/NFT/SageNFT.sol/SageNFT.json';
 import { parameters, currencyAddressFor, isEthCurrency } from '@/constants/config';
 import { chunk, ALLOWLIST_CHUNK_SIZE } from '@/utilities/allowlist';
 import { fetchOrCreateNftContract } from './nftsReducer';
@@ -1038,6 +1039,45 @@ async function deployCollectionMints(
           `wait for processing to complete (or re-run it from the create form) and re-approve.`
       );
     }
+    // DEDICATED per-drop NFT contract, named after the DROP: external
+    // marketplaces title a collection by ERC-721 name(), so minting into the
+    // artist's shared contract made every drop surface under one collection.
+    // Deployed standalone (not via the factory, which enforces one contract
+    // per artist) — safeMint rights come from the storage-level role.minter
+    // the SageCollection game already holds, and marketplace royalty paths
+    // read artist()/artistShare() straight off the contract. Idempotent:
+    // resume reuses the persisted address.
+    let nftContractAddress = (cm as any).nftContractAddress;
+    if (!nftContractAddress) {
+      const symbol =
+        drop.name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'SAGE';
+      console.log(`deployCollectionMints() :: deploying "${drop.name}" (${symbol}) NFT contract…`);
+      const nftFactory = new ethers.ContractFactory(
+        sageNftJson.abi,
+        sageNftJson.bytecode,
+        signer
+      );
+      const instance = await nftFactory.deploy(
+        drop.name,
+        symbol,
+        parameters.STORAGE_ADDRESS,
+        drop.artistAddress,
+        8333 // artist share of pooled legacy royalties, matches factory default
+      );
+      await instance.deployed();
+      nftContractAddress = instance.address;
+      // stamp the drop's royalty so every token minted carries it
+      const bps = Math.round(((drop as any).royaltyPercentage ?? 12) * 100);
+      const rTx = await instance.setDefaultRoyalty(bps);
+      await rTx.wait();
+      // persist + server sets contractURI (needs the platform key's
+      // storage DEFAULT_ADMIN — a dashboard admin wallet would revert)
+      const { data: saved } = await fetchWithBQ(
+        `drops?action=UpdateCollectionNftContract&id=${cm.id}&address=${nftContractAddress}`
+      );
+      if ((saved as any)?.error) throw new Error((saved as any).error);
+      console.log(`deployCollectionMints() :: dedicated NFT contract ${nftContractAddress}`);
+    }
     const tx = await contract.createCollection({
       startTime: Math.floor(new Date(cm.startTime).getTime() / 1000),
       // null endTime -> closeTime 0 = no deadline, open until sold out
@@ -1046,7 +1086,7 @@ async function deployCollectionMints(
       mintCount: 0,
       limitPerUser: cm.limitPerUser,
       baseUri: cm.baseUri,
-      nftContract: artistNftContractAddress,
+      nftContract: nftContractAddress,
       whitelist: whitelistAddress,
       costTokens: ethers.utils.parseEther(String(cm.costTokens)),
       id: cm.id,

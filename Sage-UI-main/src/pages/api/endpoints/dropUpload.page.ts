@@ -919,7 +919,10 @@ async function registerCollectionMint(
       response.status(404).json({ error: 'Collection not found or not processed' });
       return;
     }
-    const nftContractAddress = cm.Drop.NftContract.contractAddress;
+    // dedicated per-drop contract when the collection has one (named after
+    // the drop for marketplace collection titles); legacy collections
+    // (rMonet) minted into the artist's shared contract
+    const nftContractAddress = cm.nftContractAddress || cm.Drop.NftContract.contractAddress;
     if (!nftContractAddress) {
       response.status(400).json({ error: 'Artist NFT contract not deployed yet' });
       return;

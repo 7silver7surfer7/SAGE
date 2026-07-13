@@ -79,6 +79,11 @@ model CollectionMint {
   dropId           Int
   collectionId     Int? // on-chain collection id (== id, set at deploy/approval)
   contractAddress  String?   @db.Char(42)
+  // Dedicated per-drop SageNFT the collection mints into, named after the
+  // DROP — external marketplaces title collections by ERC-721 name(), so
+  // this makes each collection drop its own marketplace collection. Null =
+  // legacy (minted into the artist's shared contract, e.g. rMonet).
+  nftContractAddress String? @db.Char(42)
   costTokens       Float     @default(0) // mint price in SAGE
   maxSupply        Int // number of images == hard mint cap
   limitPerUser     Int       @default(0) // 0 = unlimited

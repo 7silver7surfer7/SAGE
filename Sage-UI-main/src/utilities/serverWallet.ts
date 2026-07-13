@@ -49,6 +49,22 @@ export async function addToWhitelistOnChain(
   return tx.hash;
 }
 
+/**
+ * Sets a SageNFT's contract-level metadata URL. Requires storage
+ * DEFAULT_ADMIN — only the platform key holds it, which is why this runs
+ * server-side (dashboard admin wallets would revert).
+ */
+export async function setContractMetadataOnChain(
+  nftContractAddress: string,
+  metadataUrl: string
+): Promise<string> {
+  const abi = ['function setContractMetadata(string _contractMetadata)'];
+  const nft = new ethers.Contract(nftContractAddress, abi, getServerSigner());
+  const tx = await nft.setContractMetadata(metadataUrl);
+  await tx.wait();
+  return tx.hash;
+}
+
 /** Points a live on-chain collection at a whitelist (AddressZero un-gates). */
 export async function setCollectionWhitelistOnChain(
   collectionId: number,
