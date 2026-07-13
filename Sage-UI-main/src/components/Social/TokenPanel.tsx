@@ -6,6 +6,7 @@ import {
   useGetProfileTokenQuery,
   useRecordTokenLaunchMutation,
   useRecordAirdropMutation,
+  useToggleHideItemMutation,
 } from '@/store/socialReducer';
 import {
   launchToken,
@@ -94,6 +95,7 @@ export default function TokenPanel({ address, isSelf }: Props) {
   const { data: signer } = useSigner();
   const provider = useProvider();
   const [recordAirdrop] = useRecordAirdropMutation();
+  const [hideItem] = useToggleHideItemMutation();
   const [launchOpen, setLaunchOpen] = useState(false);
   const [price, setPrice] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -177,6 +179,21 @@ export default function TokenPanel({ address, isSelf }: Props) {
           <span className='social-token__price'>
             {price ? price.toPrecision(3) : '0'} ETH / 1M
           </span>
+        )}
+        {isSelf && (
+          <button
+            className='social-hide-link'
+            onClick={async (ev) => {
+              ev.stopPropagation();
+              if (!token) return;
+              try {
+                await hideItem({ kind: 'token', ref: token.tokenAddress.toLowerCase(), hide: true }).unwrap();
+                toast.success('Token hidden from your profile');
+              } catch { toast.error('Could not hide'); }
+            }}
+          >
+            hide
+          </button>
         )}
       </div>
       <div className='social-token__actions'>

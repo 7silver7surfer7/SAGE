@@ -21,6 +21,7 @@ import {
   useSetNftPfpMutation,
   useSetFollowGateMutation,
   useSetProfileImageMutation,
+  useToggleHideItemMutation,
   useToggleGroupChatMutation,
 } from '@/store/socialReducer';
 import { useRef } from 'react';
@@ -74,36 +75,52 @@ function NftPfpPicker({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Grid of post-NFTs this wallet collected. */
-function MintsGrid({ address }: { address: string }) {
+/** Grid of every NFT this wallet holds — posts it collected AND any SAGE NFT
+ * it owns (minted or acquired elsewhere). Owner can hide items. */
+function MintsGrid({ address, isSelf }: { address: string; isSelf: boolean }) {
   const router = useRouter();
   const { data, isFetching } = useGetUserMintsQuery(address);
+  const [hide] = useToggleHideItemMutation();
   if (isFetching && !data) return <LoaderDots />;
   if (!data?.mints.length)
-    return <div className='social__empty'>No collected posts yet.</div>;
+    return <div className='social__empty'>No NFTs yet — collect a post or mint an edition.</div>;
+  const onHide = async (e: React.MouseEvent, ref: string) => {
+    e.stopPropagation();
+    try {
+      await hide({ kind: 'nft', ref, hide: true }).unwrap();
+      toast.success('Hidden from your profile');
+    } catch {
+      toast.error('Could not hide');
+    }
+  };
   return (
     <div className='social-mints'>
-      {data.mints.map((m) => (
-        <div
-          key={`${m.contractAddress}-${m.tokenId}`}
-          className='social-mints__card'
-          onClick={() => router.push(`/social/post/${m.post.id}`)}
-        >
-          {m.post.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={m.post.imageUrl} alt='' />
-          ) : (
-            <p className='social-mints__text'>{m.post.text}</p>
-          )}
-          <div className='social-mints__meta'>
-            <span>SAGE Social #{m.post.id}</span>
-            <span className='social-mints__token'>token {m.tokenId}</span>
+      {data.mints.map((m) => {
+        const img = m.image || m.post?.imageUrl || null;
+        const go = () => (m.post ? router.push(`/social/post/${m.post.id}`) : undefined);
+        return (
+          <div key={m.ref} className='social-mints__card' onClick={go}>
+            {isSelf && (
+              <button className='social-mints__hide' title='Hide from profile' onClick={(e) => onHide(e, m.ref)}>
+                hide
+              </button>
+            )}
+            {img ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={img} alt='' />
+            ) : (
+              <p className='social-mints__text'>{m.post?.text || m.title}</p>
+            )}
+            <div className='social-mints__meta'>
+              <span>{m.title}</span>
+              <span className='social-mints__token'>#{m.tokenId}</span>
+            </div>
+            <div className='social-mints__paid'>
+              {m.source === 'owned' ? 'owned' : m.pointsSpent ? `${m.pointsSpent} pixels` : 'collected'}
+            </div>
           </div>
-          <div className='social-mints__paid'>
-            {m.pointsSpent ? `${m.pointsSpent} pixels` : m.amount > 0 ? `${m.amount} SAGE` : 'free'}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -369,7 +386,7 @@ export default function SocialProfilePage() {
         </button>
       </div>
       {tab === 'mints' ? (
-        <MintsGrid address={profile.address} />
+        <MintsGrid address={profile.address} isSelf={profile.isSelf} />
       ) : (
         <div className='social__feed'>
           {loadingPosts && !postsData ? (

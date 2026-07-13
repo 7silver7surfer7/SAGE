@@ -121,7 +121,16 @@ export async function signCollectVoucher(
  * moment they claim an IP-gated mint spot. Never import from client code.
  */
 function getProvider() {
-  return new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+  const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+  // Robinhood Chain rejects EIP-1559 (type-2) fee fields — force legacy
+  // gasPrice so server-signed txs (mints, whitelist adds, contractURI) don't
+  // fail estimation with a type-2 payload. Same patch the deploy scripts use.
+  const getGasPrice = provider.getGasPrice.bind(provider);
+  provider.getFeeData = async () => {
+    const gasPrice = await getGasPrice();
+    return { gasPrice, maxFeePerGas: null, maxPriorityFeePerGas: null, lastBaseFeePerGas: null };
+  };
+  return provider;
 }
 
 export function getServerSigner(): ethers.Wallet {

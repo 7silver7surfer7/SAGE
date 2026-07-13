@@ -526,6 +526,17 @@ model SocialTokenTrade {
   @@index([tokenAddress, trader])
 }
 
+// Per-user hide list: a wallet can hide a token / edition / owned-NFT from
+// their own profile. ref is the contract or item address (lowercased).
+model SocialHiddenItem {
+  ownerAddress String   @db.Char(42)
+  kind         String   // "token" | "edition" | "nft"
+  ref          String   // address or "contract:tokenId"
+  createdAt    DateTime @default(now())
+  @@id([ownerAddress, kind, ref])
+  @@index([ownerAddress])
+}
+
 model SocialCollect {
   id               Int        @id @default(autoincrement())
   postId           Int

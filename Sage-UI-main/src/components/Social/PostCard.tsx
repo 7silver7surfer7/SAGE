@@ -83,7 +83,50 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [deletePost] = useDeletePostMutation();
   const [busy, setBusy] = useState(false);
   const [showVerify, setShowVerify] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const { openConnectModal } = useConnectModal();
+
+  // client-side hide (mute): persists in localStorage so a hidden post stays
+  // hidden across reloads, no server round-trip. Self-contained — the card
+  // just stops rendering itself.
+  const HIDE_KEY = 'sage-social-hidden';
+  const readHidden = (): number[] => {
+    if (typeof window === 'undefined') return [];
+    try {
+      return JSON.parse(localStorage.getItem(HIDE_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  };
+  const [hidden, setHidden] = useState(() => readHidden().includes(post.id));
+
+  const postUrl = () =>
+    `${typeof window !== 'undefined' ? window.location.origin : ''}/social/post/${post.id}`;
+
+  const onShareCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen(false);
+    navigator.clipboard.writeText(postUrl());
+    toast.success('Link copied');
+  };
+  const onShareX = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen(false);
+    const text = encodeURIComponent(`${post.text?.slice(0, 180) || 'on SAGE Social'}\n\n${postUrl()}`);
+    window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
+  };
+  const onHide = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen(false);
+    const next = Array.from(new Set([...readHidden(), post.id]));
+    try {
+      localStorage.setItem(HIDE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore quota / private-mode failures
+    }
+    setHidden(true);
+    toast.info('Post hidden', { autoClose: 2000 });
+  };
 
   const displayName = post.author.username
     ? transformTitle(post.author.username)
@@ -251,29 +294,16 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     setBusy(true);
     const t = toast.loading(price > 0 ? 'Spending pixels…' : 'Minting…');
     try {
-      const txHash: string | undefined = undefined;
-      // buyer-pays-gas: if the voucher minter is live, the collector submits
-      // the mint themselves (paying its gas) with a server-signed voucher
-      if (parameters.SOCIAL_COLLECT_MINTER_ADDRESS && signer) {
-        const v = await requestVoucher({ postId: post.id, txHash, payWith }).unwrap();
-        toast.update(t, { render: 'Sign to mint your NFT…', isLoading: true });
-        const mintTx = await redeemCollectVoucher(v.minter, v.postId, v.uri, v.signature, signer as any);
-        toast.update(t, {
-          render: `Collected! You minted SAGE Social #${post.id} (${mintTx.slice(0, 10)}…) ⬡`,
-          type: 'success',
-          isLoading: false,
-          autoClose: 6000,
-        });
-      } else {
-        toast.update(t, { render: 'Minting your NFT…', isLoading: true });
-        const r = await collectPost({ postId: post.id, txHash, payWith }).unwrap();
-        toast.update(t, {
-          render: `Collected! SAGE Social #${post.id} is yours (token ${r.tokenId}) ⬡`,
-          type: 'success',
-          isLoading: false,
-          autoClose: 6000,
-        });
-      }
+      // collects are POINTS-only (off-chain payment), so the server mints the
+      // NFT for you — no wallet tx, no gas from the collector. (The
+      // buyer-pays-gas voucher path is only for on-chain-priced sales.)
+      const r = await collectPost({ postId: post.id, payWith }).unwrap();
+      toast.update(t, {
+        render: `Collected! SAGE Social #${post.id} is yours (token ${r.tokenId}) ⬡`,
+        type: 'success',
+        isLoading: false,
+        autoClose: 6000,
+      });
     } catch (err: any) {
       toast.update(t, { render: 'Collect failed', type: 'error', isLoading: false, autoClose: 1 });
       handleGateError(err, 'Collect failed');
@@ -281,6 +311,8 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       setBusy(false);
     }
   };
+
+  if (hidden) return null;
 
   return (
     <article className='social-post' onClick={goToPost} data-boosted={post.isBoosted}>
@@ -305,11 +337,46 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
               <FlameIcon /> Boosted
             </span>
           )}
-          {isOwnPost && (
-            <button className='social-post__delete' title='Delete post' onClick={onDelete}>
-              ✕
+          <div className='social-post__menu-wrap'>
+            <button
+              className='social-post__menu-btn'
+              title='More'
+              aria-label='More'
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((o) => !o);
+              }}
+            >
+              ⋯
             </button>
-          )}
+            {menuOpen && (
+              <>
+                <div
+                  className='social-post__menu-backdrop'
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpen(false);
+                  }}
+                />
+                <div className='social-post__menu' onClick={(e) => e.stopPropagation()}>
+                  <button onClick={onShareCopy}>Copy link</button>
+                  <button onClick={onShareX}>Share on 𝕏</button>
+                  <button onClick={onHide}>Hide this post</button>
+                  {isOwnPost && (
+                    <button
+                      className='social-post__menu-danger'
+                      onClick={(e) => {
+                        setMenuOpen(false);
+                        onDelete(e);
+                      }}
+                    >
+                      Delete post
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
         {post.text && <p className='social-post__text'>{post.text}</p>}
         {post.imageUrl && (

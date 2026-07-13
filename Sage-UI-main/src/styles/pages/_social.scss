@@ -1838,6 +1838,72 @@ $col-width: 620px;
   }
 }
 
+/* per-post overflow menu (share / hide / delete) */
+.social-post__menu-wrap {
+  position: relative;
+  margin-left: auto;
+}
+.social-post__menu-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 6px;
+  border-radius: 6px;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.4);
+  }
+  &:hover {
+    @include m.theme() {
+      color: m.t(contrast);
+      background: rgba(m.t(contrast), 0.06);
+    }
+  }
+}
+.social-post__menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.social-post__menu {
+  position: absolute;
+  top: 22px;
+  right: 0;
+  z-index: 41;
+  min-width: 156px;
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 4px;
+  @include m.theme() {
+    background: m.t(base2);
+    border: 1px solid rgba(m.t(contrast), 0.14);
+  }
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
+  button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 9px 12px;
+    border-radius: 8px;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+    &:hover {
+      @include m.theme() {
+        background: rgba(m.t(contrast), 0.07);
+      }
+    }
+  }
+  &-danger {
+    color: #f6608a !important;
+  }
+}
+
 /* the invite page mark now renders the real (wide) logo */
 .social-invite__mark svg {
   width: 200px;
@@ -2468,4 +2534,42 @@ $col-width: 620px;
   .social-verify__blurb { font-size: 0.82rem; margin-bottom: 10px; line-height: 1.4; }
   .social-search__input { padding: 9px 14px; font-size: 0.9rem; }
   .social-profile__gate-row { align-items: flex-start; }
+}
+
+/* ── small hide link (tip-text size) ── */
+.social-hide-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 0 4px;
+  margin-left: 6px;
+  @include m.theme() { color: rgba(m.t(contrast), 0.4); }
+  &:hover { color: #f6608a; }
+}
+.social-mints__card { position: relative; }
+.social-mints__hide {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.social-mints__card:hover .social-mints__hide { opacity: 1; }
+
+/* ── centering: the launch/token panels sit in the middle column, capped ── */
+.social--profile .social-token,
+.social--profile .social-edition,
+.social .social-token {
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
 }

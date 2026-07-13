@@ -3,7 +3,7 @@ import { toast } from 'react-toastify';
 import { useSigner, useProvider } from 'wagmi';
 import { createEdition, createCollection, mintEdition, editionMinted } from '@/utilities/socialToken';
 import { baseApi } from '@/store/baseReducer';
-import { useCreatePostMutation } from '@/store/socialReducer';
+import { useCreatePostMutation, useToggleHideItemMutation } from '@/store/socialReducer';
 import VerificationModal from './VerificationModal';
 
 interface EditionRow {
@@ -207,6 +207,7 @@ export default function EditionPanel({ address, isSelf }: { address: string; isS
   const [open, setOpen] = useState(false);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
+  const [hideItem] = useToggleHideItemMutation();
 
   useEffect(() => {
     (async () => {
@@ -266,6 +267,19 @@ export default function EditionPanel({ address, isSelf }: { address: string; isS
           >
             {(counts[e.editionAddress] ?? 0) >= e.maxSupply ? 'Sold out' : 'Mint'}
           </button>
+          {isSelf && (
+            <button
+              className='social-hide-link'
+              onClick={async () => {
+                try {
+                  await hideItem({ kind: 'edition', ref: e.editionAddress.toLowerCase(), hide: true }).unwrap();
+                  toast.success('Edition hidden');
+                } catch { toast.error('Could not hide'); }
+              }}
+            >
+              hide
+            </button>
+          )}
         </div>
       ))}
       {!data.editions.length && isSelf && (

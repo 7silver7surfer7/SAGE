@@ -142,6 +142,17 @@ export default function SocialShell({ children }: { children: ReactNode }) {
   const isCurrent = (url: string) =>
     url === '/social' ? router.pathname === '/social' : router.asPath.startsWith(url);
 
+  const goNav = (url: string) => {
+    // Home while already home = jump to the top of the feed (where you post)
+    if (url === '/social' && router.pathname === '/social') {
+      const layout = document.querySelector('.layout');
+      (layout || window).scrollTo({ top: 0, behavior: 'smooth' });
+      document.querySelector<HTMLTextAreaElement>('.social-composer__input')?.focus();
+      return;
+    }
+    router.push(url);
+  };
+
   return (
     <div className='social-shell'>
       <aside className='social-shell__sidebar'>
@@ -155,7 +166,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
               key={item.name}
               className='social-shell__nav-item'
               data-current={isCurrent(item.url)}
-              onClick={() => router.push(item.url)}
+              onClick={() => goNav(item.url)}
             >
               <Icon d={ICONS[item.icon]} />
               <span>{item.name}</span>
@@ -171,7 +182,6 @@ export default function SocialShell({ children }: { children: ReactNode }) {
             <Icon d={ICONS.compose} /> Post
           </button>
         )}
-        {isSignedIn && <ReferCard />}
         {isSignedIn && walletAddress && (
           <button
             className='social-shell__me'
@@ -186,6 +196,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
             </span>
           </button>
         )}
+        {isSignedIn && <ReferCard />}
       </aside>
 
       <main className='social-shell__main'>{children}</main>
@@ -211,7 +222,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
           <button
             key={item.name}
             data-current={isCurrent(item.url)}
-            onClick={() => router.push(item.url)}
+            onClick={() => goNav(item.url)}
             aria-label={item.name}
           >
             <Icon d={ICONS[item.icon]} />
