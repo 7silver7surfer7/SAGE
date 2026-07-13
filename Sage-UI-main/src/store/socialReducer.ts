@@ -508,9 +508,32 @@ const socialApi = baseApi.injectEndpoints({
     }),
     setProfileImage: builder.mutation<
       { ok: boolean; url: string; kind: string },
-      { url: string; kind: 'avatar' | 'banner' }
+      { url: string; kind: 'avatar' | 'banner'; address?: string }
     >({
-      query: (body) => ({ url: 'social?action=SetProfileImage', method: 'POST', body }),
+      query: ({ url, kind }) => ({
+        url: 'social?action=SetProfileImage',
+        method: 'POST',
+        body: { url, kind },
+      }),
+      // Patch the profile cache immediately so the new avatar/banner shows the
+      // instant the upload resolves — no waiting on the invalidation refetch.
+      async onQueryStarted({ url, kind, address }, { dispatch, queryFulfilled }) {
+        if (!address) return;
+        const patch = dispatch(
+          socialApi.util.updateQueryData('getSocialProfile', address, (draft) => {
+            if (kind === 'banner') draft.bannerImageS3Path = url;
+            else {
+              draft.profilePicture = url;
+              draft.pfpVerified = false; // custom avatar clears the NFT ring
+            }
+          })
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
       invalidatesTags: ['SocialProfile', 'SocialFeed', 'User'],
     }),
     requestCollectVoucher: builder.mutation<

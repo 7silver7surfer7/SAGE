@@ -160,7 +160,7 @@ export default function SocialProfilePage() {
       const res = await fetch(`/api/social-upload/?kind=${kind}`, { method: 'POST', body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'upload failed');
-      await setProfileImage({ url: data.url, kind }).unwrap();
+      await setProfileImage({ url: data.url, kind, address }).unwrap();
       toast.update(t, {
         render: `${kind === 'banner' ? 'Banner' : 'Avatar'} updated (${(data.bytes / 1024).toFixed(0)}KB)`,
         type: 'success',
