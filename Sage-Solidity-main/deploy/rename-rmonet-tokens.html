@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rename rMonet Tokens</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 680px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem;
+    max-height: 340px; overflow-y: auto; }
+  .warn { color: #b45309; } .err { color: #dc2626; } .ok { color: #0c9d68; }
+</style>
+</head>
+<body>
+  <h1>Rename rMonet Tokens 🎨</h1>
+  <p class="sub">Re-points each minted token's metadata to its REAL artwork title
+  ("A Hammock Between the Apple Trees" instead of "rMonet #1"). Images are untouched.
+  One transaction per token, each needs your approval — the page walks token by token,
+  skips ones already renamed, and stops at unminted tokens. Safe to close and re-run
+  anytime (e.g. again after sellout). Must be signed by the multisig. MAINNET.</p>
+
+  <div class="card">
+    <div class="row"><span>Network</span><b>Robinhood Chain MAINNET (4663)</b></div>
+    <div class="row"><span>NFT contract (rMonet)</span><code>0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1</code></div>
+    <div class="row"><span>Required signer (multisig)</span><code id="multisig">—</code></div>
+    <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
+    <div class="row"><span>Progress</span><b id="progress">—</b></div>
+  </div>
+
+  <button id="btn" disabled>connect wallet</button>
+  <div class="status" id="status">Connect MetaMask with the multisig wallet selected.</div>
+
+<script>
+const RENAME_MAP = {"1":{"name":"A Hammock Between the Apple Trees","uri":"https://arweave.net/fVf6UyZaEEVutg-dMoIxjIRb3UUE9j-B4w7R2NjEWKk"},"2":{"name":"A Thunderstorm Building Over the Fields","uri":"https://arweave.net/woTx6JqqKnP2SuM4jQaPCSqIbxEe77uAHAuywkMx1W8"},"3":{"name":"A Walk Down the Country Lane","uri":"https://arweave.net/OKqWGQgo4sCc3-vliyfv7VPOnsa9T8t2l9KORM3Hqmc"},"4":{"name":"Autumn Gold on the River","uri":"https://arweave.net/MYp8CpfRHc0SxoMpZlfG-nt032qaPUFWCGWInsdCe_s"},"5":{"name":"Bare Wisteria Vines Over the Pond","uri":"https://arweave.net/W2--3k9Dt7_BXgumwXBmPLo1DATHKq3EqSaJEXK2hqw"},"6":{"name":"Beach at Trouville, High Season","uri":"https://arweave.net/5PpGr1hZL7U6sKcAJMEkXhPES_Rso2jzZGM_XZH1XQ8"},"7":{"name":"Boat Adrift in Morning Fog","uri":"https://arweave.net/ukuPzEQ1Dk5dBS74ij8_WA2N6uSA684BHyPoPoioiwQ"},"8":{"name":"Butterflies Over the Lavender Field","uri":"https://arweave.net/O00YE_HKjJoGG1h3GKSmemkYbr-xnPGC9jrOEQGCUJg"},"9":{"name":"Charing Cross Bridge, Train in the Fog","uri":"https://arweave.net/Cn7zULc81s_xqAvk6LloYtMYkm0eRr4UwfUnpckzbxE"},"10":{"name":"Children at Play in the Garden","uri":"https://arweave.net/elu5B4mF7COZ7ySVHWc6ey-hcxehpqp3lcubONjPQIw"},"11":{"name":"Children Hunting for Easter Eggs","uri":"https://arweave.net/m27xvbFFb-Bt8-T4SAEm8FjRdc6w2iyyMigfqnyrp2M"},"12":{"name":"Cliff Path Above the Sea","uri":"https://arweave.net/goROYb-ybcaiiiaspUld4NbNmYvDGnUTlFh-YFJ6z1k"},"13":{"name":"Evening at the Guinguette, Lanterns and Dancers","uri":"https://arweave.net/NL8_RKEOqAtwPiTNU0CaamxkKlnKRcYq-H49bJnItlM"},"14":{"name":"Evening Lanterns at the Riverside Cafe","uri":"https://arweave.net/Fod6C4Za4sNhiIo4f_Bl-ElyFCfoOBLug06H_d2yVj0"},"15":{"name":"Farm Cart on a Country Lane","uri":"https://arweave.net/hljTBuuDINNEa_8VmnqLIIL_gYeL4wD08Vr3IVIPGQY"},"16":{"name":"Field of Yellow Mustard","uri":"https://arweave.net/gnLC2mowl2NJfygCM09squANBj9v6U-XDiKpJKBKH50"},"17":{"name":"Figures Wading Through the Poppy Field","uri":"https://arweave.net/luThZJvcb-fD81pLLBTao2FNcwnhGdTgjLJlk5oIJY8"},"18":{"name":"Fisherman in a Punt","uri":"https://arweave.net/roLUein6Q9kPZswTiNxMHUSI2Z70-Owj3XhzsSX79EU"},"19":{"name":"Fishing Boats at Low Tide","uri":"https://arweave.net/CyHPhKslADQ-yZj2ugJ-zpQpSoOzojfGk9cXEteMKrU"},"20":{"name":"Fox Tracks Stitching the Snow","uri":"https://arweave.net/HqbLmSvqelWNo-x0N11_6x2omESM-kQwqV9-0P7_dNk"},"21":{"name":"Garden in the Wind","uri":"https://arweave.net/lnyAUbi0clhBKivkX-ssmOK9HDWBdHno2jNib04EIco"},"22":{"name":"Gare Saint-Lazare, Steam and Sunlight","uri":"https://arweave.net/43QLyN56wW-9e-02x1eFkttskQdsaFWKwTxGe-nkVWY"},"23":{"name":"Grain Stacks Under a Summer Storm Sky","uri":"https://arweave.net/n5iON0F3n1U2XxNusZL0qoMp6XhBpgURU_8T2qLFbaw"},"24":{"name":"Grape Harvest on the Hillside","uri":"https://arweave.net/YH6MVhhvsIXagsDtzk-bqbOq0diEKeM0Z3acTSXbTXk"},"25":{"name":"Haystack at Sunset","uri":"https://arweave.net/A3GSk_A2dYJb4zyBZ-khdWLWUNDR73iaKs9X5YvodiA"},"26":{"name":"Haystack in Pink and Gold","uri":"https://arweave.net/zIQzk6ReVSdy5RNF-OLwl70ijO2c4CyTbpSf90X7lQk"},"27":{"name":"Houses of Parliament, Sunset on the Thames","uri":"https://arweave.net/Hsx2_LVeqJyUIyGMmF5z6E_W8X6BoKis6hLVgY5kSh0"},"28":{"name":"Ice Floes on the River","uri":"https://arweave.net/d1iA_i50GNX_DPAHi0bnAbPQJyTHN8A1WajzUbWs6dM"},"29":{"name":"Inside the Greenhouse, Ferns and Orchids","uri":"https://arweave.net/v8pZ9oBv82dkGbGPbu1xHZuc5mV1CeqWcKst2maa7QM"},"30":{"name":"Irises in the Garden","uri":"https://arweave.net/xjF5L_lOhZKHGwKd0PdHuk--9BK8moYb_X_zDu39ecs"},"31":{"name":"Koi Beneath the Lily Pads","uri":"https://arweave.net/G2OTozScPxFjc3WRBjfTnUwA1erJmMIetHkkcYAEVbg"},"32":{"name":"Laundry Drying in the Spring Wind","uri":"https://arweave.net/-YJW1Lv5APfcMbuH_eVsmK5SWj0bdb34YUzX41Zjn9A"},"33":{"name":"Lone Sailboat on a Rough Sea","uri":"https://arweave.net/i_jPLZwYHH2BDgBbScpZlycI3E227OOLY6gFur8vpgo"},"34":{"name":"Lone Tree in a Purple Meadow","uri":"https://arweave.net/S8ycv7QMpl2SAs97VtNrK98lfGKOdrkGh9EInsrklR4"},"35":{"name":"Luncheon in the Dappled Garden","uri":"https://arweave.net/IcuIii1I93d7wmttsodwCq7p8CLmlSeGCM8wzWr42CI"},"36":{"name":"Luncheon on the Grass","uri":"https://arweave.net/_y7myi-rceolPquLxD2cQt4Mu_N_Pf9wxqHzDPyQjlA"},"37":{"name":"Midnight Mass Letting Out","uri":"https://arweave.net/uQsFhOYiobFdySPixT5qQqlM_acJWRxGfYncwdE458I"},"38":{"name":"Moored Boats on the Seine at Dawn","uri":"https://arweave.net/JaQcwzKo1_FL0wI5zz6ZrhxbVEgth7fZqFcv5Go_aOg"},"39":{"name":"Nasturtiums Along the Garden Path","uri":"https://arweave.net/2s_bdNqKHhiAYKiyv1MzoDjdD5RfCox7gCRn4M7upPI"},"40":{"name":"Orchard in Spring Bloom","uri":"https://arweave.net/1QmzyGDNiGQlN1MU8D-9GBL3YDj4Bh07T4I2Y5mmM94"},"41":{"name":"Orchard Trees in First Blossom","uri":"https://arweave.net/fPC4ZcGtn9F5m8MZ64V3G6u3-4jP595zD2UKBBnt334"},"42":{"name":"Parasols on the Beach","uri":"https://arweave.net/uWhRe2gzlLuPXDjK-I8McG91cRyWCeckIYAzaydZkL4"},"43":{"name":"Paris Quai After the Rain","uri":"https://arweave.net/epMY_KK_4R7OHoKuKS8gh32U6Jcgm75eyOr6Uh-lEEI"},"44":{"name":"Path Through the Wheat Field","uri":"https://arweave.net/GBNFHNMlFPJWm__HQpcwS-HYLcd2lGM-8FVfXulleAU"},"45":{"name":"Poplar Avenue in Morning Fog","uri":"https://arweave.net/1cElyE60wmr9CMugJLvcYu13TKO-dJ_rR5_zothfQjA"},"46":{"name":"Poplars Mirrored in the River","uri":"https://arweave.net/dA-AZUe75DmG0lZKVGAwoJZUe2hsa8DxEKuYgzoCIYY"},"47":{"name":"Rain on the Lily Pond","uri":"https://arweave.net/i3c0ne4GlZmv0U1SNOLbAelCHoCIrb5zHk_kU_i8LD8"},"48":{"name":"Rain Stripping the Rose Arch","uri":"https://arweave.net/nokelMQDux1HPwfNTS9eEW3qbdfZroVAHpfnpminQHI"},"49":{"name":"Reading in the Hammock","uri":"https://arweave.net/xQn5SqBJxXLOv7KPXsISP2w0z1xgiA1wzj0Sy5YdZus"},"50":{"name":"Regatta at Argenteuil, Green Sails","uri":"https://arweave.net/A2h3LzZYjYGW_e1KDuw1FsRvpvmsGKjRIr7JF8EqjPc"},"51":{"name":"Regatta at Argenteuil","uri":"https://arweave.net/q2cnK7IO-W2EwmxfyXccDiqvD1eASPC3s4nis4DD2wk"},"52":{"name":"Roses at Their Peak","uri":"https://arweave.net/QWEwK16LAkq0b3-9EInAFJubitb6UfGOxdWOg0HaVTA"},"53":{"name":"Rouen Cathedral at Dusk","uri":"https://arweave.net/5MW459cjN5rNgrN7VQgI7q_opTQbzAgNkoSDMXPZeMg"},"54":{"name":"Rouen Cathedral in Morning Light","uri":"https://arweave.net/YAZ4X7QnTTMm1XqZvyBruqOZOhiRlaqg3HWaZ2J2Oeg"},"55":{"name":"Rowing Home at Sunset","uri":"https://arweave.net/zIaWlnVx0nL0dD705kUeDqoC_gibptD4_SQgCfSFCuo"},"56":{"name":"Sailboats Racing Offshore","uri":"https://arweave.net/VciV1a7jU2eplz8VJVYSDK4lkACysXZPRSg4l3-NoOc"},"57":{"name":"Self-Portrait in the Garden","uri":"https://arweave.net/WuxFw-0EnwVPlwNVxdw9azGY-RseelmGSMcORGxpJWs"},"58":{"name":"Sheep Grazing in the Morning Mist","uri":"https://arweave.net/wgu1doytA8SiK2VXr9NSWby2ST3xNG4JNiE5-_fBDcY"},"59":{"name":"Snow-Laden Garden Path","uri":"https://arweave.net/U7pwShxz1nMX_wd6CMPsX1I_TGfXVEi2zgtPRhsoNQo"},"60":{"name":"Snowy Village Street at Evening","uri":"https://arweave.net/iSPfFJdV8F7kUcnn6k8I_CaJogLwgQM-naqKhyqFD-c"},"61":{"name":"Strollers in the Poppy Field","uri":"https://arweave.net/jDlqmhhNvULhzG8_r30YzzRyB_pWjpk3k7yBrydOkH4"},"62":{"name":"The Blue Rowboat Among Water Lilies","uri":"https://arweave.net/06O2FS4cOJe7LDWPAUfKk3jyARfty4-pezUcbA0tFes"},"63":{"name":"The Boulevard from Above","uri":"https://arweave.net/05TJsCrnMEAG-poAWtQXoYmjGm561rrjLDSQsaHi3_8"},"64":{"name":"The Bridge at Argenteuil","uri":"https://arweave.net/-rtFwDd-84aogeMTvln9byYzkFbWbwo8F_OzuSWbYgU"},"65":{"name":"The Customs Officer's Cabin on the Cliff","uri":"https://arweave.net/oa0oJxs_qvbvviPzNJWhiQ13ZCyfolFplQZxXK4SSSw"},"66":{"name":"The Doge's Palace, Venice","uri":"https://arweave.net/6IVQ3gJ_gOYiW3y7IgDgRcpy1LAGqHa-gNUyTZtVVtU"},"67":{"name":"The Flower Garden at Midday","uri":"https://arweave.net/QNJAs23R2_CSUHBiG28dE1Enxyl1pqg4RYp508AZa04"},"68":{"name":"The Footbridge in November Fog","uri":"https://arweave.net/J5_GHKORqE2ywD9IutX6ts4bnHMlmtvtvm8pKwVg_QE"},"69":{"name":"The Garden at Blue Hour","uri":"https://arweave.net/_jUUm_K7-mrNTGnmrb8WF_UvVUtsmQCb0-yxEmz0Tvc"},"70":{"name":"The Gardener Watering the Flowerbeds","uri":"https://arweave.net/ZDuzwYD2gO67Tl3iHMQGCrqIyQcH0O7uTkDL02KEmSQ"},"71":{"name":"The Japanese Footbridge","uri":"https://arweave.net/c6MfXsmpU14ah22JcdhZKdrvmYYGimfAf7B4mKTa4Zw"},"72":{"name":"The Last Regatta of the Season","uri":"https://arweave.net/khXXUhTilBjxVRsNgVmDhXRgqBD9P1vGIDvaF132TK8"},"73":{"name":"The Leaning Pine, Antibes","uri":"https://arweave.net/pNVIWf6sKJXWD82EVpcFoCAu9Q3kAyY3Sdx38UT-C0A"},"74":{"name":"The Lily Pond at Twilight","uri":"https://arweave.net/0cJeR2wF10jnkhq_He0kflobrWx6zshUSZ1BT_CPfXA"},"75":{"name":"The Magpie in the Snow","uri":"https://arweave.net/ZJBIEJAupwJX9LFkKs_9ga2Gj6bvmgGpPlWmOui1JDs"},"76":{"name":"The Meadow's First Poppies","uri":"https://arweave.net/IbJeRxxE7pNzGJVTY5lsQiEe0rMDz_G4Rc7tM1Mretk"},"77":{"name":"The Open Garden Gate","uri":"https://arweave.net/P01wSMzLiswWpziOpHyA4NheYru0bsycIc4R_Gpsz3g"},"78":{"name":"The Painter at His Easel in the Garden","uri":"https://arweave.net/f8yOqjGZ4fU8UT0BG5Vecqyai7t7DX8JEsDzsshrYH4"},"79":{"name":"The Pink House at Giverny","uri":"https://arweave.net/2aQpF7XuiwTOs6c2ATjy-roUq9G1jcFQK6EvlAZCC3s"},"80":{"name":"The Rock Arch at Etretat","uri":"https://arweave.net/ZO3E3grjSxGpJ7asdsC1JVeUGlEzDLku0sDoIVmFXkY"},"81":{"name":"The Rose Arch Over the Garden Path","uri":"https://arweave.net/SjwR8uKssstjAFAd_WSFxsy6gF2S-jLV3TOottZDlno"},"82":{"name":"The Studio Boat at Its Mooring","uri":"https://arweave.net/y1TrPzKlNfGVdQytG_12GklhnszNIgBkHr0afFHMNZs"},"83":{"name":"The Water Garden Through the Bamboo","uri":"https://arweave.net/wtQiDt37e6fDPu4n_dsEhzRifC3aM3V4WJQ4_8LWFL0"},"84":{"name":"The Water Lily Pond in Bloom","uri":"https://arweave.net/uviHgp8SJemA6ZT2yhtNaIjy2IB0UiuQAYOluuEgkBE"},"85":{"name":"The Whole Garden in Bloom","uri":"https://arweave.net/IEQksdjYia4h0Wz7s7RquQqY90C0U4U1b1pUZIIRYd8"},"86":{"name":"Tulips in Bloom","uri":"https://arweave.net/fUmhXu8bCLEidQ-17rfRQwKvY5tsfzlK4svTJ9EgMgA"},"87":{"name":"Venetian Palazzo on the Grand Canal","uri":"https://arweave.net/u2RgovOmOw7bF0JVNNCs_bUfP6ysO1o8_gT3bzfdq04"},"88":{"name":"Water Lilies in Pink and Green","uri":"https://arweave.net/TC2qMQVypoHWNezsA5jsGOWlmbmW8tpjUV1tBQlIuPE"},"89":{"name":"Watering Can and Dahlias","uri":"https://arweave.net/8cZhKWhCbwoCNTa40QEN2vtASjoENQQ55DBtmK9Q0aU"},"90":{"name":"Waterloo Bridge in the Fog","uri":"https://arweave.net/TxZfFh3hlFX7FxcoDwwZqnN-NecHORGs1vK0VqVJEJg"},"91":{"name":"Waves Breaking on the Rocks","uri":"https://arweave.net/rvvG_Iz8uzmlbvnLWBGpdkiiE-jEM0KKsJi3VaNJf48"},"92":{"name":"Wheelbarrow of Flowers","uri":"https://arweave.net/UlT4MJGi-chofmvZ-NFTdy2K28ZLpbJWCypHjhxD03w"},"93":{"name":"White Peonies After the Rain","uri":"https://arweave.net/0wcuo7spkomIICozNCR7ywa8MhXiI-m0yV5IM0NyGc8"},"94":{"name":"Willow Branches Over the River","uri":"https://arweave.net/D6YcUYESP7Th59wmtH_pTqOxOWQTt58ubgXlMEK0tQc"},"95":{"name":"Willows on a Summer Pond","uri":"https://arweave.net/OnDxiNhI6Mo4tg_cW76XNFg6acMzwTMD-jYIDlhqdSk"},"96":{"name":"Windmills on the Canal, Zaandam","uri":"https://arweave.net/WqRNYIODxUCshcYGGp3XTHTLMMF7owzQWMUwOMN-JnQ"},"97":{"name":"Woman in White Among the Water Lilies","uri":"https://arweave.net/9di6lfr8dk2uh0p-JPPZatsVetrB7cgniT9amKtDzXs"},"98":{"name":"Woman with a Parasol","uri":"https://arweave.net/YgMA37-62VZqsUZqVrIJbqhtMj2AhJLDZEo-DA0MjQ8"},"99":{"name":"Women in White, Boating","uri":"https://arweave.net/50hN_PHE9rVt5hS5yKBv2lyHmD_0z5W9Ygn8-J-FJXE"},"100":{"name":"Yellow Hollyhocks","uri":"https://arweave.net/p9-YkcEJQQXXAXLeHtbKfIVBTRGOWNc6qUYk75UH958"}};
+(async function () {
+  const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
+  const NFT = '0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1';
+  const CHAIN_ID = '0x1237'; // 4663
+  const SEL_MULTISIG = '0x4783c35b';
+  const SEL_TOKEN_URI = '0xc87b56dd';     // tokenURI(uint256)
+  const SEL_SET_TOKEN_URI = '0x162094c4'; // setTokenURI(uint256,string)
+  const MAX_TOKENS = 100;
+  const btn = document.getElementById('btn');
+  const status = document.getElementById('status');
+  const progress = document.getElementById('progress');
+  const lines = [];
+  const say = (msg, cls) => { lines.push(msg); status.textContent = lines.slice(-24).join('\n'); status.className = 'status ' + (cls || ''); };
+  const pad = (h) => h.replace(/^0x/, '').padStart(64, '0');
+  const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
+
+  if (!window.ethereum) { say('MetaMask not detected — open over http://localhost.', 'err'); return; }
+
+  let account = null;
+
+  const call = (to, data) => ethereum.request({ method: 'eth_call', params: [{ to, data }, 'latest'] });
+  const readMultisig = async () => '0x' + (await call(STORAGE, SEL_MULTISIG)).slice(-40);
+
+  // decode a solidity string return
+  function decodeString(hex) {
+    const b = hex.replace(/^0x/, '');
+    const len = parseInt(b.slice(64, 128), 16);
+    const bytes = b.slice(128, 128 + len * 2);
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 2) out += String.fromCharCode(parseInt(bytes.substr(i, 2), 16));
+    return decodeURIComponent(escape(out));
+  }
+  // encode setTokenURI(uint256,string)
+  function encodeSetTokenURI(tokenId, uri) {
+    const enc = unescape(encodeURIComponent(uri));
+    let hex = '';
+    for (let i = 0; i < enc.length; i++) hex += enc.charCodeAt(i).toString(16).padStart(2, '0');
+    const padded = hex.padEnd(Math.ceil(hex.length / 64) * 64, '0');
+    return SEL_SET_TOKEN_URI + pad(tokenId.toString(16)) + pad('40') + pad(enc.length.toString(16)) + padded;
+  }
+
+  async function tokenUriOf(t) {
+    try { return decodeString(await call(NFT, SEL_TOKEN_URI + pad(t.toString(16)))); }
+    catch { return null; } // nonexistent token
+  }
+
+  async function run() {
+    let renamed = 0, skipped = 0, done = false;
+    for (let t = 1; t <= MAX_TOKENS; t++) {
+      const uri = await tokenUriOf(t);
+      if (uri === null) { say(`token #${t}: not minted yet — stopping here. Re-run after more mints.`, 'warn'); done = true; break; }
+      const m = /\/(\d+)\.json$/.exec(uri);
+      if (!m) { skipped++; say(`token #${t}: already renamed — skip`); progress.textContent = `${renamed} renamed, ${skipped} skipped`; continue; }
+      const entry = RENAME_MAP[m[1]];
+      if (!entry) { say(`token #${t}: no map entry for index ${m[1]} — skip`, 'warn'); skipped++; continue; }
+      say(`token #${t} → "${entry.name}" — approve in MetaMask…`);
+      const txHash = await ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: account, to: NFT, data: encodeSetTokenURI(t, entry.uri) }],
+      });
+      // wait for the receipt so nonces stay ordered and progress is truthful
+      for (;;) {
+        const rcpt = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+        if (rcpt) {
+          if (rcpt.status !== '0x1') throw new Error(`tx reverted on token #${t}`);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      renamed++;
+      progress.textContent = `${renamed} renamed, ${skipped} skipped`;
+      say(`token #${t} ✓`);
+    }
+    say(`\nDone: ${renamed} renamed, ${skipped} already done.` + (done ? ' Re-run after sellout for the rest.' : ' All 100 processed!'), 'ok');
+    btn.textContent = 're-run';
+    btn.disabled = false;
+  }
+
+  btn.disabled = false;
+  btn.onclick = async () => {
+    try {
+      if (!account) {
+        const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+        account = accounts[0];
+        document.getElementById('connected').textContent = account;
+        const chainId = await ethereum.request({ method: 'eth_chainId' });
+        if (chainId.toLowerCase() !== CHAIN_ID) {
+          try { await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] }); }
+          catch { say('Switch MetaMask to Robinhood Chain mainnet (4663) and reconnect.', 'warn'); return; }
+        }
+        const multisig = await readMultisig();
+        document.getElementById('multisig').textContent = multisig;
+        if (account.toLowerCase() !== multisig.toLowerCase()) {
+          say('Connected wallet ' + short(account) + ' is NOT the multisig ' + short(multisig) + '. Switch accounts.', 'warn');
+          return;
+        }
+        btn.textContent = 'start renaming';
+        say('Ready. Each token is one transaction — MetaMask will prompt one at a time.', '');
+        return;
+      }
+      btn.disabled = true;
+      await run();
+    } catch (e) {
+      say('Error: ' + (e && e.message || e) + '\nProgress is saved on-chain — re-run to continue where it stopped.', 'err');
+      btn.textContent = 'resume';
+      btn.disabled = false;
+    }
+  };
+})();
+</script>
+</body>
+</html>
