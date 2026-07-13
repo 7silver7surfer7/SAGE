@@ -19,6 +19,7 @@ import {
   useSetCollectibleMutation,
   useCollectPostMutation,
   useRequestCollectVoucherMutation,
+  useGetBoostInfoQuery,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import VerifiedBadge from './VerifiedBadge';
@@ -77,6 +78,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [toggleRepost] = useToggleRepostMutation();
   const [recordTip] = useRecordTipMutation();
   const [boostPost] = useBoostPostMutation();
+  const { data: boostInfo } = useGetBoostInfoQuery();
   const [setCollectible] = useSetCollectibleMutation();
   const [collectPost] = useCollectPostMutation();
   const [requestVoucher] = useRequestCollectVoucherMutation();
@@ -238,23 +240,22 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const onBoost = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!requireSigner()) return;
-    const raw = window.prompt(
-      'Boost this post: burn SAGE to pin it to the top of the global feed.\n10 SAGE = 24 hours (max 7 days). Burned SAGE is gone forever.',
-      '10'
-    );
-    if (!raw) return;
-    const amount = Number(raw);
-    if (!amount || amount < 1) {
-      toast.error('Minimum burn is 1 SAGE');
+    if (!boostInfo) {
+      toast.info('Loading boost price…');
       return;
     }
+    const ok = window.confirm(
+      `Boost this post: burn ${boostInfo.priceSage} SAGE ($${boostInfo.priceUsd}) to surge it up ` +
+        `the feed. It rises once, then fades as newer posts arrive — no permanent pin. ` +
+        `Burned SAGE is gone forever.`
+    );
+    if (!ok) return;
     setBusy(true);
-    const t = toast.loading(`Burning ${amount} SAGE…`);
+    const t = toast.loading(`Burning ${boostInfo.priceSage} SAGE…`);
     try {
-      const txHash = await burnSage(amount, signer as any);
-      const r = await boostPost({ postId: post.id, txHash }).unwrap();
-      const until = new Date(r.boostedUntil).toLocaleString();
-      toast.update(t, { render: `Boosted until ${until} 🔥`, type: 'success', isLoading: false, autoClose: 5000 });
+      const txHash = await burnSage(boostInfo.priceSage, signer as any);
+      await boostPost({ postId: post.id, txHash }).unwrap();
+      toast.update(t, { render: 'Boosted 🔥 — surging up the feed', type: 'success', isLoading: false, autoClose: 5000 });
     } catch (err: any) {
       toast.update(t, { render: 'Boost failed', type: 'error', isLoading: false, autoClose: 1 });
       handleGateError(err, 'Boost failed');

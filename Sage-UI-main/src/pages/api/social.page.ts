@@ -34,11 +34,20 @@ import {
  */
 const AUTHED: Role[] = [Role.USER, Role.ARTIST, Role.ADMIN];
 
-// burn-to-boost economics: 10 SAGE buys 24h at the top of the global feed,
-// linear, capped 7 days out so a whale can't squat the feed for a year.
-const BOOST_SAGE_PER_DAY = 10;
-const BOOST_MAX_DAYS = 7;
-const BOOST_MIN_SAGE = 1;
+// burn-to-boost: burning $1-worth of SAGE gives a post ONE strong surge to
+// the top of the ranked global feed that then decays — no more 24h pin. The
+// boost is a big one-time bump to the post's hot-score that fades over
+// BOOST_WINDOW_MS; gravity + newer/better posts carry it back down.
+const BOOST_PRICE_USD = 1;
+const BOOST_FALLBACK_SAGE = 10; // testnet SAGE has no market — flat $1 stand-in
+const BOOST_WINDOW_MS = 3 * 60 * 60 * 1000; // 3h of decaying prominence
+
+// ── feed ranking ("hot") — HN-style: engagement + boost, decayed by age ──
+// score = (1 + engagement + boostBonus) / (ageHours + 2)^GRAVITY
+const FEED_GRAVITY = 1.6;
+const FEED_BOOST_STRENGTH = 80; // a fresh boost dominates normal engagement
+const FEED_POOL = 600; // rank over the most recent N top-level posts
+const FEED_PAGE = 20;
 
 // paid verification: $10 worth of SAGE to the platform treasury buys the
 // checkmark + premium features (sell/collect posts, points-collect, boost,
@@ -76,6 +85,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getPostMetadata(Number(request.query.id), response);
       case 'GetVerificationInfo':
         return await getVerificationInfo(response);
+      case 'GetBoostInfo':
+        return await getBoostInfo(response);
       case 'GetInvite':
         return await getInvite(String(request.query.code || ''), response);
       case 'InviteImage':
@@ -333,14 +344,57 @@ async function isPfpVerified(user: {
   return map[user.walletAddress] || false;
 }
 
+/**
+ * A post's "hot" score — HN-style, so the global feed surfaces what's good
+ * and fresh instead of merely newest. Engagement (likes/reposts/replies/tips/
+ * collects) lifts a post; age drags it down via gravity; an active boost adds
+ * a big bonus that decays across its window. Everything sinks over time, so a
+ * boost is one surge, not a permanent pin.
+ */
+function hotScore(p: any, nowMs: number): number {
+  const ageHours = Math.max(0, (nowMs - new Date(p.createdAt).getTime()) / 3.6e6);
+  const engagement =
+    p.likeCount +
+    2 * p.repostCount +
+    3 * p.replyCount +
+    Math.min(30, p.tipTotal || 0) + // cap tip influence so whales don't dominate
+    5 * p.collectCount;
+  const until = p.boostedUntil ? new Date(p.boostedUntil).getTime() : 0;
+  const boostBonus =
+    until > nowMs ? FEED_BOOST_STRENGTH * Math.min(1, (until - nowMs) / BOOST_WINDOW_MS) : 0;
+  return (1 + engagement + boostBonus) / Math.pow(ageHours + 2, FEED_GRAVITY);
+}
+
 async function getFeed(req: NextApiRequest, res: NextApiResponse) {
-  // 'global' = boosted posts pinned atop the reverse-chron river;
-  // 'following' = only wallets the viewer follows;
-  // 'latest' = strict newest-first, no boost pinning.
+  // 'global' = the ranked "hot" feed (engagement + boost, decayed by age);
+  // 'latest' = strict newest-first (no ranking, no boost);
+  // 'following' = newest-first from wallets the viewer follows.
   const scope = (req.query.scope as string) || 'global';
-  const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
   const viewer = canon((await getRequester(req))?.walletAddress);
 
+  // ── global: hot-ranked over a recent pool, offset-paginated ──
+  if (scope === 'global') {
+    const offset = req.query.cursor ? Number(req.query.cursor) : 0;
+    const pool = await prisma.socialPost.findMany({
+      where: { replyToId: null, deletedAt: null },
+      include: postInclude(viewer),
+      orderBy: { id: 'desc' },
+      take: FEED_POOL,
+    });
+    const now = Date.now();
+    const ranked = pool
+      .map((p) => ({ p, s: hotScore(p, now) }))
+      .sort((a, b) => b.s - a.s)
+      .map((x) => x.p);
+    const page = ranked.slice(offset, offset + FEED_PAGE);
+    const nextOffset = offset + FEED_PAGE;
+    const nextCursor = nextOffset < ranked.length ? nextOffset : null;
+    const verified = await pfpVerifiedMap(page);
+    return res.json({ posts: page.map((p) => serializePost(p, viewer, verified)), nextCursor });
+  }
+
+  // ── latest / following: pure reverse-chronological, id-cursor paginated ──
+  const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
   let authorFilter = {};
   if (scope === 'following') {
     if (!viewer) return res.json({ posts: [], nextCursor: null });
@@ -350,33 +404,15 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
     });
     authorFilter = { authorAddress: { in: following.map((f) => f.followingAddress) } };
   }
-
-  // burn-to-boost: active boosts open the global feed (first page only),
-  // biggest lifetime burn first, then the normal reverse-chron river.
-  let boosted: any[] = [];
-  if (scope === 'global' && !cursor) {
-    boosted = await prisma.socialPost.findMany({
-      where: { replyToId: null, deletedAt: null, boostedUntil: { gt: new Date() } },
-      include: postInclude(viewer),
-      orderBy: { boostBurned: 'desc' },
-      take: 5,
-    });
-  }
-
   const posts = await prisma.socialPost.findMany({
-    where: {
-      replyToId: null,
-      deletedAt: null,
-      ...authorFilter,
-      ...(boosted.length ? { id: { notIn: boosted.map((b) => b.id) } } : {}),
-    },
+    where: { replyToId: null, deletedAt: null, ...authorFilter },
     include: postInclude(viewer),
     orderBy: { id: 'desc' },
     take: 21,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
   const nextCursor = posts.length > 20 ? posts[19].id : null;
-  const page = [...boosted, ...posts.slice(0, 20)];
+  const page = posts.slice(0, 20);
   const verified = await pfpVerifiedMap(page);
   res.json({ posts: page.map((p) => serializePost(p, viewer, verified)), nextCursor });
 }
@@ -737,6 +773,28 @@ async function recordTip(req: NextApiRequest, res: NextApiResponse, r: { walletA
   res.json({ ok: true, amount, currency });
 }
 
+/** $1-worth of SAGE to burn; live price on prod, flat fallback elsewhere. */
+let boostPriceCache: { sage: number; at: number } | null = null;
+async function boostPriceSage(): Promise<number> {
+  if (boostPriceCache && Date.now() - boostPriceCache.at < 300_000) return boostPriceCache.sage;
+  let sage = BOOST_FALLBACK_SAGE;
+  if (process.env.NEXT_PUBLIC_APP_MODE === 'production') {
+    try {
+      const { getSagePriceUsd } = await import('@/utilities/sagePrice');
+      const usd = await getSagePriceUsd();
+      if (usd && usd > 0) sage = Math.ceil((BOOST_PRICE_USD / usd) * 100) / 100;
+    } catch {
+      // dead feed → fallback
+    }
+  }
+  boostPriceCache = { sage, at: Date.now() };
+  return sage;
+}
+
+async function getBoostInfo(res: NextApiResponse) {
+  res.json({ priceUsd: BOOST_PRICE_USD, priceSage: await boostPriceSage() });
+}
+
 async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   if (!(await requireVerified(r.walletAddress, res))) return;
   const { postId, txHash } = req.body || {};
@@ -745,25 +803,24 @@ async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletA
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
 
+  // burn $1-worth of SAGE to the dead address (5% price-drift tolerance)
+  const priceSage = await boostPriceSage();
   let amount: number;
   try {
-    amount = await verifySageTransfer(txHash, r.walletAddress, DEAD_ADDRESS, BOOST_MIN_SAGE);
+    amount = await verifySageTransfer(txHash, r.walletAddress, DEAD_ADDRESS, priceSage * 0.95);
   } catch (e: any) {
     return res.status(400).json({ error: `burn not verified: ${e.message}` });
   }
 
-  const hours = (amount / BOOST_SAGE_PER_DAY) * 24;
-  const now = new Date();
-  const base = post.boostedUntil && post.boostedUntil > now ? post.boostedUntil : now;
-  const cap = new Date(now.getTime() + BOOST_MAX_DAYS * 24 * 3600 * 1000);
-  const boostedUntil = new Date(
-    Math.min(base.getTime() + hours * 3600 * 1000, cap.getTime())
-  );
+  // one surge, then decay: the boost window resets from now (it does NOT
+  // stack open-endedly, so a post can't be pinned forever). The feed's
+  // hot-score gives it a big fading bump over the window (see getFeed).
+  const boostedUntil = new Date(Date.now() + BOOST_WINDOW_MS);
 
   try {
     await prisma.$transaction([
       prisma.socialBoost.create({
-        data: { postId: id, fromAddress: r.walletAddress, amount, hours, txHash },
+        data: { postId: id, fromAddress: r.walletAddress, amount, hours: BOOST_WINDOW_MS / 3.6e6, txHash },
       }),
       prisma.socialPost.update({
         where: { id },

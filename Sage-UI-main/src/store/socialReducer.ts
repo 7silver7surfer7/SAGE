@@ -263,6 +263,9 @@ const socialApi = baseApi.injectEndpoints({
     getVerificationInfo: builder.query<VerificationInfo, void>({
       query: () => ({ url: 'social?action=GetVerificationInfo' }),
     }),
+    getBoostInfo: builder.query<{ priceUsd: number; priceSage: number }, void>({
+      query: () => ({ url: 'social?action=GetBoostInfo' }),
+    }),
     getMyInvites: builder.query<{ invites: InviteCode[] }, void>({
       query: () => ({ url: 'social?action=GetMyInvites' }),
       providesTags: ['SocialProfile'],
@@ -513,6 +516,7 @@ export const {
   useGetSocialProfileQuery,
   useGetOwnedNftsQuery,
   useGetVerificationInfoQuery,
+  useGetBoostInfoQuery,
   useGetMyInvitesQuery,
   useGetInvitePreviewQuery,
   useGetConversationsQuery,
