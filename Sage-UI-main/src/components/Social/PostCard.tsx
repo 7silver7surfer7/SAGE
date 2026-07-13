@@ -6,7 +6,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
-import { tipSage, burnSage, sendEth } from '@/utilities/tip';
+import { tipSage, sendEth } from '@/utilities/tip';
 import { redeemCollectVoucher } from '@/utilities/socialToken';
 import { parameters } from '@/constants/config';
 import {
@@ -19,6 +19,7 @@ import {
   useSetCollectibleMutation,
   useCollectPostMutation,
   useRequestCollectVoucherMutation,
+  useGetBoostInfoQuery,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import VerifiedBadge from './VerifiedBadge';
@@ -77,6 +78,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [toggleRepost] = useToggleRepostMutation();
   const [recordTip] = useRecordTipMutation();
   const [boostPost] = useBoostPostMutation();
+  const { data: boostInfo } = useGetBoostInfoQuery();
   const [setCollectible] = useSetCollectibleMutation();
   const [collectPost] = useCollectPostMutation();
   const [requestVoucher] = useRequestCollectVoucherMutation();
@@ -232,23 +234,22 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const onBoost = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!requireSigner()) return;
-    const raw = window.prompt(
-      'Boost this post: burn SAGE to pin it to the top of the global feed.\n10 SAGE = 24 hours (max 7 days). Burned SAGE is gone forever.',
-      '10'
-    );
-    if (!raw) return;
-    const amount = Number(raw);
-    if (!amount || amount < 1) {
-      toast.error('Minimum burn is 1 SAGE');
+    if (!boostInfo) {
+      toast.info('Loading boost price…');
       return;
     }
+    const ok = window.confirm(
+      `Boost this post to the top of the global feed for ~45 minutes.\n\n` +
+        `Cost: ${boostInfo.priceEth} ETH ($${boostInfo.priceUsd}), paid to the SAGE treasury.\n` +
+        `A boost surfaces your post, then fades as newer posts arrive.`
+    );
+    if (!ok) return;
     setBusy(true);
-    const t = toast.loading(`Burning ${amount} SAGE…`);
+    const t = toast.loading(`Paying ${boostInfo.priceEth} ETH to boost…`);
     try {
-      const txHash = await burnSage(amount, signer as any);
-      const r = await boostPost({ postId: post.id, txHash }).unwrap();
-      const until = new Date(r.boostedUntil).toLocaleString();
-      toast.update(t, { render: `Boosted until ${until} 🔥`, type: 'success', isLoading: false, autoClose: 5000 });
+      const txHash = await sendEth(boostInfo.treasury, boostInfo.priceEth, signer as any);
+      await boostPost({ postId: post.id, txHash }).unwrap();
+      toast.update(t, { render: 'Boosted 🔥 — top of the feed for ~45 min', type: 'success', isLoading: false, autoClose: 5000 });
     } catch (err: any) {
       toast.update(t, { render: 'Boost failed', type: 'error', isLoading: false, autoClose: 1 });
       handleGateError(err, 'Boost failed');
@@ -333,7 +334,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
           <span className='social-post__dot'>·</span>
           <span className='social-post__time'>{timeAgo(post.createdAt)}</span>
           {post.isBoosted && (
-            <span className='social-post__boosted-chip' title={`${post.boostBurned} SAGE burned`}>
+            <span className='social-post__boosted-chip' title={`${post.boostBurned} ETH boosted`}>
               <FlameIcon /> Boosted
             </span>
           )}
@@ -443,7 +444,6 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             title='Burn SAGE to boost'
           >
             <FlameIcon />
-            {post.boostBurned > 0 && <span>{post.boostBurned}</span>}
           </button>
           {isOwnPost ? (
             <button
