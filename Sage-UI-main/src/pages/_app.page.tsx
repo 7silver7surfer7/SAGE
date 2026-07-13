@@ -17,7 +17,7 @@ import {
   lightTheme,
   darkTheme,
 } from '@rainbow-me/rainbowkit';
-import { metaMaskWallet, coinbaseWallet } from '@rainbow-me/rainbowkit/wallets';
+import { metaMaskWallet, coinbaseWallet, braveWallet } from '@rainbow-me/rainbowkit/wallets';
 import { useEffect, useState } from 'react';
 import { SearchContext } from '@/store/searchContext';
 import LandingPage from '@/components/Pages/Landing';
@@ -35,21 +35,24 @@ const { chains, provider } = configureChains(
 );
 
 // RainbowKit 0.7.x — the last line built for this stack (wagmi 0.6 + ethers v5;
-// v1/v2 need the wagmi-v2/viem migration). Two wallets, each with proper name +
-// icon + install detection:
-//  - metaMaskWallet: branded "MetaMask" (fox icon). When the extension is
-//    present it connects injected; only users WITHOUT it see the (WC-v1) QR
-//    fallback, alongside a "Get MetaMask" prompt.
-//  - coinbaseWallet: its own SDK (extension + mobile QR), no WalletConnect.
-// Distinct connector ids (no "injected" collision, which silently nulls
-// openConnectModal). No standalone injectedWallet — it renders as a scary
-// generic "Injected Wallet". Broad mobile (WC v2) is a separate wagmi-v2 job.
+// v1/v2 need the wagmi-v2/viem migration). Each wallet has a proper name + icon
+// + install detection, and — critically — a DISTINCT connector id
+// (walletConnect / coinbaseWallet / injected). Two wallets sharing the
+// "injected" id (the classic braveWallet + injectedWallet mistake) silently
+// nulls openConnectModal, so braveWallet is the ONLY injected-id entry here.
+//  - metaMaskWallet: "MetaMask" (fox). Injected when present; only users
+//    WITHOUT it see the (WC-v1) QR fallback + a "Get MetaMask" prompt.
+//  - coinbaseWallet: own SDK (extension + mobile QR), no WalletConnect.
+//  - braveWallet: shows only in the Brave browser (its built-in wallet).
+// No standalone injectedWallet — it renders as a scary generic "Injected
+// Wallet". Broad mobile (WC v2) is a separate wagmi-v2 job.
 const connectors = connectorsForWallets([
   {
     groupName: 'Connect',
     wallets: [
       metaMaskWallet({ chains, shimDisconnect: true }),
       coinbaseWallet({ appName: 'SAGE', chains }),
+      braveWallet({ chains, shimDisconnect: true }),
     ],
   },
 ]);
