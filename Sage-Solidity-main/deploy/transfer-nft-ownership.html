@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Transfer rMonet Contract Ownership</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 680px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  .row b { font-weight: 600; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem; }
+  .warn { color: #b45309; }
+  .err { color: #dc2626; }
+  .ok { color: #0c9d68; }
+</style>
+</head>
+<body>
+  <h1>Transfer rMonet Contract Ownership 🖼️</h1>
+  <p class="sub">Moves <code>owner()</code> of the rMonet NFT contract from the
+  NFTFactory (a contract — it can't sign into marketplaces) to the multisig
+  wallet, so the collection can be claimed and renamed in OpenSea Studio.
+  On-chain permissions are role-based and unaffected — this only changes who
+  marketplaces recognize as the collection owner. MAINNET transaction.</p>
+
+  <div class="card">
+    <div class="row"><span>Network</span><b>Robinhood Chain MAINNET (4663)</b></div>
+    <div class="row"><span>NFT contract (rMonet)</span><code>0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1</code></div>
+    <div class="row"><span>New owner</span><code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code></div>
+    <div class="row"><span>Required signer (multisig)</span><code id="multisig">—</code></div>
+    <div class="row"><span>Current owner()</span><code id="owner">—</code></div>
+    <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
+  </div>
+
+  <button id="btn" disabled>connect wallet</button>
+  <div class="status" id="status">Connect MetaMask with the multisig wallet selected.</div>
+
+<script>
+(async function () {
+  const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
+  const NFT = '0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1';
+  const NEW_OWNER = '0x3e099af007cab8233d44782d8e6fe80fecdc321e';
+  const CHAIN_ID = '0x1237'; // 4663 — Robinhood MAINNET
+  const SEL_MULTISIG = '0x4783c35b';        // multisig()
+  const SEL_OWNER = '0x8da5cb5b';           // owner()
+  const SEL_TRANSFER_OWNERSHIP = '0xf2fde38b'; // transferOwnership(address)
+  const btn = document.getElementById('btn');
+  const status = document.getElementById('status');
+  const say = (msg, cls) => { status.textContent = msg; status.className = 'status ' + (cls || ''); };
+  const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
+
+  if (!window.ethereum) { say('MetaMask not detected — open this page over http://localhost, not file://.', 'err'); return; }
+
+  let account = null;
+  let multisig = null;
+
+  const readMultisig = async () =>
+    '0x' + (await ethereum.request({ method: 'eth_call', params: [{ to: STORAGE, data: SEL_MULTISIG }, 'latest'] })).slice(-40);
+  const readOwner = async () =>
+    '0x' + (await ethereum.request({ method: 'eth_call', params: [{ to: NFT, data: SEL_OWNER }, 'latest'] })).slice(-40);
+
+  async function refresh() {
+    const chainId = await ethereum.request({ method: 'eth_chainId' });
+    if (chainId.toLowerCase() !== CHAIN_ID) {
+      say('Wrong network — switching MetaMask to Robinhood Chain mainnet (4663)…', 'warn');
+      try { await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] }); }
+      catch { return false; }
+    }
+    multisig = await readMultisig();
+    document.getElementById('multisig').textContent = multisig;
+    const owner = await readOwner();
+    document.getElementById('owner').textContent = owner;
+    if (owner.toLowerCase() === NEW_OWNER) {
+      say('Already transferred — owner() is the multisig. Nothing to send.\nNext: claim the collection at opensea.io/studio with this wallet.', 'ok');
+      btn.disabled = true;
+      return false;
+    }
+    if (account && account.toLowerCase() !== multisig.toLowerCase()) {
+      say('Connected wallet ' + short(account) + ' is NOT the multisig ' + short(multisig) +
+          '. Switch accounts in MetaMask.', 'warn');
+      btn.textContent = 'wrong wallet — switch account';
+      btn.disabled = true;
+      return false;
+    }
+    return true;
+  }
+
+  btn.disabled = false;
+  btn.onclick = async () => {
+    try {
+      if (!account) {
+        const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+        account = accounts[0];
+        document.getElementById('connected').textContent = account;
+        if (!(await refresh())) return;
+        btn.textContent = 'transfer ownership';
+        say('Ready. Clicking sends transferOwnership — approve it on your device.', '');
+        return;
+      }
+      if (!(await refresh())) return;
+      btn.disabled = true;
+      say('Sending transaction — approve on your device…', '');
+      const data = SEL_TRANSFER_OWNERSHIP + NEW_OWNER.slice(2).padStart(64, '0');
+      const txHash = await ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: account, to: NFT, data }],
+      });
+      say('Sent: ' + txHash + '\nWaiting for confirmation…', '');
+      for (let i = 0; i < 60; i++) {
+        const rcpt = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+        if (rcpt) {
+          if (rcpt.status === '0x1') {
+            const owner = await readOwner();
+            say('Confirmed ✓  owner() is now ' + owner +
+                '\nNext: sign into opensea.io/studio with this wallet and edit the collection (rename to rMonet, set logo/banner).', 'ok');
+          } else {
+            say('Transaction reverted. Is the connected wallet the current multisig?', 'err');
+            btn.disabled = false;
+          }
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      say('Still pending — check the tx in MetaMask: ' + txHash, 'warn');
+    } catch (e) {
+      say('Error: ' + (e && e.message || e), 'err');
+      btn.disabled = false;
+    }
+  };
+
+  ethereum.on?.('accountsChanged', (accs) => {
+    account = accs[0] || null;
+    document.getElementById('connected').textContent = account || 'not connected';
+    if (account) refresh().then((ok) => { if (ok) { btn.disabled = false; btn.textContent = 'transfer ownership'; } });
+  });
+
+  try {
+    multisig = await readMultisig();
+    document.getElementById('multisig').textContent = multisig;
+    document.getElementById('owner').textContent = await readOwner();
+  } catch { /* wallet may be on another chain until connect */ }
+})();
+</script>
+</body>
+</html>
