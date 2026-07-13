@@ -33,6 +33,36 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+/** URLs in post text become real (tappable) links, Twitter-style. */
+const URL_SPLIT_RE = /(https?:\/\/[^\s<>"')]+)/g;
+function linkifyText(text: string) {
+  return text.split(URL_SPLIT_RE).map((part, i) =>
+    /^https?:\/\//.test(part) ? (
+      <a
+        key={i}
+        className='social-post__link'
+        href={part}
+        target='_blank'
+        rel='noreferrer noopener'
+        onClick={(e) => e.stopPropagation()}
+      >
+        {part.replace(/^https?:\/\/(www\.)?/, '').slice(0, 40)}
+        {part.replace(/^https?:\/\/(www\.)?/, '').length > 40 ? '…' : ''}
+      </a>
+    ) : (
+      part
+    )
+  );
+}
+
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url.slice(0, 40);
+  }
+}
+
 const HeartIcon = ({ filled }: { filled: boolean }) => (
   <svg width='18' height='18' viewBox='0 0 24 24' fill={filled ? 'currentColor' : 'none'} stroke='currentColor' strokeWidth='2'>
     <path d='M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z' />
@@ -368,7 +398,28 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             )}
           </div>
         </div>
-        {post.text && <p className='social-post__text'>{post.text}</p>}
+        {post.text && <p className='social-post__text'>{linkifyText(post.text)}</p>}
+        {post.linkUrl && !post.imageUrl && (
+          <a
+            className='social-post__linkcard'
+            href={post.linkUrl}
+            target='_blank'
+            rel='noreferrer noopener'
+            onClick={(e) => e.stopPropagation()}
+          >
+            {post.linkImage && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className='social-post__linkcard-img' src={post.linkImage} alt='' />
+            )}
+            <span className='social-post__linkcard-body'>
+              <span className='social-post__linkcard-domain'>{domainOf(post.linkUrl)}</span>
+              {post.linkTitle && (
+                <span className='social-post__linkcard-title'>{post.linkTitle}</span>
+              )}
+              {post.linkDesc && <span className='social-post__linkcard-desc'>{post.linkDesc}</span>}
+            </span>
+          </a>
+        )}
         {post.imageUrl && (
           <div className='social-post__media' onClick={(e) => e.stopPropagation()}>
             {post.mediaType === 'video' ? (

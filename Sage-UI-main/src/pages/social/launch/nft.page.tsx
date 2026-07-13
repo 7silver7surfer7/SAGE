@@ -4,7 +4,9 @@ import useSAGEAccount from '@/hooks/useSAGEAccount';
 
 /** Launch an NFT edition or a ZIP collection. */
 export default function LaunchNftPage() {
-  const { walletAddress } = useSAGEAccount();
+  const { walletAddress, userData } = useSAGEAccount();
+  // survive the wagmi rehydration window: fall back to the session's wallet
+  const addr = walletAddress || (userData as any)?.walletAddress || '';
   return (
     <SocialShell>
       <div className='social'>
@@ -14,8 +16,8 @@ export default function LaunchNftPage() {
             an edition or a ZIP collection — free to launch, 1% of each mint to the platform
           </p>
         </header>
-        {walletAddress ? (
-          <EditionPanel address={walletAddress} isSelf />
+        {addr ? (
+          <EditionPanel address={addr} isSelf />
         ) : (
           <div className='social__empty'>Connect your wallet to launch an NFT.</div>
         )}

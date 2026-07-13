@@ -683,9 +683,14 @@ $col-width: 620px;
 
 /* ── refer friends card ── */
 .social-refer {
-  margin-top: 14px;
-  padding: 14px 16px;
+  margin-top: 10px;
+  padding: 12px 14px;
   border-radius: 12px;
+  // On short viewports the refer card is the first thing to give — the nav,
+  // Post button and profile chip always win the space.
+  @media (max-height: 740px) {
+    display: none;
+  }
   @include m.theme() {
     border: 1px solid rgba(m.t(contrast), 0.14);
     background: rgba(m.t(contrast), 0.02);
@@ -1168,6 +1173,13 @@ $col-width: 620px;
   gap: 12px;
 }
 
+// While any modal overlay is open, freeze the page scroller (.layout is the
+// app's scroll container) so the backdrop can't scroll out from under the
+// modal.
+body:has([class*='__overlay']) .layout {
+  overflow: hidden;
+}
+
 /* ── activity ── */
 .social-activity {
   display: flex;
@@ -1559,13 +1571,15 @@ $col-width: 620px;
 
   &__sidebar {
     position: sticky;
-    top: 18px;
+    top: 12px;
     align-self: start;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    max-height: calc(100vh - 36px);
-    overflow-y: auto;
+    gap: 4px;
+    max-height: calc(100vh - 24px);
+    // The sidebar is sized to FIT the viewport (compact paddings + height
+    // media queries below) — never to scroll.
+    overflow: hidden;
   }
   &__logo {
     display: flex;
@@ -1606,9 +1620,14 @@ $col-width: 620px;
     background: none;
     border: none;
     border-radius: 999px;
-    padding: 8px 14px;
+    padding: 7px 14px;
     font-size: 0.9rem;
     font-weight: 600;
+    // compact further on short screens so the whole sidebar fits with no scroll
+    @media (max-height: 820px) {
+      padding: 5px 14px;
+      font-size: 0.85rem;
+    }
     svg {
       width: 18px;
       height: 18px;
@@ -1994,6 +2013,82 @@ $col-width: 620px;
 .social-post__menu-wrap {
   position: relative;
   margin-left: auto;
+}
+// When a BOOSTED chip is present it claims the free space (far right, next to
+// the ⋯ menu) — otherwise both auto margins split the gap and the chip floats
+// awkwardly mid-header.
+.social-post__boosted-chip + .social-post__menu-wrap {
+  margin-left: 10px;
+}
+
+// URLs inside post text
+.social-post__link {
+  word-break: break-all;
+  text-decoration: none;
+  @include m.theme() {
+    color: m.t(accent);
+  }
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// Twitter-style link preview card
+.social-post__linkcard {
+  display: block;
+  margin-top: 10px;
+  border-radius: 14px;
+  overflow: hidden;
+  text-decoration: none;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(contrast), 0.14);
+  }
+  &:hover {
+    @include m.theme() {
+      background: rgba(m.t(contrast), 0.03);
+    }
+  }
+}
+.social-post__linkcard-img {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  @include m.theme() {
+    background: m.t(base2);
+    border-bottom: 1px solid rgba(m.t(contrast), 0.1);
+  }
+}
+.social-post__linkcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+}
+.social-post__linkcard-domain {
+  font-size: 0.75rem;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.45);
+  }
+}
+.social-post__linkcard-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1.3;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+}
+.social-post__linkcard-desc {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.6);
+  }
 }
 .social-post__menu-btn {
   background: none;

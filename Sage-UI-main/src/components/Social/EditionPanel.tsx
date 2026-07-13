@@ -5,6 +5,7 @@ import { createEdition, createCollection, mintEdition, editionMinted } from '@/u
 import { baseApi } from '@/store/baseReducer';
 import { useCreatePostMutation, useToggleHideItemMutation } from '@/store/socialReducer';
 import VerificationModal from './VerificationModal';
+import useSAGEAccount from '@/hooks/useSAGEAccount';
 
 interface EditionRow {
   id: number;
@@ -43,9 +44,11 @@ const editionApi = baseApi.injectEndpoints({
 const { useGetProfileEditionsQuery, useRecordEditionLaunchMutation } = editionApi;
 
 /** Post-launch share sheet — Twitter intent + copy link. */
-function ShareLaunch({ symbol, name, edition, onClose }: { symbol: string; name: string; edition: string; onClose: () => void }) {
+function ShareLaunch({ symbol, name, artist, onClose }: { symbol: string; name: string; artist: string; onClose: () => void }) {
   const [createPost] = useCreatePostMutation();
-  const url = typeof window !== 'undefined' ? `${window.location.origin}/social/${edition}` : '';
+  // link to the ARTIST's profile — that's where the mint panel renders (the
+  // edition contract address is not a routable page)
+  const url = typeof window !== 'undefined' ? `${window.location.origin}/social/${artist}` : '';
   const line = `I just launched ${name} ($${symbol}) on SAGE Social 🎨 mint it:`;
   const toFeed = async () => {
     try { await createPost({ text: `${line}\n${url}` }).unwrap(); toast.success('Shared to your feed 🎉'); onClose(); }
@@ -72,6 +75,8 @@ function ShareLaunch({ symbol, name, edition, onClose }: { symbol: string; name:
 /** Launch modal: single edition (one artwork) OR a ZIP collection (per-token art). */
 function LaunchEditionModal({ onClose }: { onClose: () => void }) {
   const { data: signer } = useSigner();
+  const { walletAddress, userData } = useSAGEAccount();
+  const artistAddress = walletAddress || (userData as any)?.walletAddress || '';
   const [record] = useRecordEditionLaunchMutation();
   const [mode, setMode] = useState<'edition' | 'collection'>('edition');
   const [name, setName] = useState('');
@@ -82,7 +87,7 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
   const [zip, setZip] = useState<{ baseUri: string; count: number; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [needVerify, setNeedVerify] = useState(false);
-  const [live, setLive] = useState<{ symbol: string; name: string; edition: string } | null>(null);
+  const [live, setLive] = useState<{ symbol: string; name: string; artist: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const zipRef = useRef<HTMLInputElement>(null);
 
@@ -141,7 +146,7 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
         await record({ editionAddress: edition, name: name.trim(), symbol: symbol.trim().toUpperCase(), imageUrl, priceEth: p, maxSupply: max, launchTxHash: txHash }).unwrap();
       }
       toast.update(t, { render: `${name} is live 🎨`, type: 'success', isLoading: false, autoClose: 3000 });
-      setLive({ symbol: symbol.trim().toUpperCase(), name: name.trim(), edition });
+      setLive({ symbol: symbol.trim().toUpperCase(), name: name.trim(), artist: artistAddress });
     } catch (err: any) {
       if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
       else toast.update(t, { render: err?.data?.error || err?.message?.slice(0, 90) || 'Launch failed', type: 'error', isLoading: false, autoClose: 6000 });

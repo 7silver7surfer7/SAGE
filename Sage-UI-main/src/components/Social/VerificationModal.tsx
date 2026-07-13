@@ -97,7 +97,7 @@ export default function VerificationModal({ onClose }: Props) {
           disabled={busy || !info}
           onClick={() => onBuy('ETH')}
         >
-          {info ? `or pay ${info.priceEth} ETH ($${info.priceUsd})` : ''}
+          {info ? `or pay ${info.priceEth} ETH ($${info.priceUsd})` : 'Loading price…'}
         </button>
         <p className='social-verify__fine'>
           One-time payment to the SAGE treasury. The price tracks $10 in SAGE at the current

@@ -4,7 +4,9 @@ import useSAGEAccount from '@/hooks/useSAGEAccount';
 
 /** Launch a creator coin on the pump.fun-style bonding curve. */
 export default function LaunchTokenPage() {
-  const { walletAddress } = useSAGEAccount();
+  const { walletAddress, userData } = useSAGEAccount();
+  // survive the wagmi rehydration window: fall back to the session's wallet
+  const addr = walletAddress || (userData as any)?.walletAddress || '';
   return (
     <SocialShell>
       <div className='social'>
@@ -14,8 +16,8 @@ export default function LaunchTokenPage() {
             a creator coin on the pump.fun curve — free to launch, 1% on volume
           </p>
         </header>
-        {walletAddress ? (
-          <TokenPanel address={walletAddress} isSelf followers={[]} />
+        {addr ? (
+          <TokenPanel address={addr} isSelf followers={[]} />
         ) : (
           <div className='social__empty'>Connect your wallet to launch a token.</div>
         )}

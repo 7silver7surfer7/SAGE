@@ -10,10 +10,13 @@ type Scope = 'global' | 'latest' | 'following';
 export default function SocialFeedPage() {
   const [scope, setScope] = useState<Scope>('global');
   const [cursor, setCursor] = useState<number | undefined>(undefined);
+  // A fresh seed per page-load remixes the global ranking — every refresh
+  // shows a different cut of the network, not the same top posts.
+  const [seed] = useState(() => Math.random().toString(36).slice(2, 10));
   // live feed: refetch on every visit and poll the top so drip/real posts
   // stream in without a hard reload (the ticker already polls; match it)
   const { data, isFetching } = useGetFeedQuery(
-    { scope, cursor },
+    { scope, cursor, seed: scope === 'global' ? seed : undefined },
     { refetchOnMountOrArgChange: true, pollingInterval: cursor ? 0 : 15000 }
   );
   const sentinelRef = useRef<HTMLDivElement>(null);

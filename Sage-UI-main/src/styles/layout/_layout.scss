@@ -8,7 +8,9 @@ $indent: max(1em, 10vw);
   @include m.theme() {
     display: flex;
     flex-direction: column;
-    perspective: 10px;
+    // NOTE: no `perspective` here — it turns .layout into the containing
+    // block for every position:fixed modal overlay, which made modal tints
+    // scroll with the page instead of covering the viewport.
     height: 100vh;
     width: 100vw;
     overflow: overlay;

@@ -349,7 +349,7 @@ model User {
   SocialMessagesSent            SocialMessage[]    @relation("SocialMsgFrom")
   SocialMessagesReceived        SocialMessage[]    @relation("SocialMsgTo")
   SocialPointsSpends            SocialPointsSpend[]
-  SocialTokenLaunch             SocialTokenLaunch?
+  SocialTokenLaunches           SocialTokenLaunch[]
   SocialGroupChat               SocialGroupChat?
   SocialNftEditions             SocialNftEdition[] @relation("SocialEditions")
   DropsApproved                 Drop[]        @relation("Drop_approvedByToUser")
@@ -411,6 +411,12 @@ model SocialPost {
   // "SAGE Social" SageNFT contract.
   collectPrice Float?
   collectCount Int            @default(0)
+  // link preview (Twitter-style card): the first URL in the text is unfurled
+  // server-side at post time (OG tags / oEmbed) and frozen here
+  linkUrl      String?        @db.VarChar(500)
+  linkTitle    String?        @db.VarChar(200)
+  linkDesc     String?        @db.VarChar(300)
+  linkImage    String?        @db.VarChar(500)
   Likes        SocialLike[]
   Reposts      SocialRepost[]
   Tips         SocialTip[]
@@ -480,7 +486,8 @@ model SocialBoost {
 // is the source of truth for reserves/price (read live).
 model SocialTokenLaunch {
   id              Int      @id @default(autoincrement())
-  creatorAddress  String   @unique @db.Char(42) // one token per creator
+  // creators can launch many tokens; the FIRST (lowest id) is the profile token
+  creatorAddress  String   @db.Char(42)
   Creator         User     @relation(fields: [creatorAddress], references: [walletAddress])
   tokenAddress    String   @unique @db.Char(42)
   name            String   @db.VarChar(40)
@@ -493,6 +500,7 @@ model SocialTokenLaunch {
   createdAt       DateTime @default(now())
   airdropCount    Int      @default(0) // followers airdropped to (cumulative)
   @@index([createdAt])
+  @@index([creatorAddress])
 }
 
 // A self-serve NFT edition launched from a SAGE Social profile (artists +

@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { Role } from '@prisma/client';
 import { ethers } from 'ethers';
 import { requireRole, getRequester } from '@/utilities/apiAuth';
+import { extractFirstUrl, fetchLinkPreview } from '@/utilities/linkPreview';
 import prisma from '@/prisma/client';
 import { parameters } from '@/constants/config';
 import {
@@ -112,14 +113,13 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getProfileEditions(String(request.query.address || ''), response);
       case 'GetEditionMetadata':
         return await getEditionMetadata(Number(request.query.id), response);
+      // alpha group chats were retired in favor of multi-recipient DMs —
+      // keep the actions dead, not silently spammable
       case 'GetGroupChat':
-        return await withAuth(request, response, (r) => getGroupChat(request, response, r));
       case 'SendGroupMessage':
-        return await withAuth(request, response, (r) => sendGroupMessage(request, response, r));
       case 'ToggleGroupChat':
-        return await withAuth(request, response, (r) => toggleGroupChat(request, response, r));
       case 'KickFromGroupChat':
-        return await withAuth(request, response, (r) => kickFromGroupChat(request, response, r));
+        return response.status(410).json({ error: 'group chats have been retired' });
       case 'SetProfileImage':
         return await withAuth(request, response, (r) => setProfileImage(request, response, r));
       case 'GetGlobalActivity':
@@ -214,6 +214,86 @@ async function withAuth(
 
 // Shape a post row for the client, folding in the viewer's like/repost state
 // and the author's pfp verification (computed in batch, passed via verifiedMap).
+/**
+ * Lightweight per-wallet rate limiting (in-memory sliding window). Cloud Run
+ * keeps an instance warm, so this stops bursts/spam without infra; it is a
+ * speed bump, not a hard quota across instances.
+ */
+const rateBuckets = new Map<string, number[]>();
+function rateLimited(wallet: string, action: string, max: number, windowMs = 60_000): boolean {
+  const key = `${action}:${wallet}`;
+  const now = Date.now();
+  const hits = (rateBuckets.get(key) || []).filter((t) => now - t < windowMs);
+  if (hits.length >= max) return true;
+  hits.push(now);
+  rateBuckets.set(key, hits);
+  if (rateBuckets.size > 20_000) rateBuckets.clear(); // crude memory cap
+  return false;
+}
+
+/**
+ * Debit pixels atomically: balance check + the two ledger rows (buyer debit,
+ * seller credit) run in ONE Serializable transaction, so N concurrent
+ * collects can't all pass the same balance check and overdraw (the old
+ * read-then-write pattern let a 100-pixel wallet "spend" 100 pixels N times).
+ * Throws Error('not enough pixels …') or Error('pixels-conflict').
+ */
+async function debitPixelsAtomic(
+  collector: string,
+  seller: string,
+  postId: number,
+  pointsPrice: bigint
+): Promise<void> {
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        const [earned, spent] = await Promise.all([
+          tx.earnedPoints.findUnique({ where: { address: collector } }),
+          tx.socialPointsSpend.aggregate({ where: { address: collector }, _sum: { amount: true } }),
+        ]);
+        const available =
+          (earned?.totalPointsEarned ?? BigInt(0)) - (spent._sum.amount ?? BigInt(0));
+        if (available < pointsPrice)
+          throw new Error(`not enough pixels (need ${pointsPrice}, have ${available})`);
+        await tx.socialPointsSpend.create({
+          data: { address: collector, amount: pointsPrice, reason: `collect:${postId}` },
+        });
+        // the SELLER earns the points: a negative row is a credit against
+        // their spend ledger (available = oracle-earned − Σledger)
+        await tx.socialPointsSpend.create({
+          data: { address: seller, amount: -pointsPrice, reason: `sale:${postId}` },
+        });
+      },
+      { isolationLevel: 'Serializable' }
+    );
+  } catch (e: any) {
+    if (/not enough pixels/.test(e?.message || '')) throw e;
+    throw new Error('pixels-conflict');
+  }
+}
+
+/** Compensate a debit if the step after it (mint/sign) fails. */
+async function refundPixels(collector: string, seller: string, postId: number): Promise<void> {
+  await prisma.socialPointsSpend.deleteMany({
+    where: {
+      OR: [
+        { address: collector, reason: `collect:${postId}` },
+        { address: seller, reason: `sale:${postId}` },
+      ],
+    },
+  });
+}
+
+/**
+ * Media/art URLs must point at OUR bucket — a loose *.amazonaws.com match
+ * would accept anyone's bucket with a /social/ folder.
+ */
+function isOwnSocialMediaUrl(url: string): boolean {
+  const bucket = process.env.S3_BUCKET;
+  if (!bucket || typeof url !== 'string') return false;
+  return url.startsWith(`https://${bucket}.s3.`) && url.includes('.amazonaws.com/social/');
+}
+
 function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<string, boolean>) {
   return {
     id: p.id,
@@ -232,6 +312,10 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
     collectPrice: p.collectPrice,
     collectCurrency: p.collectCurrency,
     collectCount: p.collectCount,
+    linkUrl: p.linkUrl || null,
+    linkTitle: p.linkTitle || null,
+    linkDesc: p.linkDesc || null,
+    linkImage: p.linkImage || null,
     author: {
       address: p.authorAddress,
       username: p.Author?.username || null,
@@ -390,6 +474,21 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
   // ── global: hot-ranked over a recent pool, offset-paginated ──
   if (scope === 'global') {
     const offset = req.query.cursor ? Number(req.query.cursor) : 0;
+    // Every refresh remixes the feed: the client sends a fresh `seed` per
+    // page-load, and we jitter each post's hot score ±30% with a hash of
+    // (seed, postId). Deterministic per seed, so pagination within one
+    // refresh stays consistent — but the next refresh deals a new order.
+    const seedStr = String(req.query.seed || '');
+    const jitter = (id: number): number => {
+      if (!seedStr) return 0.5;
+      let h = 2166136261;
+      const s = `${seedStr}:${id}`;
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return ((h >>> 0) % 10000) / 10000;
+    };
     const pool = await prisma.socialPost.findMany({
       where: { replyToId: null, deletedAt: null },
       include: postInclude(viewer),
@@ -398,7 +497,7 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
     });
     const now = Date.now();
     const ranked = pool
-      .map((p) => ({ p, s: hotScore(p, now) }))
+      .map((p) => ({ p, s: hotScore(p, now) * (0.7 + 0.6 * jitter(p.id)) }))
       .sort((a, b) => b.s - a.s)
       .map((x) => x.p);
     const page = ranked.slice(offset, offset + FEED_PAGE);
@@ -565,13 +664,27 @@ async function createPost(
       error: 'SAGE Social is invite-only — redeem an invite code to start posting',
       needsInvite: true,
     });
+  if (rateLimited(r.walletAddress, 'post', 10))
+    return res.status(429).json({ error: 'slow down — 10 posts per minute max' });
   const { text, imageUrl, mediaType, replyToId } = req.body || {};
   const trimmed = (text || '').trim();
   if (!trimmed && !imageUrl) return res.status(400).json({ error: 'empty post' });
   if (trimmed.length > 500) return res.status(400).json({ error: 'post too long (500 max)' });
-  // media must come from our own uploader (S3 social/ folder) — no hotlinks
-  if (imageUrl && !/^https:\/\/[a-z0-9.-]+\.amazonaws\.com\/social\//.test(imageUrl))
+  // media must come from our own uploader (our bucket only) — no hotlinks
+  if (imageUrl && !isOwnSocialMediaUrl(imageUrl))
     return res.status(400).json({ error: 'media must be uploaded through SAGE Social' });
+
+  // unfurl the first URL into a Twitter-style preview card (best-effort;
+  // capped at ~5s so a slow site can't stall posting)
+  let link: Awaited<ReturnType<typeof fetchLinkPreview>> = null;
+  const firstUrl = extractFirstUrl(trimmed);
+  if (firstUrl) {
+    try {
+      link = await fetchLinkPreview(firstUrl);
+    } catch {
+      link = null;
+    }
+  }
 
   const post = await prisma.socialPost.create({
     data: {
@@ -580,6 +693,10 @@ async function createPost(
       imageUrl: imageUrl || null,
       mediaType: imageUrl ? (mediaType === 'video' ? 'video' : 'image') : null,
       replyToId: replyToId ? Number(replyToId) : null,
+      linkUrl: link?.url || null,
+      linkTitle: link?.title || null,
+      linkDesc: link?.desc || null,
+      linkImage: link?.image || null,
     },
     include: postInclude(r.walletAddress),
   });
@@ -756,6 +873,10 @@ async function recordTip(req: NextApiRequest, res: NextApiResponse, r: { walletA
   if (!id || !txHash) return res.status(400).json({ error: 'bad tip' });
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
+  // self-tips would let authors pump their own feed rank + leaderboard for
+  // free (the money round-trips to themselves)
+  if (post.authorAddress.toLowerCase() === r.walletAddress.toLowerCase())
+    return res.status(400).json({ error: 'you cannot tip your own post' });
   let amount: number;
   try {
     amount = await verifyPayment(txHash, r.walletAddress, post.authorAddress, 0, currency);
@@ -931,23 +1052,28 @@ async function collectPost(
       console.error('collect hold-check RPC failed', e);
     }
     const pointsPrice = BigInt(Math.ceil(post.collectPrice));
-    const [earned, spent] = await Promise.all([
-      prisma.earnedPoints.findUnique({ where: { address: r.walletAddress } }),
-      prisma.socialPointsSpend.aggregate({
-        where: { address: r.walletAddress },
-        _sum: { amount: true },
-      }),
-    ]);
-    const available = (earned?.totalPointsEarned ?? BigInt(0)) - (spent._sum.amount ?? BigInt(0));
-    if (available < pointsPrice)
-      return res.status(400).json({ error: `not enough pixels (need ${pointsPrice}, have ${available})` });
+    try {
+      await debitPixelsAtomic(r.walletAddress, post.authorAddress, id, pointsPrice);
+    } catch (e: any) {
+      return res
+        .status(e?.message === 'pixels-conflict' ? 409 : 400)
+        .json({ error: e?.message === 'pixels-conflict' ? 'pixels are busy — try again' : e.message });
+    }
     pointsSpent = pointsPrice;
   }
 
   // server-mints the post NFT to the collector (platform holds role.minter)
   const tokenUri = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
-  const mint = await mintSocialCollectServerSide(r.walletAddress, tokenUri);
+  let mint: Awaited<ReturnType<typeof mintSocialCollectServerSide>>;
+  try {
+    mint = await mintSocialCollectServerSide(r.walletAddress, tokenUri);
+  } catch (e: any) {
+    // the debit already happened — put the pixels back before failing
+    if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id).catch(() => {});
+    return res.status(500).json({ error: `mint failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
+  }
 
+  // (the pixels ledger rows were written atomically in debitPixelsAtomic)
   await prisma.$transaction([
     prisma.socialCollect.create({
       data: {
@@ -962,18 +1088,6 @@ async function collectPost(
         tokenId: mint.tokenId,
       },
     }),
-    ...(pointsSpent !== null
-      ? [
-          prisma.socialPointsSpend.create({
-            data: { address: r.walletAddress, amount: pointsSpent, reason: `collect:${id}` },
-          }),
-          // the SELLER earns the points: a negative row is a credit against
-          // their spend ledger (available = oracle-earned − Σledger)
-          prisma.socialPointsSpend.create({
-            data: { address: post.authorAddress, amount: -pointsSpent, reason: `sale:${id}` },
-          }),
-        ]
-      : []),
     prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
   ]);
   res.json({ ok: true, tokenId: mint.tokenId, mintTxHash: mint.txHash, pointsSpent: pointsSpent?.toString() ?? null });
@@ -1593,6 +1707,8 @@ async function getMessages(req: NextApiRequest, res: NextApiResponse, r: { walle
 
 async function sendMessage(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   if (!(await requireVerified(r.walletAddress, res))) return;
+  if (rateLimited(r.walletAddress, 'dm', 30))
+    return res.status(429).json({ error: 'slow down — 30 messages per minute max' });
   const to = canon(req.body?.to as string);
   const text = String(req.body?.text || '').trim();
   if (!to || to === r.walletAddress) return res.status(400).json({ error: 'bad recipient' });
@@ -1734,7 +1850,9 @@ async function recordTokenLaunch(
     return res.status(400).json({ error: 'tokenAddress, name, symbol, launchTxHash required' });
   const factory = parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
   if (!factory) return res.status(400).json({ error: 'token launches are not enabled here' });
-  // verify the launch tx really came from this creator to the factory
+  // verify the launch tx really came from this creator to the factory, AND
+  // that the TokenLaunched event in that tx emitted exactly this token — a
+  // caller must not be able to record someone else's token under their name
   try {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
@@ -1742,6 +1860,15 @@ async function recordTokenLaunch(
     if (!rcpt || rcpt.status !== 1) throw new Error('launch tx not mined');
     if (rcpt.from.toLowerCase() !== r.walletAddress.toLowerCase()) throw new Error('not your launch');
     if (rcpt.to?.toLowerCase() !== factory.toLowerCase()) throw new Error('wrong factory');
+    const iface = new ethers.utils.Interface([
+      'event TokenLaunched(address indexed token, address indexed creator, string name, string symbol, bool airdropEnabled)',
+    ]);
+    const launched = rcpt.logs
+      .map((l) => { try { return iface.parseLog(l); } catch { return null; } })
+      .find((p) => p?.name === 'TokenLaunched');
+    if (!launched) throw new Error('no TokenLaunched event in tx');
+    if (launched.args.token.toLowerCase() !== token.toLowerCase())
+      throw new Error('token does not match the launch tx');
   } catch (e: any) {
     return res.status(400).json({ error: `launch not verified: ${e.message}` });
   }
@@ -1759,7 +1886,9 @@ async function recordTokenLaunch(
     });
     res.json({ ok: true, token: launch.tokenAddress });
   } catch {
-    return res.status(400).json({ error: 'you already launched a token' });
+    // tokenAddress/launchTxHash are unique — a duplicate means this exact
+    // launch was already recorded (multiple launches per creator are fine)
+    return res.status(400).json({ error: 'this launch is already recorded' });
   }
 }
 
@@ -1769,12 +1898,20 @@ async function recordAirdrop(
   r: { walletAddress: string }
 ) {
   const count = Number(req.body?.count || 0);
-  const launch = await prisma.socialTokenLaunch.findUnique({
-    where: { creatorAddress: r.walletAddress },
-  });
+  const token = canon(req.body?.tokenAddress) || null;
+  // creators can hold several launches now — target the given token, else the
+  // profile (first) one
+  const launch = token
+    ? await prisma.socialTokenLaunch.findFirst({
+        where: { creatorAddress: r.walletAddress, tokenAddress: token },
+      })
+    : await prisma.socialTokenLaunch.findFirst({
+        where: { creatorAddress: r.walletAddress },
+        orderBy: { id: 'asc' },
+      });
   if (!launch) return res.status(404).json({ error: 'no token to airdrop' });
   await prisma.socialTokenLaunch.update({
-    where: { creatorAddress: r.walletAddress },
+    where: { id: launch.id },
     data: { airdropCount: { increment: Math.max(0, count) } },
   });
   res.json({ ok: true });
@@ -1785,7 +1922,9 @@ async function getProfileToken(address: string, res: NextApiResponse) {
   const addr = canon(address);
   if (!addr) return res.status(400).json({ error: 'bad address' });
   const [launch, followers, hidden] = await Promise.all([
-    prisma.socialTokenLaunch.findUnique({ where: { creatorAddress: addr } }),
+    // the first launch is the profile token; later launches trade via their
+    // own token pages but are NOT listed on the profile
+    prisma.socialTokenLaunch.findFirst({ where: { creatorAddress: addr }, orderBy: { id: 'asc' } }),
     prisma.socialFollow.findMany({
       where: { followingAddress: addr },
       select: { followerAddress: true },
@@ -1870,13 +2009,13 @@ async function requestCollectVoucher(
   let pointsSpent: bigint | null = null;
   if (post.collectPrice > 0) {
     const pointsPrice = BigInt(Math.ceil(post.collectPrice));
-    const [earned, spent] = await Promise.all([
-      prisma.earnedPoints.findUnique({ where: { address: r.walletAddress } }),
-      prisma.socialPointsSpend.aggregate({ where: { address: r.walletAddress }, _sum: { amount: true } }),
-    ]);
-    const available = (earned?.totalPointsEarned ?? BigInt(0)) - (spent._sum.amount ?? BigInt(0));
-    if (available < pointsPrice)
-      return res.status(400).json({ error: `not enough pixels (need ${pointsPrice}, have ${available})` });
+    try {
+      await debitPixelsAtomic(r.walletAddress, post.authorAddress, id, pointsPrice);
+    } catch (e: any) {
+      return res
+        .status(e?.message === 'pixels-conflict' ? 409 : 400)
+        .json({ error: e?.message === 'pixels-conflict' ? 'pixels are busy — try again' : e.message });
+    }
     pointsSpent = pointsPrice;
   }
 
@@ -1904,7 +2043,14 @@ async function requestCollectVoucher(
   if (!uri) uri = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
 
   const chainId = Number(parameters.CHAIN_ID);
-  const signature = await signCollectVoucher(minterAddress, chainId, id, r.walletAddress, uri);
+  let signature: string;
+  try {
+    signature = await signCollectVoucher(minterAddress, chainId, id, r.walletAddress, uri);
+  } catch (e: any) {
+    // debit already happened — put the pixels back before failing
+    if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id).catch(() => {});
+    return res.status(500).json({ error: `voucher signing failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
+  }
 
   // record the collect NOW (payment already settled); the on-chain mint the
   // collector then submits is idempotent (minter rejects a second redeem)
@@ -1922,12 +2068,6 @@ async function requestCollectVoucher(
         tokenId: 0, // assigned on-chain when the collector redeems
       },
     }),
-    ...(pointsSpent !== null
-      ? [
-          prisma.socialPointsSpend.create({ data: { address: r.walletAddress, amount: pointsSpent, reason: `collect:${id}` } }),
-          prisma.socialPointsSpend.create({ data: { address: post.authorAddress, amount: -pointsSpent, reason: `sale:${id}` } }),
-        ]
-      : []),
     prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
   ]);
 
@@ -2010,7 +2150,7 @@ async function toggleGroupChat(req: NextApiRequest, res: NextApiResponse, r: { w
 
 async function setProfileImage(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   const { url, kind } = req.body || {};
-  if (!url || !/^https:\/\/[a-z0-9.-]+\.amazonaws\.com\/social\//.test(url))
+  if (!url || !isOwnSocialMediaUrl(url))
     return res.status(400).json({ error: 'image must be uploaded through SAGE Social' });
   if (kind === 'banner') {
     await prisma.user.update({
@@ -2042,7 +2182,7 @@ async function recordEditionLaunch(
   if (!launcher) return res.status(400).json({ error: 'edition launches are not enabled here' });
   if (!edition || !name || !symbol || !imageUrl || !launchTxHash)
     return res.status(400).json({ error: 'editionAddress, name, symbol, imageUrl, launchTxHash required' });
-  if (!/^https:\/\/[a-z0-9.-]+\.amazonaws\.com\/social\//.test(imageUrl))
+  if (!isOwnSocialMediaUrl(imageUrl))
     return res.status(400).json({ error: 'edition art must be uploaded through SAGE Social' });
   try {
     const { ethers } = await import('ethers');
@@ -2143,6 +2283,9 @@ async function recordTrade(req: NextApiRequest, res: NextApiResponse, r: { walle
     for (const log of rcpt.logs) {
       try {
         const parsed = iface.parseLog(log);
+        // the event must be about THIS token — otherwise a cheap trade in
+        // token A could be recorded to poison token B's chart/holders
+        if (parsed.args.token.toLowerCase() !== token.toLowerCase()) continue;
         if (parsed.name === 'Bought' && side === 'buy') {
           ethAmount = Number(ethers.utils.formatEther(parsed.args.ethIn));
           tokenAmount = Number(ethers.utils.formatEther(parsed.args.tokensOut));

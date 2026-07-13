@@ -214,16 +214,19 @@ export default function SocialShell({ children }: { children: ReactNode }) {
         <ActivityTicker />
       </aside>
 
-      {isSignedIn && (
-        <button
-          className='social-shell__fab'
-          onClick={() => router.push('/social/compose')}
-          aria-label='New post'
-          title='New post'
-        >
-          <Icon d={ICONS.compose} />
-        </button>
-      )}
+      {isSignedIn &&
+        // no FAB where it collides with a composer: the DM send button
+        // (messages) and the compose page itself
+        !/^\/social\/(messages|compose)/.test(router.pathname) && (
+          <button
+            className='social-shell__fab'
+            onClick={() => router.push('/social/compose')}
+            aria-label='New post'
+            title='New post'
+          >
+            <Icon d={ICONS.compose} />
+          </button>
+        )}
 
       <nav className='social-shell__tabbar'>
         {nav.slice(0, 5).map((item) => (

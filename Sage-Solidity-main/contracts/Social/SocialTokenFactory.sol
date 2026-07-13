@@ -70,7 +70,10 @@ contract SocialTokenFactory is ReentrancyGuard {
     }
 
     mapping(address => Curve) public curves;
-    mapping(address => address) public tokenOf; // creator → their token (one each)
+    // creator → their FIRST token (the one surfaced on their profile).
+    // Creators may launch any number of tokens; later launches trade the same
+    // but are not the profile token.
+    mapping(address => address) public tokenOf;
     address[] public allTokens;
 
     event TokenLaunched(
@@ -101,7 +104,6 @@ contract SocialTokenFactory is ReentrancyGuard {
         nonReentrant
         returns (address token)
     {
-        require(tokenOf[msg.sender] == address(0), 'one token per creator');
         require(bytes(name_).length > 0 && bytes(symbol_).length > 0, 'name/symbol required');
         uint256 creatorCut = enableAirdrop ? AIRDROP_CUT : 0;
         token = address(
@@ -116,7 +118,7 @@ contract SocialTokenFactory is ReentrancyGuard {
             complete: false,
             airdropEnabled: enableAirdrop
         });
-        tokenOf[msg.sender] = token;
+        if (tokenOf[msg.sender] == address(0)) tokenOf[msg.sender] = token; // first = profile token
         allTokens.push(token);
         emit TokenLaunched(token, msg.sender, name_, symbol_, enableAirdrop);
     }

@@ -25,6 +25,10 @@ export interface SocialPost {
   collectPrice: number | null;
   collectCurrency: 'SAGE' | 'ETH' | 'POINTS';
   collectCount: number;
+  linkUrl: string | null;
+  linkTitle: string | null;
+  linkDesc: string | null;
+  linkImage: string | null;
   author: SocialAuthor;
   likedByViewer: boolean;
   repostedByViewer: boolean;
@@ -232,9 +236,11 @@ const socialApi = baseApi.injectEndpoints({
     // Infinite scroll: one cache entry PER SCOPE that pages merge into.
     // cursor=undefined replaces the list (fresh load / new post), a cursor
     // appends deduped older posts.
-    getFeed: builder.query<FeedPage, { scope: Scope; cursor?: number }>({
-      query: ({ scope, cursor }) => ({
-        url: `social?action=GetFeed&scope=${scope}${cursor ? `&cursor=${cursor}` : ''}`,
+    getFeed: builder.query<FeedPage, { scope: Scope; cursor?: number; seed?: string }>({
+      query: ({ scope, cursor, seed }) => ({
+        url: `social?action=GetFeed&scope=${scope}${cursor ? `&cursor=${cursor}` : ''}${
+          seed ? `&seed=${seed}` : ''
+        }`,
       }),
       serializeQueryArgs: ({ queryArgs }) => `feed-${queryArgs.scope}`,
       merge: (current, incoming, { arg }) => {
@@ -245,7 +251,9 @@ const socialApi = baseApi.injectEndpoints({
         return current;
       },
       forceRefetch: ({ currentArg, previousArg }) =>
-        currentArg?.cursor !== previousArg?.cursor || currentArg?.scope !== previousArg?.scope,
+        currentArg?.cursor !== previousArg?.cursor ||
+        currentArg?.scope !== previousArg?.scope ||
+        currentArg?.seed !== previousArg?.seed,
       providesTags: ['SocialFeed'],
     }),
     getUserPosts: builder.query<{ posts: SocialPost[] }, string>({
@@ -357,22 +365,50 @@ const socialApi = baseApi.injectEndpoints({
       { text: string; imageUrl?: string; mediaType?: 'image' | 'video'; replyToId?: number }
     >({
       query: (body) => ({ url: 'social?action=CreatePost', method: 'POST', body }),
+      // Your new post shows at the TOP of the feed immediately: patch the
+      // cached feed pages instead of refetching (a hot-ranked refetch would
+      // bury a brand-new post with zero engagement).
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        let created: SocialPost | undefined;
+        try {
+          created = (await queryFulfilled).data.post;
+        } catch {
+          return;
+        }
+        if (!created || arg.replyToId) return;
+        (['global', 'following', 'latest'] as Scope[]).forEach((scope) =>
+          dispatch(
+            socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
+              if (!draft.posts.some((p) => p.id === created!.id)) draft.posts.unshift(created!);
+            })
+          )
+        );
+      },
       invalidatesTags: (_r, _e, arg) =>
-        arg.replyToId ? [{ type: 'SocialPost', id: arg.replyToId }, 'SocialFeed'] : ['SocialFeed'],
+        arg.replyToId ? [{ type: 'SocialPost', id: arg.replyToId }, 'SocialFeed'] : [],
     }),
     toggleLike: builder.mutation<{ liked: boolean }, number>({
       query: (postId) => ({ url: 'social?action=ToggleLike', method: 'POST', body: { postId } }),
       // optimistic: paginated feed pages beyond the newest are append-only in
-      // the cache, so patch them directly instead of waiting for a refetch
+      // the cache, so patch them directly instead of waiting for a refetch —
+      // and patch the post-detail thread too, or ♥ looks dead on /post/[id]
       async onQueryStarted(postId, { dispatch, queryFulfilled }) {
-        const patches = (['global', 'following'] as const).map((scope) =>
+        const flip = (p: SocialPost | undefined) => {
+          if (!p) return;
+          p.likedByViewer = !p.likedByViewer;
+          p.likeCount += p.likedByViewer ? 1 : -1;
+        };
+        const patches = (['global', 'following', 'latest'] as const).map((scope) =>
           dispatch(
             socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
-              const p = draft.posts.find((x) => x.id === postId);
-              if (p) {
-                p.likedByViewer = !p.likedByViewer;
-                p.likeCount += p.likedByViewer ? 1 : -1;
-              }
+              flip(draft.posts.find((x) => x.id === postId));
+            })
+          )
+        );
+        patches.push(
+          dispatch(
+            socialApi.util.updateQueryData('getPostThread', postId, (draft) => {
+              flip(draft.post);
             })
           )
         );
@@ -382,19 +418,27 @@ const socialApi = baseApi.injectEndpoints({
           patches.forEach((p) => p.undo());
         }
       },
-      invalidatesTags: ['SocialFeed'],
+      invalidatesTags: (_r, _e, postId) => ['SocialFeed', { type: 'SocialPost', id: postId }],
     }),
     toggleRepost: builder.mutation<{ reposted: boolean }, number>({
       query: (postId) => ({ url: 'social?action=ToggleRepost', method: 'POST', body: { postId } }),
       async onQueryStarted(postId, { dispatch, queryFulfilled }) {
-        const patches = (['global', 'following'] as const).map((scope) =>
+        const flip = (p: SocialPost | undefined) => {
+          if (!p) return;
+          p.repostedByViewer = !p.repostedByViewer;
+          p.repostCount += p.repostedByViewer ? 1 : -1;
+        };
+        const patches = (['global', 'following', 'latest'] as const).map((scope) =>
           dispatch(
             socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
-              const p = draft.posts.find((x) => x.id === postId);
-              if (p) {
-                p.repostedByViewer = !p.repostedByViewer;
-                p.repostCount += p.repostedByViewer ? 1 : -1;
-              }
+              flip(draft.posts.find((x) => x.id === postId));
+            })
+          )
+        );
+        patches.push(
+          dispatch(
+            socialApi.util.updateQueryData('getPostThread', postId, (draft) => {
+              flip(draft.post);
             })
           )
         );
@@ -404,7 +448,7 @@ const socialApi = baseApi.injectEndpoints({
           patches.forEach((p) => p.undo());
         }
       },
-      invalidatesTags: ['SocialFeed'],
+      invalidatesTags: (_r, _e, postId) => ['SocialFeed', { type: 'SocialPost', id: postId }],
     }),
     toggleFollow: builder.mutation<{ following: boolean; whitelistedFor?: string[] }, string>({
       query: (address) => ({ url: 'social?action=ToggleFollow', method: 'POST', body: { address } }),
