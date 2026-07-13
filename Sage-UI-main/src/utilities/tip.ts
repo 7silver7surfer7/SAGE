@@ -31,3 +31,20 @@ const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 export async function burnSage(amountSage: number, signer: Signer): Promise<string> {
   return tipSage(DEAD_ADDRESS, amountSage, signer);
 }
+
+/**
+ * Sends native ETH (a plain value transfer) — the ETH leg of tips, collects
+ * and verification. Returns the mined tx hash for server-side verification.
+ */
+export async function sendEth(
+  toAddress: string,
+  amountEth: number,
+  signer: Signer
+): Promise<string> {
+  const tx = await signer.sendTransaction({
+    to: toAddress,
+    value: ethers.utils.parseEther(String(amountEth)),
+  });
+  await tx.wait(1);
+  return tx.hash;
+}

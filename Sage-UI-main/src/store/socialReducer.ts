@@ -18,9 +18,11 @@ export interface SocialPost {
   repostCount: number;
   replyCount: number;
   tipTotal: number;
+  tipTotalEth: number;
   boostBurned: number;
   isBoosted: boolean;
   collectPrice: number | null;
+  collectCurrency: 'SAGE' | 'ETH';
   collectCount: number;
   author: SocialAuthor;
   likedByViewer: boolean;
@@ -63,6 +65,7 @@ export interface OwnedNft {
 export interface VerificationInfo {
   priceUsd: number;
   priceSage: number;
+  priceEth: number;
   treasury: string;
   pointsPerSage: number;
 }
@@ -215,8 +218,8 @@ const socialApi = baseApi.injectEndpoints({
       invalidatesTags: (_r, _e, address) => [{ type: 'SocialProfile', id: address }, 'SocialFeed'],
     }),
     recordTip: builder.mutation<
-      { ok: boolean; amount: number },
-      { postId: number; txHash: string }
+      { ok: boolean; amount: number; currency: string },
+      { postId: number; txHash: string; currency?: 'SAGE' | 'ETH' }
     >({
       query: (body) => ({ url: 'social?action=RecordTip', method: 'POST', body }),
       invalidatesTags: ['SocialFeed'],
@@ -229,8 +232,8 @@ const socialApi = baseApi.injectEndpoints({
       invalidatesTags: ['SocialFeed'],
     }),
     setCollectible: builder.mutation<
-      { ok: boolean; collectPrice: number | null },
-      { postId: number; price: number | null }
+      { ok: boolean; collectPrice: number | null; collectCurrency: string },
+      { postId: number; price: number | null; currency?: 'SAGE' | 'ETH' }
     >({
       query: (body) => ({ url: 'social?action=SetCollectible', method: 'POST', body }),
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
@@ -256,7 +259,10 @@ const socialApi = baseApi.injectEndpoints({
       query: (body) => ({ url: 'social?action=SetFollowGate', method: 'POST', body }),
       invalidatesTags: ['SocialProfile'],
     }),
-    purchaseVerification: builder.mutation<{ ok: boolean; verified: boolean }, { txHash: string }>({
+    purchaseVerification: builder.mutation<
+      { ok: boolean; verified: boolean },
+      { txHash: string; currency?: 'SAGE' | 'ETH' }
+    >({
       query: (body) => ({ url: 'social?action=PurchaseVerification', method: 'POST', body }),
       invalidatesTags: ['SocialProfile', 'SocialFeed'],
     }),

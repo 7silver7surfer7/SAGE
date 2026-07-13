@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { useSigner } from 'wagmi';
-import { tipSage } from '@/utilities/tip';
+import { tipSage, sendEth } from '@/utilities/tip';
 import {
   useGetVerificationInfoQuery,
   usePurchaseVerificationMutation,
@@ -28,17 +28,21 @@ export default function VerificationModal({ onClose }: Props) {
   const [purchase] = usePurchaseVerificationMutation();
   const [busy, setBusy] = useState(false);
 
-  const onBuy = async () => {
+  const onBuy = async (currency: 'SAGE' | 'ETH') => {
     if (!info) return;
     if (!signer) {
       toast.info('Connect your wallet first');
       return;
     }
+    const price = currency === 'ETH' ? info.priceEth : info.priceSage;
     setBusy(true);
-    const t = toast.loading(`Sending ${info.priceSage} SAGE…`);
+    const t = toast.loading(`Sending ${price} ${currency}…`);
     try {
-      const txHash = await tipSage(info.treasury, info.priceSage, signer as any);
-      await purchase({ txHash }).unwrap();
+      const txHash =
+        currency === 'ETH'
+          ? await sendEth(info.treasury, price, signer as any)
+          : await tipSage(info.treasury, price, signer as any);
+      await purchase({ txHash, currency }).unwrap();
       toast.update(t, {
         render: 'You are verified — welcome to premium ✅',
         type: 'success',
@@ -81,10 +85,19 @@ export default function VerificationModal({ onClose }: Props) {
             </li>
           ))}
         </ul>
-        <button className='social-verify__buy' disabled={busy || !info} onClick={onBuy}>
-          {info
-            ? `Get verified — ${info.priceSage} SAGE ($${info.priceUsd})`
-            : 'Loading price…'}
+        <button
+          className='social-verify__buy'
+          disabled={busy || !info}
+          onClick={() => onBuy('SAGE')}
+        >
+          {info ? `Get verified — ${info.priceSage} SAGE ($${info.priceUsd})` : 'Loading price…'}
+        </button>
+        <button
+          className='social-verify__buy social-verify__buy--eth'
+          disabled={busy || !info}
+          onClick={() => onBuy('ETH')}
+        >
+          {info ? `or pay ${info.priceEth} ETH ($${info.priceUsd})` : ''}
         </button>
         <p className='social-verify__fine'>
           One-time payment to the SAGE treasury. The price tracks $10 in SAGE at the current

@@ -102,6 +102,45 @@ export async function verifySageTransfer(
 }
 
 /**
+ * Native-ETH sibling of verifySageTransfer: confirms a mined plain-value
+ * transfer (EOA→EOA) of at least minAmount ETH. Returns the actual amount.
+ */
+export async function verifyEthTransfer(
+  txHash: string,
+  from: string,
+  to: string,
+  minAmount: number
+): Promise<number> {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error('bad tx hash');
+  const provider = getProvider();
+  const [tx, receipt] = await Promise.all([
+    provider.getTransaction(txHash),
+    provider.getTransactionReceipt(txHash),
+  ]);
+  if (!tx || !receipt) throw new Error('transaction not found (not mined yet?)');
+  if (receipt.status !== 1) throw new Error('transaction reverted');
+  if (tx.from.toLowerCase() !== from.toLowerCase()) throw new Error('wrong sender');
+  if (tx.to?.toLowerCase() !== to.toLowerCase()) throw new Error('wrong recipient');
+  const amount = Number(ethers.utils.formatEther(tx.value));
+  if (amount + 1e-12 < minAmount)
+    throw new Error(`transfer too small (${amount} < ${minAmount} ETH)`);
+  return amount;
+}
+
+/** Currency-dispatching payment check for the social money features. */
+export async function verifyPayment(
+  txHash: string,
+  from: string,
+  to: string,
+  minAmount: number,
+  currency: 'SAGE' | 'ETH'
+): Promise<number> {
+  return currency === 'ETH'
+    ? verifyEthTransfer(txHash, from, to, minAmount)
+    : verifySageTransfer(txHash, from, to, minAmount);
+}
+
+/**
  * Mints a collected post into the platform's "SAGE Social" SageNFT. Needs the
  * platform signer to hold storage-level role.minter (granted once at contract
  * deploy). Returns the mint tx hash + the new tokenId.

@@ -385,6 +385,10 @@ model SocialPost {
   repostCount  Int            @default(0)
   replyCount   Int            @default(0)
   tipTotal     Float          @default(0) // total SAGE tipped to this post
+  tipTotalEth  Float          @default(0) // total native ETH tipped to this post
+  // Currency the author sells this post in when collectible ("SAGE" | "ETH"),
+  // mirroring the per-drop currency pattern. Points-collect is SAGE-only.
+  collectCurrency String      @default("SAGE")
   // burn-to-boost: SAGE burned (sent to 0x…dEaD) pins the post to the top of
   // the global feed until boostedUntil. Verified on-chain server-side.
   boostedUntil DateTime?
@@ -438,7 +442,8 @@ model SocialTip {
   postId      Int
   fromAddress String     @db.Char(42)
   toAddress   String     @db.Char(42)
-  amount      Float      // SAGE amount
+  amount      Float      // amount in `currency`
+  currency    String     @default("SAGE") // "SAGE" | "ETH"
   txHash      String     @db.Char(66) @unique // one credit per on-chain transfer
   createdAt   DateTime   @default(now())
   Post        SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
@@ -461,7 +466,8 @@ model SocialCollect {
   id               Int        @id @default(autoincrement())
   postId           Int
   collectorAddress String     @db.Char(42)
-  amount           Float      // SAGE paid to the author (0 = free/points collect)
+  amount           Float      // paid to the author in `currency` (0 = free/points collect)
+  currency         String     @default("SAGE") // "SAGE" | "ETH"
   pointsSpent      BigInt?    // pixels burned instead of SAGE (verified users)
   payTxHash        String?    @db.Char(66) @unique // null for free collects
   mintTxHash       String     @db.Char(66)

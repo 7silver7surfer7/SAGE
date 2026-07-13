@@ -6,7 +6,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
-import { tipSage, burnSage } from '@/utilities/tip';
+import { tipSage, burnSage, sendEth } from '@/utilities/tip';
 import {
   SocialPost,
   useToggleLikeMutation,
@@ -135,19 +135,27 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const onTip = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!requireSigner()) return;
-    const raw = window.prompt(`Tip @${displayName} in SAGE — how much?`, '10');
+    const raw = window.prompt(
+      `Tip @${displayName} — enter a SAGE amount (e.g. "10"), or add ETH to tip native ETH (e.g. "0.01 ETH")`,
+      '10'
+    );
     if (!raw) return;
-    const amount = Number(raw);
+    const isEth = /eth?\s*$/i.test(raw.trim());
+    const currency: 'SAGE' | 'ETH' = isEth ? 'ETH' : 'SAGE';
+    const amount = Number(raw.trim().replace(/eth?\s*$/i, '').trim());
     if (!amount || amount <= 0) {
       toast.error('Enter a valid amount');
       return;
     }
     setBusy(true);
-    const t = toast.loading(`Sending ${amount} SAGE…`);
+    const t = toast.loading(`Sending ${amount} ${currency}…`);
     try {
-      const txHash = await tipSage(post.author.address, amount, signer as any);
-      await recordTip({ postId: post.id, txHash }).unwrap();
-      toast.update(t, { render: `Tipped ${amount} SAGE 🎉`, type: 'success', isLoading: false, autoClose: 4000 });
+      const txHash =
+        currency === 'ETH'
+          ? await sendEth(post.author.address, amount, signer as any)
+          : await tipSage(post.author.address, amount, signer as any);
+      await recordTip({ postId: post.id, txHash, currency }).unwrap();
+      toast.update(t, { render: `Tipped ${amount} ${currency} 🎉`, type: 'success', isLoading: false, autoClose: 4000 });
     } catch (err: any) {
       toast.update(t, {
         render: err?.data?.error || err?.message?.slice(0, 80) || 'Tip failed',
@@ -192,19 +200,21 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     e.stopPropagation();
     const raw = window.prompt(
       post.collectPrice === null
-        ? 'Sell this post as an NFT: set a collect price in SAGE (0 = free). Collectors pay you directly and get the post minted to their wallet.'
-        : `Collect price is ${post.collectPrice} SAGE. Enter a new price, or leave empty to stop new collects.`,
+        ? 'Sell this post as an NFT: set a price in SAGE (e.g. "10"), or in native ETH with a suffix (e.g. "0.01 ETH"). 0 = free. Leave empty to cancel.'
+        : `Collect price is ${post.collectPrice} ${post.collectCurrency}. Enter a new price ("10" = SAGE, "0.01 ETH" = ETH), or leave empty to stop new collects.`,
       post.collectPrice === null ? '10' : String(post.collectPrice)
     );
     if (raw === null) return;
-    const price = raw.trim() === '' ? null : Number(raw);
+    const isEth = /eth?\s*$/i.test(raw.trim());
+    const currency: 'SAGE' | 'ETH' = isEth ? 'ETH' : 'SAGE';
+    const price = raw.trim() === '' ? null : Number(raw.trim().replace(/eth?\s*$/i, '').trim());
     if (price !== null && (isNaN(price) || price < 0)) {
       toast.error('Enter a valid price');
       return;
     }
     try {
-      await setCollectible({ postId: post.id, price }).unwrap();
-      toast.success(price === null ? 'Collecting closed' : `Collectible at ${price} SAGE`);
+      await setCollectible({ postId: post.id, price, currency }).unwrap();
+      toast.success(price === null ? 'Collecting closed' : `Collectible at ${price} ${currency}`);
     } catch (err: any) {
       handleGateError(err, 'Could not update');
     }
@@ -216,22 +226,26 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     if (payWith === 'POINTS' && !requireAuth()) return;
     if (post.collectedByViewer) return;
     const price = post.collectPrice || 0;
+    const cur = post.collectCurrency;
     const confirmed = window.confirm(
       payWith === 'POINTS'
         ? `Collect this post for ${Math.ceil(price * 100)} pixels? The post is minted to your wallet as an NFT.`
         : price > 0
-        ? `Collect this post for ${price} SAGE? You pay @${displayName} directly and the post is minted to your wallet as an NFT.`
+        ? `Collect this post for ${price} ${cur}? You pay @${displayName} directly and the post is minted to your wallet as an NFT.`
         : 'Collect this post for free? It will be minted to your wallet as an NFT.'
     );
     if (!confirmed) return;
     setBusy(true);
     const t = toast.loading(
-      payWith === 'POINTS' ? 'Spending pixels…' : price > 0 ? `Paying ${price} SAGE…` : 'Minting…'
+      payWith === 'POINTS' ? 'Spending pixels…' : price > 0 ? `Paying ${price} ${cur}…` : 'Minting…'
     );
     try {
       let txHash: string | undefined;
       if (payWith === 'SAGE' && price > 0)
-        txHash = await tipSage(post.author.address, price, signer as any);
+        txHash =
+          cur === 'ETH'
+            ? await sendEth(post.author.address, price, signer as any)
+            : await tipSage(post.author.address, price, signer as any);
       toast.update(t, { render: 'Minting your NFT…', isLoading: true });
       const r = await collectPost({ postId: post.id, txHash, payWith }).unwrap();
       toast.update(t, {
@@ -290,13 +304,13 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
               {post.collectedByViewer
                 ? 'Collected'
                 : post.collectPrice > 0
-                ? `Collect · ${post.collectPrice} SAGE`
+                ? `Collect · ${post.collectPrice} ${post.collectCurrency}`
                 : 'Collect · free'}
               {post.collectCount > 0 && (
                 <span className='social-post__collect-count'>{post.collectCount} minted</span>
               )}
             </button>
-            {post.collectPrice > 0 && !post.collectedByViewer && (
+            {post.collectPrice > 0 && post.collectCurrency === 'SAGE' && !post.collectedByViewer && (
               <button
                 className='social-post__collect social-post__collect--points'
                 onClick={(e) => onCollect(e, 'POINTS')}
@@ -353,7 +367,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
               <span>
                 {post.collectPrice === null
                   ? 'Sell as NFT'
-                  : `${post.collectPrice} SAGE · ${post.collectCount} minted`}
+                  : `${post.collectPrice} ${post.collectCurrency} · ${post.collectCount} minted`}
               </span>
             </button>
           ) : (
@@ -363,7 +377,16 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
               disabled={busy}
             >
               <TipIcon />
-              <span>{post.tipTotal > 0 ? `${post.tipTotal} SAGE` : 'Tip'}</span>
+              <span>
+                {post.tipTotal > 0 || post.tipTotalEth > 0
+                  ? [
+                      post.tipTotal > 0 ? `${post.tipTotal} SAGE` : '',
+                      post.tipTotalEth > 0 ? `${post.tipTotalEth} ETH` : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' + ')
+                  : 'Tip'}
+              </span>
             </button>
           )}
         </div>

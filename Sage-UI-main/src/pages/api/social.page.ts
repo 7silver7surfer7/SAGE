@@ -6,6 +6,7 @@ import prisma from '@/prisma/client';
 import { parameters } from '@/constants/config';
 import {
   verifySageTransfer,
+  verifyPayment,
   mintSocialCollectServerSide,
   addToWhitelistOnChain,
   isWhitelistedOnChain,
@@ -42,6 +43,7 @@ const BOOST_MIN_SAGE = 1;
 // FALLBACK_SAGE covers a dead price feed (testnet SAGE has no real market).
 const VERIFICATION_PRICE_USD = 10;
 const VERIFICATION_FALLBACK_SAGE = 100;
+const VERIFICATION_FALLBACK_ETH = 0.003; // ≈$10 if the ETH/USD feed is down
 const TREASURY_ADDRESS = '0x3E099aF007CaB8233D44782D8E6fe80FECDC321e'; // platform multisig
 
 // points-collect: verified users may spend pixels instead of SAGE
@@ -163,9 +165,11 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
     repostCount: p.repostCount,
     replyCount: p.replyCount,
     tipTotal: p.tipTotal,
+    tipTotalEth: p.tipTotalEth,
     boostBurned: p.boostBurned,
     isBoosted: !!(p.boostedUntil && new Date(p.boostedUntil) > new Date()),
     collectPrice: p.collectPrice,
+    collectCurrency: p.collectCurrency,
     collectCount: p.collectCount,
     author: {
       address: p.authorAddress,
@@ -251,24 +255,28 @@ async function requireVerified(wallet: string, res: NextApiResponse): Promise<bo
 
 // module-level 5-min cache: the verification price only needs to be roughly
 // live, and the SAGE/WETH pair read costs an RPC round-trip
-let verificationPriceCache: { sage: number; at: number } | null = null;
-async function verificationPriceSage(): Promise<number> {
+let verificationPriceCache: { sage: number; eth: number; at: number } | null = null;
+async function verificationPrices(): Promise<{ sage: number; eth: number }> {
   if (verificationPriceCache && Date.now() - verificationPriceCache.at < 300_000)
-    return verificationPriceCache.sage;
+    return verificationPriceCache;
   let sage = VERIFICATION_FALLBACK_SAGE;
-  // live $10-worth pricing only on production — testnet SAGE isn't the token
-  // the price feed tracks, and a mispriced feed would quote absurd amounts
-  if (process.env.NEXT_PUBLIC_APP_MODE === 'production') {
-    try {
-      const { getSagePriceUsd } = await import('@/utilities/sagePrice');
-      const usd = await getSagePriceUsd();
+  let eth = VERIFICATION_FALLBACK_ETH;
+  // live $10-worth SAGE pricing only on production — testnet SAGE isn't the
+  // token the price feed tracks, and a mispriced feed would quote absurd
+  // amounts. The ETH leg (CoinGecko ETH/USD) is real on every network.
+  try {
+    const priceUtils = await import('@/utilities/sagePrice');
+    const ethUsd = await priceUtils.getEthUsd();
+    if (ethUsd > 0) eth = Math.ceil((VERIFICATION_PRICE_USD / ethUsd) * 1e6) / 1e6;
+    if (process.env.NEXT_PUBLIC_APP_MODE === 'production') {
+      const usd = await priceUtils.getSagePriceUsd();
       if (usd && usd > 0) sage = Math.ceil((VERIFICATION_PRICE_USD / usd) * 100) / 100;
-    } catch {
-      // dead feed → fallback price
     }
+  } catch {
+    // dead feed → fallback prices
   }
-  verificationPriceCache = { sage, at: Date.now() };
-  return sage;
+  verificationPriceCache = { sage, eth, at: Date.now() };
+  return verificationPriceCache;
 }
 
 async function isPfpVerified(user: {
@@ -625,13 +633,14 @@ async function recordTip(req: NextApiRequest, res: NextApiResponse, r: { walletA
   // the mined tx actually paid the AUTHOR before crediting, and the unique
   // txHash column stops the same transfer being recorded twice.
   const { postId, txHash } = req.body || {};
+  const currency = req.body?.currency === 'ETH' ? 'ETH' : 'SAGE';
   const id = Number(postId);
   if (!id || !txHash) return res.status(400).json({ error: 'bad tip' });
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
   let amount: number;
   try {
-    amount = await verifySageTransfer(txHash, r.walletAddress, post.authorAddress, 0);
+    amount = await verifyPayment(txHash, r.walletAddress, post.authorAddress, 0, currency);
   } catch (e: any) {
     return res.status(400).json({ error: `tip not verified: ${e.message}` });
   }
@@ -643,15 +652,22 @@ async function recordTip(req: NextApiRequest, res: NextApiResponse, r: { walletA
           fromAddress: r.walletAddress,
           toAddress: post.authorAddress,
           amount,
+          currency,
           txHash,
         },
       }),
-      prisma.socialPost.update({ where: { id }, data: { tipTotal: { increment: amount } } }),
+      prisma.socialPost.update({
+        where: { id },
+        data:
+          currency === 'ETH'
+            ? { tipTotalEth: { increment: amount } }
+            : { tipTotal: { increment: amount } },
+      }),
     ]);
   } catch {
     return res.status(400).json({ error: 'this transaction was already recorded' });
   }
-  res.json({ ok: true, amount });
+  res.json({ ok: true, amount, currency });
 }
 
 async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
@@ -707,11 +723,15 @@ async function setCollectible(
     return res.status(403).json({ error: 'only the author can do that' });
   // price null/undefined = stop new collects; 0 = free collect; >0 = SAGE price
   const p = price === null || price === undefined || price === '' ? null : Number(price);
+  const currency = req.body?.currency === 'ETH' ? 'ETH' : 'SAGE';
   if (p !== null && (isNaN(p) || p < 0)) return res.status(400).json({ error: 'bad price' });
   if (p !== null && !parameters.SOCIAL_COLLECTS_ADDRESS)
     return res.status(400).json({ error: 'collecting is not enabled on this network yet' });
-  await prisma.socialPost.update({ where: { id }, data: { collectPrice: p } });
-  res.json({ ok: true, collectPrice: p });
+  await prisma.socialPost.update({
+    where: { id },
+    data: { collectPrice: p, collectCurrency: currency },
+  });
+  res.json({ ok: true, collectPrice: p, collectCurrency: currency });
 }
 
 async function collectPost(
@@ -733,9 +753,12 @@ async function collectPost(
   });
   if (already) return res.status(400).json({ error: 'already collected' });
 
-  // two ways to pay: SAGE straight to the author, or (points) burn pixels
+  // pay in the post's currency straight to the author, or (points) burn pixels
+  const currency = (post.collectCurrency === 'ETH' ? 'ETH' : 'SAGE') as 'SAGE' | 'ETH';
   let amount = 0;
   let pointsSpent: bigint | null = null;
+  if (payWith === 'POINTS' && currency === 'ETH')
+    return res.status(400).json({ error: 'points can only collect SAGE-priced posts' });
   if (payWith === 'POINTS' && post.collectPrice > 0) {
     const pointsPrice = BigInt(Math.ceil(post.collectPrice * POINTS_PER_SAGE));
     const [earned, spent] = await Promise.all([
@@ -752,16 +775,17 @@ async function collectPost(
       });
     pointsSpent = pointsPrice;
   } else if (post.collectPrice > 0) {
-    // SAGE path: the payment to the author must be mined + sufficient
+    // the payment to the author must be mined + sufficient, in the post's currency
     if (!txHash) return res.status(400).json({ error: 'payment tx required' });
     const spent = await prisma.socialCollect.findUnique({ where: { payTxHash: txHash } });
     if (spent) return res.status(400).json({ error: 'this payment was already used' });
     try {
-      amount = await verifySageTransfer(
+      amount = await verifyPayment(
         txHash,
         r.walletAddress,
         post.authorAddress,
-        post.collectPrice
+        post.collectPrice,
+        currency
       );
     } catch (e: any) {
       return res.status(400).json({ error: `payment not verified: ${e.message}` });
@@ -778,6 +802,7 @@ async function collectPost(
         postId: id,
         collectorAddress: r.walletAddress,
         amount,
+        currency,
         pointsSpent,
         payTxHash: amount > 0 ? txHash : null,
         mintTxHash: mint.txHash,
@@ -887,10 +912,11 @@ function postCardSvgDataUri(text: string, author: string, createdAt: Date): stri
 // ─────────────────────── paid verification ($10 checkmark) ───────────────────────
 
 async function getVerificationInfo(res: NextApiResponse) {
-  const priceSage = await verificationPriceSage();
+  const prices = await verificationPrices();
   res.json({
     priceUsd: VERIFICATION_PRICE_USD,
-    priceSage,
+    priceSage: prices.sage,
+    priceEth: prices.eth,
     treasury: TREASURY_ADDRESS,
     pointsPerSage: POINTS_PER_SAGE,
   });
@@ -910,10 +936,12 @@ async function purchaseVerification(
   if (me?.verifiedAt) return res.status(400).json({ error: 'already verified' });
   const dupe = await prisma.user.findFirst({ where: { verifiedTxHash: txHash } });
   if (dupe) return res.status(400).json({ error: 'this payment was already used' });
-  const priceSage = await verificationPriceSage();
+  const currency = req.body?.currency === 'ETH' ? 'ETH' : 'SAGE';
+  const prices = await verificationPrices();
+  const price = currency === 'ETH' ? prices.eth : prices.sage;
   try {
     // 5% tolerance: the quoted price can drift between quote and mined tx
-    await verifySageTransfer(txHash, r.walletAddress, TREASURY_ADDRESS, priceSage * 0.95);
+    await verifyPayment(txHash, r.walletAddress, TREASURY_ADDRESS, price * 0.95, currency);
   } catch (e: any) {
     return res.status(400).json({ error: `payment not verified: ${e.message}` });
   }

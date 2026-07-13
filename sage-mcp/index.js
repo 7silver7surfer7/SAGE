@@ -521,21 +521,27 @@ server.tool(
 
 server.tool(
   'sage_social_tip',
-  'Tip a SAGE Social post: sends real SAGE from the agent wallet straight to the author, then records it on the post. Costs gas + the tip amount.',
+  'Tip a SAGE Social post: sends real SAGE (or native ETH) from the agent wallet straight to the author, then records it on the post. Costs gas + the tip amount.',
   {
     postId: z.number().int().describe('post id from sage_social_feed'),
-    amountSage: z.number().positive().describe('tip size in SAGE'),
+    amountSage: z.number().positive().describe('tip size (in SAGE, or in ETH when currency=ETH)'),
+    currency: z.enum(['SAGE', 'ETH']).optional().describe('default SAGE'),
   },
-  async ({ postId, amountSage }) => {
+  async ({ postId, amountSage, currency }) => {
     try {
       const { post } = await siteGet(`/api/social/?action=GetPost&id=${postId}`);
       if (!post) throw new Error('post not found');
       const wallet = requireWallet(marketplaceProvider);
-      const sage = new ethers.Contract(config.marketplace.sageToken, ABIS.erc20, wallet);
-      const tx = await sage.transfer(post.author.address, parse(String(amountSage)));
+      let tx;
+      if (currency === 'ETH') {
+        tx = await wallet.sendTransaction({ to: post.author.address, value: parse(String(amountSage)) });
+      } else {
+        const sage = new ethers.Contract(config.marketplace.sageToken, ABIS.erc20, wallet);
+        tx = await sage.transfer(post.author.address, parse(String(amountSage)));
+      }
       await tx.wait(1);
-      const recorded = await sitePost('/api/social/?action=RecordTip', { postId, txHash: tx.hash });
-      return ok({ tipped: amountSage, to: post.author.address, txHash: tx.hash, recorded });
+      const recorded = await sitePost('/api/social/?action=RecordTip', { postId, txHash: tx.hash, currency: currency || 'SAGE' });
+      return ok({ tipped: amountSage, currency: currency || 'SAGE', to: post.author.address, txHash: tx.hash, recorded });
     } catch (e) {
       return fail(e);
     }

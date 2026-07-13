@@ -861,6 +861,15 @@ $col-width: 620px;
       opacity: 0.5;
       cursor: default;
     }
+    &--eth {
+      margin-top: 8px;
+      background: transparent;
+      @include m.theme() {
+        background: transparent;
+        color: m.t(accent);
+        border: 1px solid m.t(accent);
+      }
+    }
   }
   &__fine {
     font-size: 0.72rem;
