@@ -369,6 +369,7 @@ async function insertDrop(data: any, response: NextApiResponse) {
         artistDisplayName: data.artistDisplayName?.trim() || null,
         royaltyPercentage,
         currency,
+        ipGateEnabled: data.ipGateEnabled === true || data.ipGateEnabled === 'true',
         NftContract: { connect: { artistAddress: data.artistWallet } },
       },
     });

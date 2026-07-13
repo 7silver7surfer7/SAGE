@@ -77,6 +77,10 @@ export interface CreateDropRequest {
   /** Payment currency for every game in this drop. "SAGE" (default) or "ETH"
    *  (native). Baked into the game contracts at deploy. */
   currency?: 'SAGE' | 'ETH';
+  /** One mint spot per IP: minting requires claiming a server-verified spot
+   *  (salted-IP dedup) which whitelists the wallet on-chain. Sybil speed
+   *  bump, not a wall. */
+  ipGateEnabled?: boolean;
   /** Collection drop mode: a ZIP of unique images bulk-uploaded to Arweave;
    *  collectors mint sequentially at a fixed SAGE price. When set, `artworks`
    *  is ignored — the zip IS the drop's content. */
@@ -165,6 +169,7 @@ export const dropsApi = baseApi.injectEndpoints({
                 goLiveAt: req.goLiveAt,
                 royaltyPercentage: req.royaltyPercentage,
                 currency: req.currency || 'SAGE',
+                ipGateEnabled: !!req.ipGateEnabled,
               },
             })
           );
@@ -711,7 +716,10 @@ async function deployAndSyncAllowlist(
   fetchWithBQ: any
 ): Promise<string> {
   const { data: allowlist } = await fetchWithBQ(`drops?action=GetDropAllowlist&id=${drop.id}`);
-  if (!allowlist?.enabled || !allowlist.entries?.length) {
+  // An IP-gated drop needs the whitelist contract even with ZERO pre-listed
+  // addresses — minters are added one by one as they claim spots.
+  const ipGated = Boolean((drop as any).ipGateEnabled);
+  if ((!allowlist?.enabled || !allowlist.entries?.length) && !ipGated) {
     return ethers.constants.AddressZero;
   }
   let contractAddress: string = allowlist.whitelistContractAddress;
@@ -728,8 +736,16 @@ async function deployAndSyncAllowlist(
     await instance.deployed();
     contractAddress = instance.address;
     console.log(`deployAndSyncAllowlist() :: SageWhitelist deployed to ${contractAddress}`);
+    // persist the address even when there are no entries to sync (IP gate)
+    await fetchWithBQ({
+      url: 'drops?action=MarkAllowlistSynced',
+      method: 'POST',
+      body: { dropId: drop.id, addresses: [], contractAddress },
+    });
   }
-  await syncAllowlistAddresses(drop.id, contractAddress, allowlist.entries, signer, fetchWithBQ);
+  if (allowlist?.entries?.length) {
+    await syncAllowlistAddresses(drop.id, contractAddress, allowlist.entries, signer, fetchWithBQ);
+  }
   return contractAddress;
 }
 
@@ -760,6 +776,20 @@ async function setGamesWhitelist(drop: DropFull, whitelistAddress: string, signe
       if (onChain?.whitelist?.toLowerCase() === whitelistAddress.toLowerCase()) continue;
       console.log(`setGamesWhitelist() :: open edition ${editionId} -> ${whitelistAddress}`);
       const tx = await openEditionContract.setWhitelist(editionId, whitelistAddress);
+      await tx.wait();
+    }
+  }
+  // collections were missing here — a live collection drop couldn't be
+  // (un)gated post-deploy until the IP-gate work surfaced the gap
+  const deployedCollections = (drop.CollectionMints || []).filter((cm: any) => cm.contractAddress);
+  if (deployedCollections.length) {
+    const collectionContract = await getCollectionContract(signer);
+    for (const cm of deployedCollections) {
+      const cId = cm.collectionId ?? cm.id;
+      const onChain = await collectionContract.getCollection(cId);
+      if (onChain?.whitelist?.toLowerCase() === whitelistAddress.toLowerCase()) continue;
+      console.log(`setGamesWhitelist() :: collection ${cId} -> ${whitelistAddress}`);
+      const tx = await collectionContract.setWhitelist(cId, whitelistAddress);
       await tx.wait();
     }
   }

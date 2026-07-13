@@ -133,6 +133,17 @@ export default function MintCollectionModal({
     }
     setIsMinting(true);
     try {
+      // IP-gated drops: claim a mint spot first (one per network). The server
+      // adds this wallet to the drop's on-chain whitelist — without a claim
+      // the contract mint below reverts 'Not whitelisted'. Idempotent, and a
+      // no-op for ungated drops.
+      const claimRes = await fetch(`/api/drops/?action=ClaimMintSpot&id=${collection.dropId}`);
+      const claim = await claimRes.json().catch(() => ({}));
+      if (!claimRes.ok) {
+        toast.error(claim?.error || 'Could not claim a mint spot.');
+        setIsMinting(false);
+        return;
+      }
       const contract = await getCollectionContract(signer);
       const weiTotal = ethers.utils.parseEther(String(collection.costTokens * quantity));
       // ETH collections carry the payment as msg.value — no ERC-20 approval step

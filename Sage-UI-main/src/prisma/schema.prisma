@@ -40,6 +40,11 @@ model Drop {
   // editions + lotteries; UI-gate for auctions). Editable pre- and post-deploy.
   allowlistEnabled                 Boolean     @default(false)
   whitelistContractAddress         String?     @db.Char(42) // deployed SageWhitelist; null until approval
+  // IP gate: minting requires claiming a spot first (one per IP, hashed) —
+  // the claim auto-adds the wallet to the drop's on-chain whitelist, so
+  // direct-contract mints from unclaimed wallets revert. Sybil SPEED BUMP,
+  // not a wall (VPNs rotate IPs; shared IPs get one spot total).
+  ipGateEnabled                    Boolean     @default(false)
   NftContract                      NftContract @relation("ContractDrops", fields:[artistAddress], references: [artistAddress])
   ApprovedByUser                   User?       @relation("Drop_approvedByToUser", fields: [approvedBy], references: [walletAddress])
   Auctions                         Auction[]
@@ -49,6 +54,19 @@ model Drop {
   UserFavoriteDrops                User[]      @relation("userFavoriteDrops")
   FeaturedDropConfig               Config?     @relation("ConfigFeaturedDrop")
   AllowlistEntries                 DropAllowlistEntry[]
+}
+
+// One row per (drop, network) mint-spot claim for IP-gated drops. The IP is
+// stored as a salted hash — never raw. A network gets ONE wallet per drop;
+// a wallet gets ONE claim per drop.
+model MintIpClaim {
+  id            Int      @id @default(autoincrement())
+  dropId        Int
+  ipHash        String   @db.Char(64) // sha256(salt + client ip), hex
+  walletAddress String   @db.Char(42)
+  createdAt     DateTime @default(now())
+  @@unique([dropId, ipHash])
+  @@unique([dropId, walletAddress])
 }
 
 // "Collection" drop style: a ZIP of N unique images uploaded in bulk (ANS-104

@@ -7,6 +7,13 @@ import { PresetDrop } from '@/store/dropsReducer';
 import { withArtistDisplayNameOverride } from '@/prisma/functions';
 import { requireRole } from '@/utilities/apiAuth';
 import { parseAddressList, ALLOWLIST_MAX_ADDRESSES } from '@/utilities/allowlist';
+import {
+  deployWhitelistServerSide,
+  addToWhitelistOnChain,
+  isWhitelistedOnChain,
+  setCollectionWhitelistOnChain,
+} from '@/utilities/serverWallet';
+import { createHash } from 'crypto';
 import prisma from '@/prisma/client';
 import sharp from 'sharp';
 import { OPTIMIZED_IMAGE_WIDTH, parameters } from '@/constants/config';
@@ -39,6 +46,13 @@ const ACTION_ROLES: Record<string, Role[]> = {
   SaveDropAllowlist: [Role.ADMIN],
   MarkAllowlistSynced: [Role.ADMIN],
   CheckDropAllowlist: [Role.USER, Role.ARTIST, Role.ADMIN],
+  // IP-gated minting: ClaimMintSpot is how a signed-in minter gets onto the
+  // drop's on-chain whitelist — the server enforces one claim per network
+  // (salted IP hash) and one per wallet, then adds the wallet on-chain with
+  // the platform key. EnableIpGate flips the gate on for a LIVE drop
+  // (deploys/wires the whitelist server-side).
+  ClaimMintSpot: [Role.USER, Role.ARTIST, Role.ADMIN],
+  EnableIpGate: [Role.ADMIN],
 };
 
 async function handler(request: NextApiRequest, response: NextApiResponse) {
@@ -119,6 +133,12 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       break;
     case 'CheckDropAllowlist':
       await checkDropAllowlist(Number(id), walletAddress, response);
+      break;
+    case 'ClaimMintSpot':
+      await claimMintSpot(Number(id), walletAddress, request, response);
+      break;
+    case 'EnableIpGate':
+      await enableIpGate(Number(id), response);
       break;
     default:
       response.status(500);
@@ -553,6 +573,147 @@ async function markAllowlistSynced(request: NextApiRequest, response: NextApiRes
   } catch (e) {
     console.log(e);
     response.status(500).json({ error: 'failed to mark synced' });
+  }
+}
+
+/**
+ * Client IP for gating. Behind Cloudflare (prod) cf-connecting-ip is
+ * authoritative; otherwise the LAST x-forwarded-for hop is the one appended
+ * by Google's front end (earlier hops are client-supplied and spoofable).
+ */
+function clientIp(request: NextApiRequest): string | null {
+  const cf = request.headers['cf-connecting-ip'];
+  if (typeof cf === 'string' && cf) return cf;
+  const xff = request.headers['x-forwarded-for'];
+  const raw = Array.isArray(xff) ? xff[xff.length - 1] : xff;
+  if (!raw) return request.socket?.remoteAddress || null;
+  const hops = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return hops[hops.length - 1] || null;
+}
+
+/** Salted hash — raw IPs are never stored. */
+function hashIp(ip: string): string {
+  return createHash('sha256')
+    .update(`${process.env.NEXTAUTH_SECRET}:${ip}`)
+    .digest('hex');
+}
+
+/**
+ * One mint spot per network: records a salted-IP claim and adds the wallet
+ * to the drop's ON-CHAIN whitelist (platform key signs), so unclaimed
+ * wallets revert at the contract even if they bypass the site. Idempotent
+ * for the same (network, wallet); rejects a second wallet from the same
+ * network. This is a sybil speed bump, not a wall — VPNs rotate IPs.
+ */
+async function claimMintSpot(
+  id: number,
+  walletAddress: string,
+  request: NextApiRequest,
+  response: NextApiResponse
+) {
+  try {
+    const drop = await prisma.drop.findUnique({
+      where: { id },
+      select: { ipGateEnabled: true, whitelistContractAddress: true },
+    });
+    if (!drop) {
+      response.status(404).json({ error: 'drop not found' });
+      return;
+    }
+    if (!drop.ipGateEnabled) {
+      response.json({ claimed: true, gated: false });
+      return;
+    }
+    if (!drop.whitelistContractAddress) {
+      response.status(500).json({ error: 'gate misconfigured: no whitelist contract' });
+      return;
+    }
+    const ip = clientIp(request);
+    if (!ip) {
+      response.status(400).json({ error: 'could not determine client network' });
+      return;
+    }
+    const ipHash = hashIp(ip);
+    const wallet = walletAddress.toLowerCase();
+
+    const byIp = await prisma.mintIpClaim.findUnique({
+      where: { dropId_ipHash: { dropId: id, ipHash } },
+    });
+    if (byIp && byIp.walletAddress !== wallet) {
+      response
+        .status(403)
+        .json({ error: 'A mint spot was already claimed from this network.' });
+      return;
+    }
+    const byWallet = await prisma.mintIpClaim.findUnique({
+      where: { dropId_walletAddress: { dropId: id, walletAddress: wallet } },
+    });
+    if (!byIp && !byWallet) {
+      try {
+        await prisma.mintIpClaim.create({ data: { dropId: id, ipHash, walletAddress: wallet } });
+      } catch {
+        // unique race — someone else claimed this network between checks
+        response
+          .status(403)
+          .json({ error: 'A mint spot was already claimed from this network.' });
+        return;
+      }
+    }
+
+    // on-chain add (idempotent); ledger entry keeps the AllowlistModal truthful
+    if (!(await isWhitelistedOnChain(drop.whitelistContractAddress, wallet))) {
+      await addToWhitelistOnChain(drop.whitelistContractAddress, [wallet]);
+    }
+    await prisma.dropAllowlistEntry.upsert({
+      where: { dropId_address: { dropId: id, address: wallet } },
+      update: { syncedAt: new Date() },
+      create: { dropId: id, address: wallet, syncedAt: new Date() },
+    });
+    response.json({ claimed: true, gated: true });
+  } catch (e: any) {
+    console.log(e);
+    response.status(500).json({ error: 'failed to claim mint spot' });
+  }
+}
+
+/**
+ * Turns the IP gate ON for a LIVE drop: deploys the drop's SageWhitelist if
+ * it doesn't exist yet and points every deployed collection at it — all
+ * server-signed (no admin wallet needed). Existing allowlist entries stay
+ * valid; new minters come in via ClaimMintSpot.
+ */
+async function enableIpGate(id: number, response: NextApiResponse) {
+  try {
+    const drop = await prisma.drop.findUnique({
+      where: { id },
+      include: { CollectionMints: true },
+    });
+    if (!drop) {
+      response.status(404).json({ error: 'drop not found' });
+      return;
+    }
+    let whitelistContractAddress = drop.whitelistContractAddress;
+    if (!whitelistContractAddress) {
+      whitelistContractAddress = await deployWhitelistServerSide();
+      console.log(`enableIpGate(${id}) :: SageWhitelist deployed to ${whitelistContractAddress}`);
+    }
+    const wired: string[] = [];
+    for (const cm of drop.CollectionMints) {
+      if (!cm.contractAddress) continue;
+      const tx = await setCollectionWhitelistOnChain(
+        cm.collectionId ?? cm.id,
+        whitelistContractAddress
+      );
+      wired.push(`collection ${cm.collectionId ?? cm.id}: ${tx}`);
+    }
+    await prisma.drop.update({
+      where: { id },
+      data: { ipGateEnabled: true, whitelistContractAddress },
+    });
+    response.json({ enabled: true, whitelistContractAddress, wired });
+  } catch (e: any) {
+    console.log(e);
+    response.status(500).json({ error: e?.message || 'failed to enable ip gate' });
   }
 }
 
