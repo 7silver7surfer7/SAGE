@@ -17,7 +17,7 @@ import {
   lightTheme,
   darkTheme,
 } from '@rainbow-me/rainbowkit';
-import { coinbaseWallet, injectedWallet } from '@rainbow-me/rainbowkit/wallets';
+import { metaMaskWallet, coinbaseWallet } from '@rainbow-me/rainbowkit/wallets';
 import { useEffect, useState } from 'react';
 import { SearchContext } from '@/store/searchContext';
 import LandingPage from '@/components/Pages/Landing';
@@ -34,22 +34,21 @@ const { chains, provider } = configureChains(
   [jsonRpcProvider({ rpc: (c) => ({ http: c.rpcUrls.default }) })]
 );
 
-// RainbowKit 0.7.x — the last line built for this stack (wagmi 0.6 + ethers
-// v5); RainbowKit v1/v2 require the wagmi-v2/viem migration. Only two wallets,
-// deliberately:
-//  - injectedWallet: pure InjectedConnector, auto-detects and shows the
-//    installed extension's own name+icon (MetaMask, Brave, Rabby, OKX…).
+// RainbowKit 0.7.x — the last line built for this stack (wagmi 0.6 + ethers v5;
+// v1/v2 need the wagmi-v2/viem migration). Two wallets, each with proper name +
+// icon + install detection:
+//  - metaMaskWallet: branded "MetaMask" (fox icon). When the extension is
+//    present it connects injected; only users WITHOUT it see the (WC-v1) QR
+//    fallback, alongside a "Get MetaMask" prompt.
 //  - coinbaseWallet: its own SDK (extension + mobile QR), no WalletConnect.
-// Everything else RainbowKit ships in this version (metaMask/brave/rainbow/
-// trust…) either duplicates the "injected" connector id — the collision that
-// silently disables openConnectModal — or falls back to WalletConnect v1,
-// whose bridge servers died in 2023 (dead QR codes). Not worth a broken
-// button. (WC v2 for real mobile support is a separate wagmi-v2 upgrade.)
+// Distinct connector ids (no "injected" collision, which silently nulls
+// openConnectModal). No standalone injectedWallet — it renders as a scary
+// generic "Injected Wallet". Broad mobile (WC v2) is a separate wagmi-v2 job.
 const connectors = connectorsForWallets([
   {
     groupName: 'Connect',
     wallets: [
-      injectedWallet({ chains, shimDisconnect: true }),
+      metaMaskWallet({ chains, shimDisconnect: true }),
       coinbaseWallet({ appName: 'SAGE', chains }),
     ],
   },

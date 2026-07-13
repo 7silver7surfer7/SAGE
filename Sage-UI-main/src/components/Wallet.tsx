@@ -60,7 +60,9 @@ export default function Wallet({ closeModal, isOpen }: Props) {
   const showSignInPrompt: boolean = Boolean(isWalletConnected && !isSignedIn);
   const showAuthSection: boolean = Boolean(isWalletConnected && isSignedIn);
   const [signOut] = useSignOutMutation();
-  const { isSigningMessage, handleSignInClick, error: signInError } = useSignIn(isOpen);
+  // autoPrompt=false: the app-shell instance (Layout) owns auto sign-in; this
+  // one only powers the manual "SIGN IN" button so they can't double-fire
+  const { isSigningMessage, handleSignInClick, error: signInError } = useSignIn(false);
   const { disconnect } = useDisconnect();
   const { isMobile } = useWindowDimensions();
 

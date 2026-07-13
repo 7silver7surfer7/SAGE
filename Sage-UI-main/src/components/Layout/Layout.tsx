@@ -14,6 +14,7 @@ import { useSignOutMutation } from '@/store/usersReducer';
 import SageIconSVG from '@/public/branding/sage-icon.svg';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import useSageRoutes from '@/hooks/useSageRoutes';
+import useSignIn from '@/hooks/useSignIn';
 import Motto from './Motto';
 
 type Props = {
@@ -32,6 +33,11 @@ export default function Layout({ children, router }: Props) {
   } = useWatchNetwork();
   const [signOut] = useSignOutMutation();
   const { disconnect } = useDisconnect();
+  // App-shell auto sign-in: the instant a wallet connects (via RainbowKit or
+  // anywhere) and the session is unauthenticated, prompt the SIWE signature —
+  // so connect → pick wallet → sign is ONE flow, not "connect, then click
+  // connect again to sign" (the two-click bug).
+  useSignIn(true);
   useEffect(() => {
     if (isSignedIn && isWalletConnected && sessionData?.address != walletAddress) {
       signOut();

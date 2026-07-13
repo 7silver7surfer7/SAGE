@@ -8,7 +8,15 @@ import { parameters } from '@/constants/config';
 //This hook is dependent on a certain mounted component, and prompts a
 //secure authentication to Sage using Sign In With Ethereum 4361
 
-export default function useSignIn(isOpen: boolean) {
+/**
+ * @param autoPrompt when true, SIWE fires automatically as soon as the wallet
+ * is connected and the session is unauthenticated — regardless of any modal.
+ * Mount ONE instance with autoPrompt=true at the app shell (Layout) so
+ * connecting a wallet (via RainbowKit or anywhere) leads straight into the
+ * sign-in signature with no second click. Other mounts pass false and just
+ * use handleSignInClick for a manual button.
+ */
+export default function useSignIn(autoPrompt: boolean) {
   const { chain: activeChain } = useNetwork();
   const { address, isConnected } = useAccount();
   const { signMessageAsync, isLoading: isSigningMessage } = useSignMessage();
@@ -64,24 +72,24 @@ export default function useSignIn(isOpen: boolean) {
     }
   }
 
-  // reset the one-shot guard when the modal closes or the wallet disconnects
+  // reset the one-shot guard when auto-prompt turns off or the wallet drops
   useEffect(() => {
-    if (!isOpen || !isConnected) hasPromptedRef.current = false;
-  }, [isOpen, isConnected]);
+    if (!autoPrompt || !isConnected) hasPromptedRef.current = false;
+  }, [autoPrompt, isConnected]);
 
-  // Auto-prompt SIWE once the wallet is connected, the modal is open, and the
-  // session has resolved to unauthenticated. sessionStatus and isSigningMessage
-  // MUST be dependencies: if the session is still 'loading' at connect time and
+  // Auto-prompt SIWE once the wallet is connected and the session has resolved
+  // to unauthenticated. sessionStatus and isSigningMessage MUST be
+  // dependencies: if the session is still 'loading' at connect time and
   // they're omitted, the effect never re-runs when it resolves, so the prompt
-  // silently never fires and the modal is stuck on a blank opaque screen.
+  // silently never fires.
   useEffect(() => {
     const shouldPromptSignIn: boolean =
-      !isSigningMessage && isOpen && isConnected && sessionStatus === 'unauthenticated';
+      !isSigningMessage && autoPrompt && isConnected && sessionStatus === 'unauthenticated';
     if (shouldPromptSignIn && !hasPromptedRef.current) {
       hasPromptedRef.current = true;
       handleSignInClick();
     }
-  }, [isOpen, isConnected, sessionStatus, isSigningMessage]);
+  }, [autoPrompt, isConnected, sessionStatus, isSigningMessage]);
 
   return { isSigningMessage, handleSignInClick, error };
 }
