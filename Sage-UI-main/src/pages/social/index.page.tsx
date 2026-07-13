@@ -10,7 +10,12 @@ type Scope = 'global' | 'following';
 export default function SocialFeedPage() {
   const [scope, setScope] = useState<Scope>('global');
   const [cursor, setCursor] = useState<number | undefined>(undefined);
-  const { data, isFetching } = useGetFeedQuery({ scope, cursor });
+  // live feed: refetch on every visit and poll the top so drip/real posts
+  // stream in without a hard reload (the ticker already polls; match it)
+  const { data, isFetching } = useGetFeedQuery(
+    { scope, cursor },
+    { refetchOnMountOrArgChange: true, pollingInterval: cursor ? 0 : 15000 }
+  );
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   const switchScope = (next: Scope) => {

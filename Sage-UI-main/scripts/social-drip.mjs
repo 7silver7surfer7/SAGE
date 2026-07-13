@@ -149,12 +149,12 @@ class Session {
 async function tick() {
   // organic pacing: start at a random point in the interval window
   if (!process.env.SOCIAL_DRIP_NO_JITTER) {
-    await new Promise((r) => setTimeout(r, Math.random() * 120_000));
+    await new Promise((r) => setTimeout(r, Math.random() * 30_000));
   }
   const stats = { joined: 0, posts: 0, replies: 0, likes: 0, reposts: 0, follows: 0, dms: 0, viral: 0, failures: 0 };
 
   // this tick's troupe: ~12 random cast members
-  const troupe = [...cast].sort(() => Math.random() - 0.5).slice(0, 12)
+  const troupe = [...cast].sort(() => Math.random() - 0.5).slice(0, 20)
     .map((c) => new Session(c.wallet, c.name));
   const live = [];
   for (const s of troupe) {
@@ -164,7 +164,7 @@ async function tick() {
 
   // lazy onboarding: at most 8 joins per tick so the cast ramps up organically
   let codePool = null;
-  let joinsLeft = 8;
+  let joinsLeft = 20;
   for (const s of live) {
     if (joinsLeft <= 0) break;
     try {
@@ -202,7 +202,7 @@ async function tick() {
 
   // fresh posts (1-3)
   const newPosts = [];
-  const nPosts = 1 + Math.floor(Math.random() * 3);
+  const nPosts = 10 + Math.floor(Math.random() * 12); // 10-21 posts/tick
   for (let i = 0; i < nPosts; i++) {
     await attempt(async () => {
       const author = pick(active);
@@ -217,13 +217,13 @@ async function tick() {
   const hot = () => targets[Math.floor(Math.pow(Math.random(), 2) * targets.length)];
 
   // baseline engagement
-  for (let i = 0; i < 8 + Math.floor(Math.random() * 12); i++)
+  for (let i = 0; i < 40 + Math.floor(Math.random() * 40); i++)
     await attempt(async () => { await pick(active).api('ToggleLike', { postId: hot() }); stats.likes++; });
-  for (let i = 0; i < 2 + Math.floor(Math.random() * 4); i++)
+  for (let i = 0; i < 12 + Math.floor(Math.random() * 12); i++)
     await attempt(async () => { await pick(active).api('CreatePost', { text: pick(REPLIES), replyToId: hot() }); stats.replies++; });
-  for (let i = 0; i < 1 + Math.floor(Math.random() * 3); i++)
+  for (let i = 0; i < 8 + Math.floor(Math.random() * 10); i++)
     await attempt(async () => { await pick(active).api('ToggleRepost', { postId: hot() }); stats.reposts++; });
-  for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++)
+  for (let i = 0; i < 10 + Math.floor(Math.random() * 10); i++)
     await attempt(async () => {
       const from = pick(active); const to = pick(cast);
       if (from.wallet.address === to.wallet.address) return;
@@ -237,7 +237,7 @@ async function tick() {
     });
 
   // ~12% of ticks: a viral moment
-  if (Math.random() < 0.12) {
+  if (Math.random() < 0.35) {
     await attempt(async () => {
       const star = pick(active);
       const r = await star.api('CreatePost', { text: pick(VIRAL) });
