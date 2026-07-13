@@ -6,7 +6,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
-import { tipSage, burnSage, sendEth } from '@/utilities/tip';
+import { tipSage, sendEth } from '@/utilities/tip';
 import { redeemCollectVoucher } from '@/utilities/socialToken';
 import { parameters } from '@/constants/config';
 import {
@@ -15,15 +15,14 @@ import {
   useToggleLikeMutation,
   useToggleRepostMutation,
   useRecordTipMutation,
-  useBoostPostMutation,
   useSetCollectibleMutation,
   useCollectPostMutation,
   useRequestCollectVoucherMutation,
-  useGetBoostInfoQuery,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import VerifiedBadge from './VerifiedBadge';
 import VerificationModal from './VerificationModal';
+import BoostModal from './BoostModal';
 
 function timeAgo(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -77,14 +76,13 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [toggleLike] = useToggleLikeMutation();
   const [toggleRepost] = useToggleRepostMutation();
   const [recordTip] = useRecordTipMutation();
-  const [boostPost] = useBoostPostMutation();
-  const { data: boostInfo } = useGetBoostInfoQuery();
   const [setCollectible] = useSetCollectibleMutation();
   const [collectPost] = useCollectPostMutation();
   const [requestVoucher] = useRequestCollectVoucherMutation();
   const [deletePost] = useDeletePostMutation();
   const [busy, setBusy] = useState(false);
   const [showVerify, setShowVerify] = useState(false);
+  const [showBoost, setShowBoost] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const { openConnectModal } = useConnectModal();
 
@@ -237,31 +235,10 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     }
   };
 
-  const onBoost = async (e: React.MouseEvent) => {
+  const onBoost = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!requireSigner()) return;
-    if (!boostInfo) {
-      toast.info('Loading boost price…');
-      return;
-    }
-    const ok = window.confirm(
-      `Boost this post: burn ${boostInfo.priceSage} SAGE ($${boostInfo.priceUsd}) to surge it up ` +
-        `the feed. It rises once, then fades as newer posts arrive — no permanent pin. ` +
-        `Burned SAGE is gone forever.`
-    );
-    if (!ok) return;
-    setBusy(true);
-    const t = toast.loading(`Burning ${boostInfo.priceSage} SAGE…`);
-    try {
-      const txHash = await burnSage(boostInfo.priceSage, signer as any);
-      await boostPost({ postId: post.id, txHash }).unwrap();
-      toast.update(t, { render: 'Boosted 🔥 — surging up the feed', type: 'success', isLoading: false, autoClose: 5000 });
-    } catch (err: any) {
-      toast.update(t, { render: 'Boost failed', type: 'error', isLoading: false, autoClose: 1 });
-      handleGateError(err, 'Boost failed');
-    } finally {
-      setBusy(false);
-    }
+    setShowBoost(true);
   };
 
   const onSetCollectible = async (e: React.MouseEvent) => {
@@ -493,6 +470,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
         </div>
       </div>
       {showVerify && <VerificationModal onClose={() => setShowVerify(false)} />}
+      {showBoost && <BoostModal postId={post.id} onClose={() => setShowBoost(false)} />}
     </article>
   );
 }

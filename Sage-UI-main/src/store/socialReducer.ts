@@ -263,7 +263,10 @@ const socialApi = baseApi.injectEndpoints({
     getVerificationInfo: builder.query<VerificationInfo, void>({
       query: () => ({ url: 'social?action=GetVerificationInfo' }),
     }),
-    getBoostInfo: builder.query<{ priceUsd: number; priceSage: number }, void>({
+    getBoostInfo: builder.query<
+      { dailyMinUsd: number; dailyMaxUsd: number; daysMin: number; daysMax: number; sagePerUsd: number },
+      void
+    >({
       query: () => ({ url: 'social?action=GetBoostInfo' }),
     }),
     getMyInvites: builder.query<{ invites: InviteCode[] }, void>({
@@ -277,9 +280,20 @@ const socialApi = baseApi.injectEndpoints({
       query: () => ({ url: 'social?action=GetConversations' }),
       providesTags: ['SocialMessages'],
     }),
-    getMessages: builder.query<{ messages: DirectMessage[] }, string>({
+    getMessages: builder.query<{ messages: DirectMessage[]; hasMore: boolean }, string>({
       query: (partner) => ({ url: `social?action=GetMessages&partner=${partner}` }),
       providesTags: ['SocialMessages'],
+    }),
+    // Scroll-up pagination: fetch the page of messages older than `before`.
+    // Kept separate from getMessages so loading history never re-marks read
+    // and never clobbers the live (polled) latest-window cache.
+    getOlderMessages: builder.query<
+      { messages: DirectMessage[]; hasMore: boolean },
+      { partner: string; before: number }
+    >({
+      query: ({ partner, before }) => ({
+        url: `social?action=GetMessages&partner=${partner}&before=${before}`,
+      }),
     }),
     getActivity: builder.query<{ activity: ActivityItem[] }, void>({
       query: () => ({ url: 'social?action=GetActivity' }),
@@ -381,8 +395,8 @@ const socialApi = baseApi.injectEndpoints({
       invalidatesTags: ['SocialFeed'],
     }),
     boostPost: builder.mutation<
-      { ok: boolean; amount: number; boostedUntil: string },
-      { postId: number; txHash: string }
+      { ok: boolean; amount: number; boostedUntil: string; days: number },
+      { postId: number; txHash: string; dailyUsd: number; days: number }
     >({
       query: (body) => ({ url: 'social?action=BoostPost', method: 'POST', body }),
       invalidatesTags: ['SocialFeed'],
@@ -521,6 +535,7 @@ export const {
   useGetInvitePreviewQuery,
   useGetConversationsQuery,
   useGetMessagesQuery,
+  useLazyGetOlderMessagesQuery,
   useGetActivityQuery,
   useGetLeaderboardQuery,
   useGetUserMintsQuery,

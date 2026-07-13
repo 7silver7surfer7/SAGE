@@ -123,8 +123,12 @@ function LeaderboardWidget() {
 export default function SocialShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { walletAddress, isSignedIn, userData } = useSAGEAccount();
-  const { data: me } = useGetSocialProfileQuery(walletAddress || '', {
-    skip: !isSignedIn || !walletAddress,
+  // Prefer the live wagmi address, but fall back to the signed-in session's
+  // wallet so the profile chip survives the brief window where wagmi hasn't
+  // re-hydrated yet (otherwise the "me" pill flickers out on every reload).
+  const meAddress = walletAddress || (userData as any)?.walletAddress || '';
+  const { data: me } = useGetSocialProfileQuery(meAddress, {
+    skip: !meAddress,
   });
 
   const nav: { name: string; url: string; icon: keyof typeof ICONS; badge?: number }[] = [
@@ -135,8 +139,8 @@ export default function SocialShell({ children }: { children: ReactNode }) {
     { name: 'Leaderboard', url: '/social/leaderboard', icon: 'trophy' },
     { name: 'Launch token', url: '/social/launch/token', icon: 'rocket' },
     { name: 'Launch NFT', url: '/social/launch/nft', icon: 'palette' },
-    ...(walletAddress
-      ? [{ name: 'My mints', url: `/social/${walletAddress}`, icon: 'hex' as const }]
+    ...(meAddress
+      ? [{ name: 'My mints', url: `/social/${meAddress}`, icon: 'hex' as const }]
       : []),
   ];
   const isCurrent = (url: string) =>
@@ -182,17 +186,21 @@ export default function SocialShell({ children }: { children: ReactNode }) {
             <Icon d={ICONS.compose} /> Post
           </button>
         )}
-        {isSignedIn && walletAddress && (
+        {meAddress && (
           <button
             className='social-shell__me'
-            onClick={() => router.push(`/social/${walletAddress}`)}
+            title='View your profile'
+            onClick={() => router.push(`/social/${meAddress}`)}
           >
             <div className='social-shell__me-avatar' data-verified={me?.pfpVerified}>
-              <PfpImage src={userData?.profilePicture} />
+              <PfpImage src={userData?.profilePicture || me?.profilePicture} />
             </div>
-            <span className='social-shell__me-name'>
-              {me?.username ? transformTitle(me.username) : shortenAddress(walletAddress)}
-              {me?.verified && <VerifiedBadge size={12} />}
+            <span className='social-shell__me-main'>
+              <span className='social-shell__me-name'>
+                {me?.username ? transformTitle(me.username) : shortenAddress(meAddress)}
+                {me?.verified && <VerifiedBadge size={12} />}
+              </span>
+              <span className='social-shell__me-sub'>View profile</span>
             </span>
           </button>
         )}

@@ -34,18 +34,25 @@ import {
  */
 const AUTHED: Role[] = [Role.USER, Role.ARTIST, Role.ADMIN];
 
-// burn-to-boost: burning $1-worth of SAGE gives a post ONE strong surge to
-// the top of the ranked global feed that then decays — no more 24h pin. The
-// boost is a big one-time bump to the post's hot-score that fades over
-// BOOST_WINDOW_MS; gravity + newer/better posts carry it back down.
-const BOOST_PRICE_USD = 1;
-const BOOST_FALLBACK_SAGE = 10; // testnet SAGE has no market — flat $1 stand-in
-const BOOST_WINDOW_MS = 3 * 60 * 60 * 1000; // 3h of decaying prominence
+// burn-to-boost — Twitter-style budget × duration, SOFT. You pick a daily
+// budget ($/day) and a number of days; total = daily × days, burned in SAGE.
+// The boost is a gentle, SUSTAINED lift in the ranked feed (not a pin and not
+// a spike): a bonus that scales with the daily budget and fades linearly over
+// the campaign window. Engagement still competes, so a boosted post surfaces
+// but can be out-ranked by genuinely popular posts.
+const BOOST_DAILY_MIN_USD = 5;
+const BOOST_DAILY_MAX_USD = 50;
+const BOOST_DAYS_MIN = 1;
+const BOOST_DAYS_MAX = 10;
+const BOOST_SAGE_PER_USD_FALLBACK = 10; // testnet SAGE has no market
+// soft rank bonus at max daily budget & full strength; kept in the same
+// ballpark as a strong post's engagement so it lifts without dominating
+const BOOST_STRENGTH_MIN = 12; // at $5/day
+const BOOST_STRENGTH_MAX = 45; // at $50/day
 
 // ── feed ranking ("hot") — HN-style: engagement + boost, decayed by age ──
 // score = (1 + engagement + boostBonus) / (ageHours + 2)^GRAVITY
 const FEED_GRAVITY = 1.6;
-const FEED_BOOST_STRENGTH = 80; // a fresh boost dominates normal engagement
 const FEED_POOL = 600; // rank over the most recent N top-level posts
 const FEED_PAGE = 20;
 
@@ -359,9 +366,17 @@ function hotScore(p: any, nowMs: number): number {
     3 * p.replyCount +
     Math.min(30, p.tipTotal || 0) + // cap tip influence so whales don't dominate
     5 * p.collectCount;
+  // SOFT boost: a budget-scaled bonus (boostStrength) that fades linearly
+  // across the campaign window (boostedAt..boostedUntil). It ADDS to the
+  // engagement score rather than overriding it, so a boosted post lifts but
+  // still competes with genuinely popular posts.
+  let boostBonus = 0;
   const until = p.boostedUntil ? new Date(p.boostedUntil).getTime() : 0;
-  const boostBonus =
-    until > nowMs ? FEED_BOOST_STRENGTH * Math.min(1, (until - nowMs) / BOOST_WINDOW_MS) : 0;
+  const started = p.boostedAt ? new Date(p.boostedAt).getTime() : 0;
+  if (until > nowMs && started && until > started) {
+    const remaining = (until - nowMs) / (until - started); // 1 at start → 0 at end
+    boostBonus = (p.boostStrength || 0) * Math.max(0, Math.min(1, remaining));
+  }
   return (1 + engagement + boostBonus) / Math.pow(ageHours + 2, FEED_GRAVITY);
 }
 
@@ -773,64 +788,81 @@ async function recordTip(req: NextApiRequest, res: NextApiResponse, r: { walletA
   res.json({ ok: true, amount, currency });
 }
 
-/** $1-worth of SAGE to burn; live price on prod, flat fallback elsewhere. */
-let boostPriceCache: { sage: number; at: number } | null = null;
-async function boostPriceSage(): Promise<number> {
-  if (boostPriceCache && Date.now() - boostPriceCache.at < 300_000) return boostPriceCache.sage;
-  let sage = BOOST_FALLBACK_SAGE;
+/** SAGE per USD for boost pricing; live on prod, flat fallback elsewhere. */
+let boostSagePerUsdCache: { rate: number; at: number } | null = null;
+async function boostSagePerUsd(): Promise<number> {
+  if (boostSagePerUsdCache && Date.now() - boostSagePerUsdCache.at < 300_000)
+    return boostSagePerUsdCache.rate;
+  let rate = BOOST_SAGE_PER_USD_FALLBACK;
   if (process.env.NEXT_PUBLIC_APP_MODE === 'production') {
     try {
       const { getSagePriceUsd } = await import('@/utilities/sagePrice');
       const usd = await getSagePriceUsd();
-      if (usd && usd > 0) sage = Math.ceil((BOOST_PRICE_USD / usd) * 100) / 100;
+      if (usd && usd > 0) rate = 1 / usd; // SAGE per $1
     } catch {
       // dead feed → fallback
     }
   }
-  boostPriceCache = { sage, at: Date.now() };
-  return sage;
+  boostSagePerUsdCache = { rate, at: Date.now() };
+  return rate;
 }
 
 async function getBoostInfo(res: NextApiResponse) {
-  res.json({ priceUsd: BOOST_PRICE_USD, priceSage: await boostPriceSage() });
+  res.json({
+    dailyMinUsd: BOOST_DAILY_MIN_USD,
+    dailyMaxUsd: BOOST_DAILY_MAX_USD,
+    daysMin: BOOST_DAYS_MIN,
+    daysMax: BOOST_DAYS_MAX,
+    sagePerUsd: await boostSagePerUsd(),
+  });
 }
 
 async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   if (!(await requireVerified(r.walletAddress, res))) return;
-  const { postId, txHash } = req.body || {};
+  const { postId, txHash, dailyUsd, days } = req.body || {};
   const id = Number(postId);
+  const daily = Number(dailyUsd);
+  const nDays = Math.round(Number(days));
   if (!id || !txHash) return res.status(400).json({ error: 'bad boost' });
+  if (!(daily >= BOOST_DAILY_MIN_USD && daily <= BOOST_DAILY_MAX_USD))
+    return res.status(400).json({ error: `daily budget must be $${BOOST_DAILY_MIN_USD}–$${BOOST_DAILY_MAX_USD}` });
+  if (!(nDays >= BOOST_DAYS_MIN && nDays <= BOOST_DAYS_MAX))
+    return res.status(400).json({ error: `duration must be ${BOOST_DAYS_MIN}–${BOOST_DAYS_MAX} days` });
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
 
-  // burn $1-worth of SAGE to the dead address (5% price-drift tolerance)
-  const priceSage = await boostPriceSage();
+  // total = daily × days, burned in SAGE (5% price-drift tolerance)
+  const totalUsd = daily * nDays;
+  const requiredSage = totalUsd * (await boostSagePerUsd());
   let amount: number;
   try {
-    amount = await verifySageTransfer(txHash, r.walletAddress, DEAD_ADDRESS, priceSage * 0.95);
+    amount = await verifySageTransfer(txHash, r.walletAddress, DEAD_ADDRESS, requiredSage * 0.95);
   } catch (e: any) {
     return res.status(400).json({ error: `burn not verified: ${e.message}` });
   }
 
-  // one surge, then decay: the boost window resets from now (it does NOT
-  // stack open-endedly, so a post can't be pinned forever). The feed's
-  // hot-score gives it a big fading bump over the window (see getFeed).
-  const boostedUntil = new Date(Date.now() + BOOST_WINDOW_MS);
+  // strength scales with the DAILY budget (how strong), window with the
+  // DURATION (how long). A fresh boost resets the campaign from now; it's a
+  // soft, decaying lift, never a pin (see hotScore).
+  const t = (daily - BOOST_DAILY_MIN_USD) / (BOOST_DAILY_MAX_USD - BOOST_DAILY_MIN_USD);
+  const boostStrength = BOOST_STRENGTH_MIN + t * (BOOST_STRENGTH_MAX - BOOST_STRENGTH_MIN);
+  const now = new Date();
+  const boostedUntil = new Date(now.getTime() + nDays * 24 * 3600 * 1000);
 
   try {
     await prisma.$transaction([
       prisma.socialBoost.create({
-        data: { postId: id, fromAddress: r.walletAddress, amount, hours: BOOST_WINDOW_MS / 3.6e6, txHash },
+        data: { postId: id, fromAddress: r.walletAddress, amount, hours: nDays * 24, txHash },
       }),
       prisma.socialPost.update({
         where: { id },
-        data: { boostedUntil, boostBurned: { increment: amount } },
+        data: { boostedAt: now, boostedUntil, boostStrength, boostBurned: { increment: amount } },
       }),
     ]);
   } catch {
     return res.status(400).json({ error: 'this burn was already credited' });
   }
-  res.json({ ok: true, amount, boostedUntil });
+  res.json({ ok: true, amount, boostedUntil, days: nDays });
 }
 
 async function setCollectible(
@@ -1554,23 +1586,34 @@ async function getMessages(req: NextApiRequest, res: NextApiResponse, r: { walle
   const partner = canon(String(req.query.partner || req.body?.partner || ''));
   if (!partner) return res.status(400).json({ error: 'bad partner address' });
   const me = r.walletAddress;
+  // `before` powers scroll-up infinite loading: fetch the page of messages
+  // older than the given id. The initial (no-cursor) load returns the latest
+  // window and marks the thread read; older pages never re-mark.
+  const before = Number(req.query.before || req.body?.before || 0);
+  const pageSize = before > 0 ? 30 : 40;
+  const convo = {
+    OR: [
+      { fromAddress: me, toAddress: partner },
+      { fromAddress: partner, toAddress: me },
+    ],
+  };
   const messages = await prisma.socialMessage.findMany({
-    where: {
-      OR: [
-        { fromAddress: me, toAddress: partner },
-        { fromAddress: partner, toAddress: me },
-      ],
-    },
+    where: before > 0 ? { AND: [convo, { id: { lt: before } }] } : convo,
     orderBy: { id: 'desc' },
-    take: 100,
+    take: pageSize + 1, // +1 sentinel tells us whether older messages remain
   });
-  // opening the thread reads it
-  await prisma.socialMessage.updateMany({
-    where: { fromAddress: partner, toAddress: me, readAt: null },
-    data: { readAt: new Date() },
-  });
+  const hasMore = messages.length > pageSize;
+  const page = hasMore ? messages.slice(0, pageSize) : messages;
+  if (before <= 0) {
+    // opening the thread reads it
+    await prisma.socialMessage.updateMany({
+      where: { fromAddress: partner, toAddress: me, readAt: null },
+      data: { readAt: new Date() },
+    });
+  }
   res.json({
-    messages: messages.reverse().map((m) => ({
+    hasMore,
+    messages: page.reverse().map((m) => ({
       id: m.id,
       from: m.fromAddress,
       text: m.text,

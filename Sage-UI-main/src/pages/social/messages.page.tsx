@@ -11,25 +11,69 @@ import { transformTitle } from '@/utilities/strings';
 import {
   useGetConversationsQuery,
   useGetMessagesQuery,
+  useLazyGetOlderMessagesQuery,
   useSendMessageMutation,
   useGetGroupChatQuery,
   useSendGroupMessageMutation,
   useToggleGroupChatMutation,
   useKickFromGroupChatMutation,
+  DirectMessage,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 
 const nameOf = (u: { username?: string | null; address: string }) =>
   u.username ? transformTitle(u.username) : shortenAddress(u.address);
 
-/** 1:1 DM thread (sending is verified-only). */
+/** 1:1 DM thread (sending is verified-only) with scroll-up infinite history. */
 function DMThread({ partner }: { partner: string }) {
   const { data, isFetching } = useGetMessagesQuery(partner, { pollingInterval: 15_000 });
+  const [fetchOlder, { isFetching: loadingOlder }] = useLazyGetOlderMessagesQuery();
   const [sendMessage, { isLoading: sending }] = useSendMessageMutation();
   const [text, setText] = useState('');
   const [showVerify, setShowVerify] = useState(false);
+  // Older pages we've pulled by scrolling up, kept oldest-first and separate
+  // from the live latest-window cache so polling never wipes the history.
+  const [older, setOlder] = useState<DirectMessage[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [data?.messages.length]);
+
+  // New partner = fresh history stack.
+  useEffect(() => { setOlder([]); setHasMore(true); }, [partner]);
+
+  // Stick to the bottom as new messages arrive (but not while paging up).
+  useEffect(() => {
+    if (!loadingOlder) endRef.current?.scrollIntoView({ block: 'end' });
+  }, [data?.messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const latest = data?.messages || [];
+  // De-dupe in case an older page overlaps the live window.
+  const seen = new Set(latest.map((m) => m.id));
+  const merged = [...older.filter((m) => !seen.has(m.id)), ...latest];
+  const oldestId = merged.length ? merged[0].id : 0;
+  const canPage = hasMore && (data?.hasMore ?? true);
+
+  const loadOlder = async () => {
+    if (loadingOlder || !oldestId || !canPage) return;
+    const el = scrollRef.current;
+    const prevHeight = el?.scrollHeight || 0;
+    try {
+      const page = await fetchOlder({ partner, before: oldestId }).unwrap();
+      setHasMore(page.hasMore);
+      if (page.messages.length) {
+        setOlder((prev) => [...page.messages, ...prev]);
+        // Preserve the reading position: keep the same message under the thumb.
+        requestAnimationFrame(() => {
+          if (el) el.scrollTop = el.scrollHeight - prevHeight;
+        });
+      }
+    } catch { /* transient — user can scroll again */ }
+  };
+
+  const onScroll = () => {
+    if ((scrollRef.current?.scrollTop || 0) < 48) loadOlder();
+  };
+
   const send = async () => {
     if (!text.trim()) return;
     try {
@@ -42,16 +86,28 @@ function DMThread({ partner }: { partner: string }) {
   };
   return (
     <div className='social-dm__thread'>
-      <div className='social-dm__scroll'>
-        {isFetching && !data ? <LoaderDots /> : (data?.messages || []).map((m) => (
-          <div key={m.id} className='social-dm__bubble' data-mine={m.mine}>{m.text}</div>
-        ))}
+      <div className='social-dm__scroll' ref={scrollRef} onScroll={onScroll}>
+        {isFetching && !data ? (
+          <LoaderDots />
+        ) : (
+          <>
+            {loadingOlder && <div className='social-dm__older'>Loading earlier…</div>}
+            {!canPage && merged.length > 0 && (
+              <div className='social-dm__older'>Beginning of conversation</div>
+            )}
+            {merged.map((m) => (
+              <div key={m.id} className='social-dm__bubble' data-mine={m.mine}>{m.text}</div>
+            ))}
+          </>
+        )}
         <div ref={endRef} />
       </div>
       <div className='social-dm__composer'>
-        <input className='social-dm__input' placeholder='Message… (verified feature)' value={text}
-          maxLength={1000} onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send()} />
+        <textarea className='social-dm__input' placeholder='Message… (verified feature)' value={text}
+          maxLength={1000} rows={1} onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+          }} />
         <button className='social-dm__send' disabled={!text.trim() || sending} onClick={send}>Send</button>
       </div>
       {showVerify && <VerificationModal onClose={() => setShowVerify(false)} />}
@@ -134,8 +190,11 @@ function GroupThread({ owner }: { owner: string }) {
         <div ref={endRef} />
       </div>
       <div className='social-dm__composer'>
-        <input className='social-dm__input' placeholder='Share alpha…' value={text} maxLength={1000}
-          onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} />
+        <textarea className='social-dm__input' placeholder='Share alpha…' value={text} maxLength={1000}
+          rows={1} onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+          }} />
         <button className='social-dm__send' disabled={!text.trim() || sending} onClick={send}>Send</button>
       </div>
     </div>

@@ -949,11 +949,15 @@ $col-width: 620px;
   &__thread {
     display: flex;
     flex-direction: column;
-    min-height: 380px;
-    max-height: 60vh;
-    border-radius: 14px;
+    width: 100%;
+    max-width: 420px; // ~iPhone width
+    min-height: 560px;
+    height: 72vh;
+    border-radius: 18px;
+    overflow: hidden;
     @include m.theme() {
       border: 1px solid rgba(m.t(contrast), 0.12);
+      background: rgba(m.t(contrast), 0.015);
     }
   }
   &__scroll {
@@ -965,8 +969,8 @@ $col-width: 620px;
     gap: 8px;
   }
   &__bubble {
-    max-width: 78%;
-    padding: 8px 14px;
+    max-width: 72%;
+    padding: 9px 14px;
     border-radius: 16px;
     font-size: 0.9rem;
     line-height: 1.4;
@@ -984,8 +988,17 @@ $col-width: 620px;
       }
     }
   }
+  &__older {
+    align-self: center;
+    font-size: 0.72rem;
+    padding: 4px 0 8px;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.4);
+    }
+  }
   &__composer {
     display: flex;
+    align-items: flex-end;
     gap: 8px;
     padding: 10px;
     @include m.theme() {
@@ -995,10 +1008,14 @@ $col-width: 620px;
   &__input {
     flex: 1;
     background: transparent;
-    border-radius: 999px;
-    padding: 8px 16px;
+    border-radius: 20px;
+    padding: 12px 16px;
     font-family: inherit;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
+    line-height: 1.35;
+    min-height: 48px;
+    max-height: 120px;
+    resize: none;
     outline: none;
     @include m.theme() {
       color: m.t(contrast);
@@ -1499,13 +1516,14 @@ $col-width: 620px;
   &__me {
     display: flex;
     align-items: center;
-    justify-content: center; // centered pill, no trailing dead space
     gap: 10px;
     background: none;
     border-radius: 999px;
     padding: 6px 12px;
-    margin-top: 6px;
+    margin-top: 8px;
     cursor: pointer;
+    text-align: left;
+    width: 100%;
     @include m.theme() {
       border: 1px solid rgba(m.t(contrast), 0.14);
       color: m.t(contrast);
@@ -1513,7 +1531,20 @@ $col-width: 620px;
     &:hover {
       @include m.theme() {
         border-color: m.t(accent);
+        background: rgba(m.t(contrast), 0.04);
       }
+    }
+  }
+  &__me-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.2;
+  }
+  &__me-sub {
+    font-size: 0.7rem;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.45);
     }
   }
   &__me-avatar {
