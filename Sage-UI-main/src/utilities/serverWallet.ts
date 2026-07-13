@@ -2,6 +2,10 @@ import { ethers } from 'ethers';
 import { parameters } from '@/constants/config';
 import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
 import sageCollectionJson from '@/constants/abis/Collection/SageCollection.sol/SageCollection.json';
+import sageNftJson from '@/constants/abis/NFT/SageNFT.sol/SageNFT.json';
+
+/** Canonical burn destination for burn-to-boost. */
+export const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 
 /**
  * SERVER-side platform signer (the operator key — same one the crons and
@@ -63,6 +67,57 @@ export async function setContractMetadataOnChain(
   const tx = await nft.setContractMetadata(metadataUrl);
   await tx.wait();
   return tx.hash;
+}
+
+/**
+ * Verifies a mined SAGE ERC-20 transfer before the API credits anything for
+ * it (tips, boosts, collect payments). Confirms the tx succeeded and contains
+ * a Transfer(from→to) of at least minAmount on the SAGE token. Returns the
+ * actual transferred amount in whole SAGE. Throws with a human message on any
+ * mismatch — callers surface it as a 400.
+ */
+export async function verifySageTransfer(
+  txHash: string,
+  from: string,
+  to: string,
+  minAmount: number
+): Promise<number> {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error('bad tx hash');
+  const receipt = await getProvider().getTransactionReceipt(txHash);
+  if (!receipt) throw new Error('transaction not found (not mined yet?)');
+  if (receipt.status !== 1) throw new Error('transaction reverted');
+  const transferTopic = ethers.utils.id('Transfer(address,address,uint256)');
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== parameters.ASHTOKEN_ADDRESS.toLowerCase()) continue;
+    if (log.topics[0] !== transferTopic || log.topics.length < 3) continue;
+    const logFrom = ethers.utils.getAddress('0x' + log.topics[1].slice(26)).toLowerCase();
+    const logTo = ethers.utils.getAddress('0x' + log.topics[2].slice(26)).toLowerCase();
+    if (logFrom !== from.toLowerCase() || logTo !== to.toLowerCase()) continue;
+    const amount = Number(ethers.utils.formatEther(ethers.BigNumber.from(log.data)));
+    if (amount + 1e-9 < minAmount)
+      throw new Error(`transfer too small (${amount} < ${minAmount} SAGE)`);
+    return amount;
+  }
+  throw new Error('no matching SAGE transfer in that transaction');
+}
+
+/**
+ * Mints a collected post into the platform's "SAGE Social" SageNFT. Needs the
+ * platform signer to hold storage-level role.minter (granted once at contract
+ * deploy). Returns the mint tx hash + the new tokenId.
+ */
+export async function mintSocialCollectServerSide(
+  to: string,
+  tokenUri: string
+): Promise<{ txHash: string; tokenId: number }> {
+  const contractAddress = parameters.SOCIAL_COLLECTS_ADDRESS;
+  if (!contractAddress) throw new Error('collecting is not enabled on this network yet');
+  const nft = new ethers.Contract(contractAddress, sageNftJson.abi, getServerSigner());
+  const tx = await nft.safeMint(to, tokenUri);
+  const receipt = await tx.wait();
+  const ev = receipt.events?.find((e: any) => e.event === 'Transfer');
+  if (!ev) throw new Error('mint succeeded but no Transfer event found');
+  return { txHash: tx.hash, tokenId: ev.args.tokenId.toNumber() };
 }
 
 /** Points a live on-chain collection at a whitelist (AddressZero un-gates). */

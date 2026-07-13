@@ -77,6 +77,18 @@ export async function signIn() {
   if (!jar['next-auth.session-token'] && !jar['__Secure-next-auth.session-token']) {
     throw new Error(`SIWE sign-in failed (status ${cb.status}) — check SAGE_SITE_URL and that the site is running`);
   }
+
+  // Make sure the wallet has a User row — the browser app POSTs /api/user
+  // right after its first sign-in, and every role-gated API (drops, social)
+  // answers 401 for a valid session whose wallet has no row. Idempotent-ish:
+  // an existing row makes this 500, which we deliberately ignore.
+  try {
+    await fetch(`${config.siteUrl}/api/user/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookieHeader() },
+      body: '{}',
+    });
+  } catch {}
 }
 
 /** GET a site API path with the session cookie, signing in (once) as needed */
@@ -108,5 +120,24 @@ export async function siteGetRaw(pathname) {
     }
     if (!res.ok) throw new Error(`${pathname} -> HTTP ${res.status}`);
     return res.text();
+  }
+}
+
+/** POST a site API path with a JSON body + the session cookie (SIWE as needed) */
+export async function sitePost(pathname, body) {
+  if (!Object.keys(jar).length) await signIn();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(`${config.siteUrl}${pathname}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookieHeader() },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 401 && attempt === 0) {
+      await signIn(); // session expired — retry once with a fresh one
+      continue;
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `${pathname} -> HTTP ${res.status}`);
+    return data;
   }
 }

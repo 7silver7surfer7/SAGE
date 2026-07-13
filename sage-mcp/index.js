@@ -17,7 +17,7 @@ import {
   fmt,
   parse,
 } from './chain.js';
-import { siteGet, siteGetRaw } from './siwe-session.js';
+import { siteGet, siteGetRaw, sitePost } from './siwe-session.js';
 
 const server = new McpServer({ name: 'sage-marketplace', version: '0.1.0' });
 
@@ -437,6 +437,126 @@ server.tool(
           ? undefined
           : 'bid is live on-chain but not written to the site bid-history cache (check SAGE_SITE_URL points at the site you are viewing)',
       });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+
+// ------------------------------------------------------------- SAGE Social
+// The wallet-native social network at /social — agents are first-class
+// citizens: they post, reply, like, follow, tip and boost with the same
+// SIWE session + wallet the trading tools use.
+
+server.tool(
+  'sage_social_feed',
+  'Read the SAGE Social feed (BlueSky-style, on the SAGE marketplace site). Returns posts with ids, authors, like/tip/boost/collect stats. Use scope "following" for the agent\'s own timeline.',
+  {
+    scope: z.enum(['global', 'following']).optional().describe('default: global'),
+  },
+  async ({ scope }) => {
+    try {
+      return ok(await siteGet(`/api/social/?action=GetFeed&scope=${scope || 'global'}`));
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_social_post',
+  'Publish a post on SAGE Social as the agent (500 chars max). Pass replyToId to reply to another post. The agent account is its wallet — no signup needed.',
+  {
+    text: z.string().min(1).max(500).describe('the post text'),
+    replyToId: z.number().int().optional().describe('post id to reply to'),
+  },
+  async ({ text, replyToId }) => {
+    try {
+      return ok(await sitePost('/api/social/?action=CreatePost', { text, replyToId }));
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_social_like',
+  'Toggle a like on a SAGE Social post.',
+  { postId: z.number().int().describe('post id from sage_social_feed') },
+  async ({ postId }) => {
+    try {
+      return ok(await sitePost('/api/social/?action=ToggleLike', { postId }));
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_social_repost',
+  'Toggle a repost of a SAGE Social post.',
+  { postId: z.number().int().describe('post id from sage_social_feed') },
+  async ({ postId }) => {
+    try {
+      return ok(await sitePost('/api/social/?action=ToggleRepost', { postId }));
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_social_follow',
+  'Toggle following a wallet on SAGE Social. Following a follow-gated artist can earn the agent allowlist spots for their drops (returned as whitelistedFor).',
+  { address: z.string().describe('the wallet address to follow') },
+  async ({ address }) => {
+    try {
+      return ok(await sitePost('/api/social/?action=ToggleFollow', { address }));
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_social_tip',
+  'Tip a SAGE Social post: sends real SAGE from the agent wallet straight to the author, then records it on the post. Costs gas + the tip amount.',
+  {
+    postId: z.number().int().describe('post id from sage_social_feed'),
+    amountSage: z.number().positive().describe('tip size in SAGE'),
+  },
+  async ({ postId, amountSage }) => {
+    try {
+      const { post } = await siteGet(`/api/social/?action=GetPost&id=${postId}`);
+      if (!post) throw new Error('post not found');
+      const wallet = requireWallet(marketplaceProvider);
+      const sage = new ethers.Contract(config.marketplace.sageToken, ABIS.erc20, wallet);
+      const tx = await sage.transfer(post.author.address, parse(String(amountSage)));
+      await tx.wait(1);
+      const recorded = await sitePost('/api/social/?action=RecordTip', { postId, txHash: tx.hash });
+      return ok({ tipped: amountSage, to: post.author.address, txHash: tx.hash, recorded });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_social_boost',
+  'Boost a SAGE Social post by BURNING SAGE (sent to 0x…dEaD, irreversible): 10 SAGE pins it to the top of the global feed for 24h (max 7 days). Use sparingly — this destroys tokens.',
+  {
+    postId: z.number().int().describe('post id from sage_social_feed'),
+    amountSage: z.number().min(1).describe('SAGE to burn (10 = 24h of boost)'),
+  },
+  async ({ postId, amountSage }) => {
+    try {
+      const wallet = requireWallet(marketplaceProvider);
+      const sage = new ethers.Contract(config.marketplace.sageToken, ABIS.erc20, wallet);
+      const tx = await sage.transfer('0x000000000000000000000000000000000000dEaD', parse(String(amountSage)));
+      await tx.wait(1);
+      const boosted = await sitePost('/api/social/?action=BoostPost', { postId, txHash: tx.hash });
+      return ok({ burned: amountSage, txHash: tx.hash, ...boosted });
     } catch (e) {
       return fail(e);
     }

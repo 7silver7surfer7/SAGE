@@ -17,6 +17,9 @@ export interface Parameters {
   NFTFACTORY_ADDRESS: string;
   MARKETPLACE_ADDRESS: string;
   STORAGE_ADDRESS: string;
+  // SAGE Social collects: the platform SageNFT posts are minted into when
+  // collected. Empty string = collecting disabled on this network.
+  SOCIAL_COLLECTS_ADDRESS: string;
   APP_URL: string;
 }
 

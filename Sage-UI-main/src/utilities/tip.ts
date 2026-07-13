@@ -19,3 +19,15 @@ export async function tipSage(
   await tx.wait(1);
   return tx.hash;
 }
+
+// Same address the server verifies burns against (serverWallet.DEAD_ADDRESS —
+// duplicated here because serverWallet must never be imported client-side).
+const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
+
+/**
+ * Burns SAGE for burn-to-boost: an irreversible transfer to 0x…dEaD. The
+ * server verifies the mined tx before crediting boost time (10 SAGE = 24h).
+ */
+export async function burnSage(amountSage: number, signer: Signer): Promise<string> {
+  return tipSage(DEAD_ADDRESS, amountSage, signer);
+}

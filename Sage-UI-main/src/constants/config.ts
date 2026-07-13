@@ -49,6 +49,7 @@ const configuration: Configuration = {
     OPENEDITION_ADDRESS: '0x33d2739244f69Ed71DCC877a30691D2A5dc9b11e',
     COLLECTION_ADDRESS: '0x5aC7DB61278fFd8F19f6d93957Cd47263C62c3Bf', // SageCollection (ETH-currency redeploy 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
+    SOCIAL_COLLECTS_ADDRESS: '', // set after the SAGE Social collects contract deploys
     APP_URL: 'http://localhost:3005/',
   },
   dev: {
@@ -66,6 +67,7 @@ const configuration: Configuration = {
     OPENEDITION_ADDRESS: '0x33d2739244f69Ed71DCC877a30691D2A5dc9b11e',
     COLLECTION_ADDRESS: '0x5aC7DB61278fFd8F19f6d93957Cd47263C62c3Bf', // SageCollection (ETH-currency redeploy 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
+    SOCIAL_COLLECTS_ADDRESS: '', // set after the SAGE Social collects contract deploys
     APP_URL: 'https://sage-dev.vercel.app/',
   },
   staging: {
@@ -83,6 +85,7 @@ const configuration: Configuration = {
     OPENEDITION_ADDRESS: '0x33d2739244f69Ed71DCC877a30691D2A5dc9b11e',
     COLLECTION_ADDRESS: '0x5aC7DB61278fFd8F19f6d93957Cd47263C62c3Bf', // SageCollection (ETH-currency redeploy 2026-07-11)
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
+    SOCIAL_COLLECTS_ADDRESS: '', // set after the SAGE Social collects contract deploys
     APP_URL: 'https://sage-staging.vercel.app/',
   },
   production: {
@@ -102,6 +105,7 @@ const configuration: Configuration = {
     OPENEDITION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
     COLLECTION_ADDRESS: '0x2c25d08251a0a1B6Ef954811a177D85482a82373',
     ASHTOKEN_ADDRESS: '0x08deaa8250beAeD65366fbbde0088E76261637bA', // SAGE token (live on Robinhood mainnet)
+    SOCIAL_COLLECTS_ADDRESS: '', // set after the SAGE Social collects contract deploys
     APP_URL: 'https://sageart.xyz/',
   },
 };

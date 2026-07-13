@@ -45,6 +45,9 @@ model Drop {
   // direct-contract mints from unclaimed wallets revert. Sybil SPEED BUMP,
   // not a wall (VPNs rotate IPs; shared IPs get one spot total).
   ipGateEnabled                    Boolean     @default(false)
+  // SAGE Social follow gate: when on, anyone who follows this drop's artist
+  // on SAGE Social is auto-added to the drop's allowlist (DB + on-chain).
+  followGateEnabled                Boolean     @default(false)
   NftContract                      NftContract @relation("ContractDrops", fields:[artistAddress], references: [artistAddress])
   ApprovedByUser                   User?       @relation("Drop_approvedByToUser", fields: [approvedBy], references: [walletAddress])
   Auctions                         Auction[]
@@ -329,6 +332,11 @@ model User {
   bannerImageS3Path            	String?
   receiveEmailNotification      Boolean       @default(true)
   username                      String?       @db.VarChar(40)
+  // SAGE Social verified pfp: when the avatar was picked from an owned NFT,
+  // this points at it. Verification is computed at READ time (owner must
+  // still match and profilePicture must still be that NFT's image), so a
+  // sold NFT or a custom re-upload silently un-verifies without any cron.
+  pfpNftId                      Int?
   DropsApproved                 Drop[]        @relation("Drop_approvedByToUser")
   NftContract                   NftContract?  @relation("ArtistContract")
   EarnedPoints                  EarnedPoints?
@@ -365,12 +373,24 @@ model SocialPost {
   repostCount  Int            @default(0)
   replyCount   Int            @default(0)
   tipTotal     Float          @default(0) // total SAGE tipped to this post
+  // burn-to-boost: SAGE burned (sent to 0x…dEaD) pins the post to the top of
+  // the global feed until boostedUntil. Verified on-chain server-side.
+  boostedUntil DateTime?
+  boostBurned  Float          @default(0) // lifetime SAGE burned on this post
+  // collect-as-NFT: author sets a SAGE price (0 = free collect); each collect
+  // pays the author directly and server-mints the post into the platform's
+  // "SAGE Social" SageNFT contract.
+  collectPrice Float?
+  collectCount Int            @default(0)
   Likes        SocialLike[]
   Reposts      SocialRepost[]
   Tips         SocialTip[]
+  Boosts       SocialBoost[]
+  Collects     SocialCollect[]
   @@index([createdAt])
   @@index([authorAddress])
   @@index([replyToId])
+  @@index([boostedUntil])
 }
 
 model SocialFollow {
@@ -407,9 +427,36 @@ model SocialTip {
   fromAddress String     @db.Char(42)
   toAddress   String     @db.Char(42)
   amount      Float      // SAGE amount
-  txHash      String     @db.Char(66)
+  txHash      String     @db.Char(66) @unique // one credit per on-chain transfer
   createdAt   DateTime   @default(now())
   Post        SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  @@index([postId])
+}
+
+model SocialBoost {
+  id          Int        @id @default(autoincrement())
+  postId      Int
+  fromAddress String     @db.Char(42)
+  amount      Float      // SAGE burned
+  hours       Float      // boost duration this burn bought
+  txHash      String     @db.Char(66) @unique // one credit per on-chain burn
+  createdAt   DateTime   @default(now())
+  Post        SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  @@index([postId])
+}
+
+model SocialCollect {
+  id               Int        @id @default(autoincrement())
+  postId           Int
+  collectorAddress String     @db.Char(42)
+  amount           Float      // SAGE paid to the author (0 = free collect)
+  payTxHash        String?    @db.Char(66) @unique // null for free collects
+  mintTxHash       String     @db.Char(66)
+  contractAddress  String     @db.Char(42) // SageNFT the token was minted into
+  tokenId          Int
+  createdAt        DateTime   @default(now())
+  Post             SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  @@unique([postId, collectorAddress]) // one edition per wallet
   @@index([postId])
 }
 
