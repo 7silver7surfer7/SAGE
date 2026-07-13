@@ -70,9 +70,11 @@ export function tokenNameFor(entryPath: string, dropName: string, i: number): st
   const cleaned = base.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
   const generic = /^(\d+|img[ ]?\d*|image[ ]?\d*|dsc[ ]?\d*|untitled[ ]?\d*)$/i.test(cleaned);
   if (!cleaned || generic) return `${dropName} #${i}`;
-  // Title Case without mangling existing capitals ("NYC at dusk" stays "NYC At Dusk")
-  const pretty = cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
-  return pretty;
+  // A filename that already contains spaces is a human-authored title — keep
+  // it VERBATIM ("Water Lilies at Dusk" must not become "…At Dusk"). Only
+  // separator-style names (water-lilies_dusk) get Title Cased.
+  if (/\s/.test(base)) return cleaned;
+  return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export interface BatchCheckpoint {
