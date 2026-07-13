@@ -8,6 +8,76 @@ import sageNftJson from '@/constants/abis/NFT/SageNFT.sol/SageNFT.json';
 export const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 
 /**
+ * Freezes a collect-NFT's metadata JSON on Filebase (S3-compatible IPFS) and
+ * returns an ipfs:// URI. Env-gated: without FILEBASE_* set, returns null and
+ * the caller falls back to the on-site GetPostMetadata URL. Filebase returns
+ * the IPFS CID in the `x-amz-meta-cid` response header on PutObject.
+ */
+export async function uploadJsonToFilebase(
+  key: string,
+  json: unknown
+): Promise<string | null> {
+  const bucket = process.env.FILEBASE_BUCKET;
+  const accessKey = process.env.FILEBASE_KEY;
+  const secretKey = process.env.FILEBASE_SECRET;
+  if (!bucket || !accessKey || !secretKey) return null;
+  // dynamic import so aws-sdk isn't pulled into bundles that never call this
+  const aws = (await import('aws-sdk')).default;
+  const s3 = new aws.S3({
+    endpoint: 'https://s3.filebase.com',
+    accessKeyId: accessKey,
+    secretAccessKey: secretKey,
+    region: 'us-east-1',
+    s3ForcePathStyle: true,
+    signatureVersion: 'v4',
+  });
+  const put = await s3
+    .putObject({
+      Bucket: bucket,
+      Key: key,
+      Body: Buffer.from(JSON.stringify(json)),
+      ContentType: 'application/json',
+    })
+    .promise();
+  // the CID rides on the response metadata
+  const cid =
+    (put as any)?.['x-amz-meta-cid'] ||
+    (await s3.headObject({ Bucket: bucket, Key: key }).promise()).Metadata?.cid;
+  return cid ? `ipfs://${cid}` : null;
+}
+
+/**
+ * EIP-712 voucher so a collector can mint their post-NFT THEMSELVES (paying
+ * their own gas) via SocialCollectMinter. The server signs only after it has
+ * settled payment (pixels/SAGE/ETH). Domain must match the contract's
+ * EIP712('SAGESocialCollect','1').
+ */
+export async function signCollectVoucher(
+  minterAddress: string,
+  chainId: number,
+  postId: number,
+  collector: string,
+  uri: string
+): Promise<string> {
+  const signer = getServerSigner();
+  const domain = {
+    name: 'SAGESocialCollect',
+    version: '1',
+    chainId,
+    verifyingContract: minterAddress,
+  };
+  const types = {
+    CollectVoucher: [
+      { name: 'postId', type: 'uint256' },
+      { name: 'collector', type: 'address' },
+      { name: 'uri', type: 'string' },
+    ],
+  };
+  // ethers v5 experimental typed-data signer
+  return (signer as any)._signTypedData(domain, types, { postId, collector, uri });
+}
+
+/**
  * SERVER-side platform signer (the operator key — same one the crons and
  * points oracle use). Exists for chain writes that happen without an admin's
  * wallet present, e.g. adding a minter to a drop's on-chain whitelist the

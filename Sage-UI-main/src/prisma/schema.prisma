@@ -349,6 +349,9 @@ model User {
   SocialMessagesSent            SocialMessage[]    @relation("SocialMsgFrom")
   SocialMessagesReceived        SocialMessage[]    @relation("SocialMsgTo")
   SocialPointsSpends            SocialPointsSpend[]
+  SocialTokenLaunch             SocialTokenLaunch?
+  SocialGroupChat               SocialGroupChat?
+  SocialNftEditions             SocialNftEdition[] @relation("SocialEditions")
   DropsApproved                 Drop[]        @relation("Drop_approvedByToUser")
   NftContract                   NftContract?  @relation("ArtistContract")
   EarnedPoints                  EarnedPoints?
@@ -467,6 +470,62 @@ model SocialBoost {
   @@index([postId])
 }
 
+// A pump.fun-style creator coin launched from a SAGE Social profile. Mirrors
+// on-chain state (SocialTokenFactory) for the profile buy widget; the chain
+// is the source of truth for reserves/price (read live).
+model SocialTokenLaunch {
+  id              Int      @id @default(autoincrement())
+  creatorAddress  String   @unique @db.Char(42) // one token per creator
+  Creator         User     @relation(fields: [creatorAddress], references: [walletAddress])
+  tokenAddress    String   @unique @db.Char(42)
+  name            String   @db.VarChar(40)
+  symbol          String   @db.VarChar(12)
+  launchTxHash    String   @db.Char(66)
+  imageUrl        String?  // optional token art (S3)
+  // pump.fun-style opt-out: false = the creator holds ZERO tokens at launch
+  // (no airdrop allocation), so the coin cannot be dumped on followers
+  airdropEnabled  Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  airdropCount    Int      @default(0) // followers airdropped to (cumulative)
+  @@index([createdAt])
+}
+
+// A self-serve NFT edition launched from a SAGE Social profile (artists +
+// project mints). Chain is the source of truth for minted counts; this row
+// powers discovery and the profile mint widget.
+model SocialNftEdition {
+  id              Int      @id @default(autoincrement())
+  artistAddress   String   @db.Char(42)
+  Artist          User     @relation("SocialEditions", fields: [artistAddress], references: [walletAddress])
+  editionAddress  String   @unique @db.Char(42)
+  name            String   @db.VarChar(60)
+  symbol          String   @db.VarChar(12)
+  imageUrl        String   // edition art (S3, compressed)
+  priceEth        Float
+  maxSupply       Int
+  launchTxHash    String   @db.Char(66)
+  createdAt       DateTime @default(now())
+  @@index([artistAddress])
+  @@index([createdAt])
+}
+
+// Recorded token trades (buys/sells on the SocialTokenFactory curve) — powers
+// the pump.fun-style price chart, trades feed and derived holder list. The
+// chain stays the source of truth for balances; this is a verified mirror.
+model SocialTokenTrade {
+  id           Int      @id @default(autoincrement())
+  tokenAddress String   @db.Char(42)
+  trader       String   @db.Char(42)
+  side         String   // "buy" | "sell"
+  ethAmount    Float    // ETH in (buy) or out (sell), net of fee
+  tokenAmount  Float    // tokens received (buy) or sold (sell)
+  priceEth     Float    // ETH per 1M tokens at this trade (for the chart)
+  txHash       String   @unique @db.Char(66)
+  createdAt    DateTime @default(now())
+  @@index([tokenAddress, id])
+  @@index([tokenAddress, trader])
+}
+
 model SocialCollect {
   id               Int        @id @default(autoincrement())
   postId           Int
@@ -496,6 +555,27 @@ model SocialInviteCode {
   uses          Int      @default(0)
   createdAt     DateTime @default(now())
   @@index([ownerAddress])
+}
+
+// Alpha group chat: auto-created when a user goes premium (verified). The
+// owner's FOLLOWERS are the members — follow to enter, talk alpha. The owner
+// can switch it off (enabled=false hides it and blocks posting).
+model SocialGroupChat {
+  ownerAddress String   @id @db.Char(42)
+  Owner        User     @relation(fields: [ownerAddress], references: [walletAddress])
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  Messages     SocialGroupMessage[]
+}
+
+model SocialGroupMessage {
+  id           Int             @id @default(autoincrement())
+  ownerAddress String          @db.Char(42) // which alpha chat
+  Chat         SocialGroupChat @relation(fields: [ownerAddress], references: [ownerAddress], onDelete: Cascade)
+  fromAddress  String          @db.Char(42)
+  text         String          @db.VarChar(1000)
+  createdAt    DateTime        @default(now())
+  @@index([ownerAddress, id])
 }
 
 // Wallet-to-wallet DMs. Sending is a premium (verified) feature; reading is

@@ -1,4 +1,5 @@
 import useSageRoutes from '@/hooks/useSageRoutes';
+import { useRouter } from 'next/router';
 import { useGetUserQuery } from '@/store/usersReducer';
 import { useSession } from 'next-auth/react';
 import Connect from '../Connect';
@@ -29,7 +30,10 @@ export default function Nav() {
   });
   const isSignedIn: boolean = sessionStatus === 'authenticated';
   const shouldShowPersonal: boolean = !isProfilePage;
-  const shouldShowSearch: boolean = !isProfilePage;
+  const { pathname } = useRouter();
+  // the legacy marketplace search is redundant on SAGE Social (it has its own)
+  const isSocialSurface = pathname.startsWith('/social') || pathname.startsWith('/invite');
+  const shouldShowSearch: boolean = !isProfilePage && !isSocialSurface;
   const dataColor: string = isSingleDropsPage && 'white';
 
   const navLinks: NavLink[] = [

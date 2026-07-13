@@ -26,6 +26,10 @@ const ICONS = {
   chat: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10z',
   trophy: 'M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4zM7 4H4v2a3 3 0 0 0 3 3M17 4h3v2a3 3 0 0 1-3 3',
   hex: 'M12 2l8.5 5v10L12 22l-8.5-5V7L12 2z',
+  // the Twitter compose glyph: pencil over a square
+  compose: 'M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6M17.6 3.4a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4 8.6-8.6z',
+  rocket: 'M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2 0-2.8-.8-.7-2-.7-3 -.2zM12 15l-3-3a22 22 0 0 1 2-3.9A12.7 12.7 0 0 1 21.5 2.5a12.7 12.7 0 0 1-5.6 10.5A22 22 0 0 1 12 15zM9 12H4s.6-3.3 2-4.5c1.6-1.3 5 0 5 0M12 15v5s3.3-.6 4.5-2c1.3-1.6 0-5 0-5',
+  palette: 'M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2v-1a2 2 0 0 1 2-2h1a5 5 0 0 0 5-5c0-5.5-4.5-10-10-10zM7 10a1.2 1.2 0 1 1 0-2.4A1.2 1.2 0 0 1 7 10zM12 7a1.2 1.2 0 1 1 0-2.4A1.2 1.2 0 0 1 12 7zM17 10a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4z',
 };
 
 function displayNameOf(u: { username?: string | null; address: string }) {
@@ -129,6 +133,8 @@ export default function SocialShell({ children }: { children: ReactNode }) {
     { name: 'Activity', url: '/social/activity', icon: 'bell' },
     { name: 'Messages', url: '/social/messages', icon: 'chat', badge: me?.unreadMessages || 0 },
     { name: 'Leaderboard', url: '/social/leaderboard', icon: 'trophy' },
+    { name: 'Launch token', url: '/social/launch', icon: 'rocket' },
+    { name: 'Launch NFT', url: '/social/launch', icon: 'palette' },
     ...(walletAddress
       ? [{ name: 'My mints', url: `/social/${walletAddress}`, icon: 'hex' as const }]
       : []),
@@ -146,7 +152,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
         <nav className='social-shell__nav'>
           {nav.map((item) => (
             <button
-              key={item.url}
+              key={item.name}
               className='social-shell__nav-item'
               data-current={isCurrent(item.url)}
               onClick={() => router.push(item.url)}
@@ -157,6 +163,14 @@ export default function SocialShell({ children }: { children: ReactNode }) {
             </button>
           ))}
         </nav>
+        {isSignedIn && (
+          <button
+            className='social-shell__post-btn'
+            onClick={() => router.push('/social/compose')}
+          >
+            <Icon d={ICONS.compose} /> Post
+          </button>
+        )}
         {isSignedIn && <ReferCard />}
         {isSignedIn && walletAddress && (
           <button
@@ -181,10 +195,21 @@ export default function SocialShell({ children }: { children: ReactNode }) {
         <ActivityTicker />
       </aside>
 
+      {isSignedIn && (
+        <button
+          className='social-shell__fab'
+          onClick={() => router.push('/social/compose')}
+          aria-label='New post'
+          title='New post'
+        >
+          <Icon d={ICONS.compose} />
+        </button>
+      )}
+
       <nav className='social-shell__tabbar'>
         {nav.slice(0, 5).map((item) => (
           <button
-            key={item.url}
+            key={item.name}
             data-current={isCurrent(item.url)}
             onClick={() => router.push(item.url)}
             aria-label={item.name}

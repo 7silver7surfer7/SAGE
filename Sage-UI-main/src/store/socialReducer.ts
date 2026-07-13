@@ -54,6 +54,15 @@ export interface SocialProfile {
   unreadMessages: number; // self only
   followGatedDrops: FollowGatedDrop[];
   myDrops: FollowGatedDrop[];
+  groupChat: { enabled: boolean; isMember: boolean } | null;
+}
+
+export interface GroupMessage {
+  id: number;
+  from: SocialUserCard;
+  text: string;
+  createdAt: string;
+  mine: boolean;
 }
 
 export interface OwnedNft {
@@ -133,6 +142,7 @@ export interface LeaderboardRow {
 }
 
 export interface Leaderboard {
+  topPoints: LeaderboardRow[];
   topEarners: LeaderboardRow[];
   topTippers: LeaderboardRow[];
   topBurners: LeaderboardRow[];
@@ -154,13 +164,84 @@ export interface PostMint {
   };
 }
 
+export interface ProfileToken {
+  tokenAddress: string;
+  name: string;
+  symbol: string;
+  imageUrl: string | null;
+  airdropEnabled: boolean;
+  airdropCount: number;
+}
+export interface ProfileTokenResponse {
+  token: ProfileToken | null;
+  factory: string | null;
+  followers: string[];
+}
+export interface CollectVoucher {
+  ok: boolean;
+  minter: string;
+  postId: number;
+  uri: string;
+  signature: string;
+}
+
+export interface TokenTrade {
+  side: 'buy' | 'sell';
+  trader: string;
+  ethAmount: number;
+  tokenAmount: number;
+  createdAt: string;
+}
+export interface TokenHolder {
+  user: SocialUserCard;
+  balance: number;
+}
+export interface TokenDetail {
+  token: {
+    tokenAddress: string;
+    name: string;
+    symbol: string;
+    imageUrl: string | null;
+    airdropEnabled: boolean;
+    creator: SocialUserCard;
+  };
+  priceEth: number;
+  complete: boolean;
+  bondingProgressPct: number;
+  holderCount: number;
+  tradeCount: number;
+  series: { t: string; price: number }[];
+  trades: TokenTrade[];
+  holders: TokenHolder[];
+}
+
 type Scope = 'global' | 'following';
+
+export interface FeedPage {
+  posts: SocialPost[];
+  nextCursor: number | null;
+}
 
 const socialApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (builder) => ({
-    getFeed: builder.query<{ posts: SocialPost[]; nextCursor: number | null }, Scope>({
-      query: (scope) => ({ url: `social?action=GetFeed&scope=${scope}` }),
+    // Infinite scroll: one cache entry PER SCOPE that pages merge into.
+    // cursor=undefined replaces the list (fresh load / new post), a cursor
+    // appends deduped older posts.
+    getFeed: builder.query<FeedPage, { scope: Scope; cursor?: number }>({
+      query: ({ scope, cursor }) => ({
+        url: `social?action=GetFeed&scope=${scope}${cursor ? `&cursor=${cursor}` : ''}`,
+      }),
+      serializeQueryArgs: ({ queryArgs }) => `feed-${queryArgs.scope}`,
+      merge: (current, incoming, { arg }) => {
+        if (!arg.cursor) return incoming;
+        const seen = new Set(current.posts.map((p) => p.id));
+        current.posts.push(...incoming.posts.filter((p) => !seen.has(p.id)));
+        current.nextCursor = incoming.nextCursor;
+        return current;
+      },
+      forceRefetch: ({ currentArg, previousArg }) =>
+        currentArg?.cursor !== previousArg?.cursor || currentArg?.scope !== previousArg?.scope,
       providesTags: ['SocialFeed'],
     }),
     getUserPosts: builder.query<{ posts: SocialPost[] }, string>({
@@ -212,6 +293,21 @@ const socialApi = baseApi.injectEndpoints({
       query: () => ({ url: 'social?action=GetGlobalActivity' }),
       providesTags: ['SocialFeed'],
     }),
+    getGroupChat: builder.query<
+      { enabled: boolean; isOwner: boolean; messages: GroupMessage[] },
+      string
+    >({
+      query: (owner) => ({ url: `social?action=GetGroupChat&owner=${owner}` }),
+      providesTags: ['SocialMessages'],
+    }),
+    getProfileToken: builder.query<ProfileTokenResponse, string>({
+      query: (address) => ({ url: `social?action=GetProfileToken&address=${address}` }),
+      providesTags: (_r, _e, address) => [{ type: 'SocialProfile', id: address }],
+    }),
+    getTokenDetail: builder.query<TokenDetail, string>({
+      query: (address) => ({ url: `social?action=GetTokenDetail&address=${address}` }),
+      providesTags: (_r, _e, address) => [{ type: 'SocialProfile', id: `tok-${address}` }],
+    }),
     searchSocial: builder.query<{ users: SocialUserCard[]; posts: SocialPost[] }, string>({
       query: (q) => ({ url: `social?action=Search&q=${encodeURIComponent(q)}` }),
     }),
@@ -225,10 +321,48 @@ const socialApi = baseApi.injectEndpoints({
     }),
     toggleLike: builder.mutation<{ liked: boolean }, number>({
       query: (postId) => ({ url: 'social?action=ToggleLike', method: 'POST', body: { postId } }),
+      // optimistic: paginated feed pages beyond the newest are append-only in
+      // the cache, so patch them directly instead of waiting for a refetch
+      async onQueryStarted(postId, { dispatch, queryFulfilled }) {
+        const patches = (['global', 'following'] as const).map((scope) =>
+          dispatch(
+            socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
+              const p = draft.posts.find((x) => x.id === postId);
+              if (p) {
+                p.likedByViewer = !p.likedByViewer;
+                p.likeCount += p.likedByViewer ? 1 : -1;
+              }
+            })
+          )
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patches.forEach((p) => p.undo());
+        }
+      },
       invalidatesTags: ['SocialFeed'],
     }),
     toggleRepost: builder.mutation<{ reposted: boolean }, number>({
       query: (postId) => ({ url: 'social?action=ToggleRepost', method: 'POST', body: { postId } }),
+      async onQueryStarted(postId, { dispatch, queryFulfilled }) {
+        const patches = (['global', 'following'] as const).map((scope) =>
+          dispatch(
+            socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
+              const p = draft.posts.find((x) => x.id === postId);
+              if (p) {
+                p.repostedByViewer = !p.repostedByViewer;
+                p.repostCount += p.repostedByViewer ? 1 : -1;
+              }
+            })
+          )
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patches.forEach((p) => p.undo());
+        }
+      },
       invalidatesTags: ['SocialFeed'],
     }),
     toggleFollow: builder.mutation<{ following: boolean; whitelistedFor?: string[] }, string>({
@@ -290,11 +424,72 @@ const socialApi = baseApi.injectEndpoints({
     }),
     deletePost: builder.mutation<{ ok: boolean }, number>({
       query: (postId) => ({ url: 'social?action=DeletePost', method: 'POST', body: { postId } }),
+      async onQueryStarted(postId, { dispatch, queryFulfilled }) {
+        const patches = (['global', 'following'] as const).map((scope) =>
+          dispatch(
+            socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
+              draft.posts = draft.posts.filter((x) => x.id !== postId);
+            })
+          )
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patches.forEach((p) => p.undo());
+        }
+      },
       invalidatesTags: ['SocialFeed'],
     }),
     sendMessage: builder.mutation<{ ok: boolean; id: number }, { to: string; text: string }>({
       query: (body) => ({ url: 'social?action=SendMessage', method: 'POST', body }),
       invalidatesTags: ['SocialMessages'],
+    }),
+    recordTokenLaunch: builder.mutation<
+      { ok: boolean; token: string },
+      {
+        tokenAddress: string;
+        name: string;
+        symbol: string;
+        launchTxHash: string;
+        imageUrl?: string;
+        airdropEnabled?: boolean;
+      }
+    >({
+      query: (body) => ({ url: 'social?action=RecordTokenLaunch', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile'],
+    }),
+    recordAirdrop: builder.mutation<{ ok: boolean }, { count: number }>({
+      query: (body) => ({ url: 'social?action=RecordAirdrop', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile'],
+    }),
+    recordTrade: builder.mutation<
+      { ok: boolean; priceEth?: number },
+      { tokenAddress: string; side: 'buy' | 'sell'; txHash: string }
+    >({
+      query: (body) => ({ url: 'social?action=RecordTrade', method: 'POST', body }),
+      invalidatesTags: (_r, _e, arg) => [{ type: 'SocialProfile', id: `tok-${arg.tokenAddress}` }],
+    }),
+    sendGroupMessage: builder.mutation<{ ok: boolean; id: number }, { owner: string; text: string }>({
+      query: (body) => ({ url: 'social?action=SendGroupMessage', method: 'POST', body }),
+      invalidatesTags: ['SocialMessages'],
+    }),
+    toggleGroupChat: builder.mutation<{ ok: boolean; enabled: boolean }, { enabled: boolean }>({
+      query: (body) => ({ url: 'social?action=ToggleGroupChat', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile'],
+    }),
+    setProfileImage: builder.mutation<
+      { ok: boolean; url: string; kind: string },
+      { url: string; kind: 'avatar' | 'banner' }
+    >({
+      query: (body) => ({ url: 'social?action=SetProfileImage', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile', 'SocialFeed', 'User'],
+    }),
+    requestCollectVoucher: builder.mutation<
+      CollectVoucher,
+      { postId: number; txHash?: string; payWith?: 'SAGE' | 'POINTS' }
+    >({
+      query: (body) => ({ url: 'social?action=RequestCollectVoucher', method: 'POST', body }),
+      invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
     }),
   }),
 });
@@ -314,8 +509,18 @@ export const {
   useGetLeaderboardQuery,
   useGetUserMintsQuery,
   useGetGlobalActivityQuery,
+  useGetProfileTokenQuery,
   useSearchSocialQuery,
   useDeletePostMutation,
+  useGetGroupChatQuery,
+  useSendGroupMessageMutation,
+  useToggleGroupChatMutation,
+  useSetProfileImageMutation,
+  useGetTokenDetailQuery,
+  useRecordTokenLaunchMutation,
+  useRecordAirdropMutation,
+  useRecordTradeMutation,
+  useRequestCollectVoucherMutation,
   useCreatePostMutation,
   useToggleLikeMutation,
   useToggleRepostMutation,

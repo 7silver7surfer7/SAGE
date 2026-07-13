@@ -9,6 +9,7 @@ import { transformTitle } from '@/utilities/strings';
 import { useGetLeaderboardQuery, LeaderboardRow } from '@/store/socialReducer';
 
 const BOARDS = [
+  ['topPoints', 'Top points', 'net pixels — earned holding SAGE, spent/earned collecting posts'],
   ['topEarners', 'Top earners', 'SAGE tipped to their posts'],
   ['topTippers', 'Top tippers', 'SAGE they tipped to others'],
   ['topBurners', 'Top burners', 'SAGE burned boosting posts'],
@@ -17,7 +18,7 @@ const BOARDS = [
 
 export default function LeaderboardPage() {
   const router = useRouter();
-  const [board, setBoard] = useState<(typeof BOARDS)[number][0]>('topEarners');
+  const [board, setBoard] = useState<(typeof BOARDS)[number][0]>('topPoints');
   const { data, isFetching } = useGetLeaderboardQuery();
   const rows: LeaderboardRow[] = (data as any)?.[board] || [];
   const meta = BOARDS.find(([k]) => k === board)!;
@@ -63,7 +64,11 @@ export default function LeaderboardPage() {
                 {row.user?.verified && <VerifiedBadge size={12} />}
               </span>
               <span className='social-board__value'>
-                {board === 'mostFollowed' ? `${row.count} followers` : `${row.sage} SAGE`}
+                {board === 'mostFollowed'
+                  ? `${row.count} followers`
+                  : board === 'topPoints'
+                  ? `${row.count} pixels`
+                  : `${row.sage} SAGE`}
               </span>
             </div>
           ))}

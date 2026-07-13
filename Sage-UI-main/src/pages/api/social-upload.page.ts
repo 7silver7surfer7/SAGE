@@ -111,12 +111,24 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
     if (['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
       if (buffer.length > MAX_IMAGE_BYTES)
         return res.status(400).json({ error: 'images are capped at 12MB' });
-      const webp = await sharp(buffer, { limitInputPixels: SHARP_MAX_INPUT_PIXELS })
-        .rotate() // bake EXIF orientation in
-        .resize({ width: IMAGE_MAX_DIM, height: IMAGE_MAX_DIM, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 80 })
-        .toBuffer();
-      const url = await uploadBufferToS3('social', `${stamp}.webp`, 'image/webp', webp);
+      // kind steers the crop: avatars are square-cover 400px, banners 1500×500
+      // cover, posts fit inside 1600px
+      const kind = String(req.query.kind || 'post');
+      let pipeline = sharp(buffer, { limitInputPixels: SHARP_MAX_INPUT_PIXELS }).rotate();
+      if (kind === 'avatar') {
+        pipeline = pipeline.resize({ width: 400, height: 400, fit: 'cover' });
+      } else if (kind === 'banner') {
+        pipeline = pipeline.resize({ width: 1500, height: 500, fit: 'cover' });
+      } else {
+        pipeline = pipeline.resize({
+          width: IMAGE_MAX_DIM,
+          height: IMAGE_MAX_DIM,
+          fit: 'inside',
+          withoutEnlargement: true,
+        });
+      }
+      const webp = await pipeline.webp({ quality: 80 }).toBuffer();
+      const url = await uploadBufferToS3('social', `${stamp}-${kind}.webp`, 'image/webp', webp);
       return res.json({ url, mediaType: 'image', bytes: webp.length });
     }
     if (['video/mp4', 'video/quicktime'].includes(mime)) {

@@ -7,9 +7,12 @@ import { parameters } from '@/constants/config';
 import {
   verifySageTransfer,
   verifyPayment,
+  verifyEthTransfer,
   mintSocialCollectServerSide,
   addToWhitelistOnChain,
   isWhitelistedOnChain,
+  uploadJsonToFilebase,
+  signCollectVoucher,
   DEAD_ADDRESS,
 } from '@/utilities/serverWallet';
 
@@ -81,6 +84,24 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getLeaderboard(response);
       case 'GetUserMints':
         return await getUserMints(String(request.query.address || ''), response);
+      case 'GetProfileToken':
+        return await getProfileToken(String(request.query.address || ''), response);
+      case 'GetTokenDetail':
+        return await getTokenDetail(String(request.query.address || ''), response);
+      case 'GetTokens':
+        return await getTokens(response);
+      case 'GetProfileEditions':
+        return await getProfileEditions(String(request.query.address || ''), response);
+      case 'GetEditionMetadata':
+        return await getEditionMetadata(Number(request.query.id), response);
+      case 'GetGroupChat':
+        return await withAuth(request, response, (r) => getGroupChat(request, response, r));
+      case 'SendGroupMessage':
+        return await withAuth(request, response, (r) => sendGroupMessage(request, response, r));
+      case 'ToggleGroupChat':
+        return await withAuth(request, response, (r) => toggleGroupChat(request, response, r));
+      case 'SetProfileImage':
+        return await withAuth(request, response, (r) => setProfileImage(request, response, r));
       case 'GetGlobalActivity':
         return await getGlobalActivity(response);
       case 'Search':
@@ -122,6 +143,16 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => sendMessage(request, response, r));
       case 'GetActivity':
         return await withAuth(request, response, (r) => getActivity(response, r));
+      case 'RecordTokenLaunch':
+        return await withAuth(request, response, (r) => recordTokenLaunch(request, response, r));
+      case 'RecordAirdrop':
+        return await withAuth(request, response, (r) => recordAirdrop(request, response, r));
+      case 'RecordTrade':
+        return await withAuth(request, response, (r) => recordTrade(request, response, r));
+      case 'RecordEditionLaunch':
+        return await withAuth(request, response, (r) => recordEditionLaunch(request, response, r));
+      case 'RequestCollectVoucher':
+        return await withAuth(request, response, (r) => requestCollectVoucher(request, response, r));
       case 'DeletePost':
         return await withAuth(request, response, (r) => deletePost(request, response, r));
       default:
@@ -430,6 +461,21 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
   const unreadMessages = isSelf
     ? await prisma.socialMessage.count({ where: { toAddress: addr, readAt: null } })
     : 0;
+  // alpha chat visibility: exists+enabled, and the viewer is a follower/owner.
+  // Lazily provision for verified users verified before the feature (or via SQL).
+  let groupChat: { enabled: boolean; isMember: boolean } | null = null;
+  if (user?.verifiedAt) {
+    let chat = await prisma.socialGroupChat.findUnique({ where: { ownerAddress: addr } });
+    if (!chat && isSelf) {
+      chat = await prisma.socialGroupChat.create({ data: { ownerAddress: addr } }).catch(() => null);
+    }
+    if (chat) {
+      groupChat = {
+        enabled: chat.enabled,
+        isMember: isSelf || !!followsViewer,
+      };
+    }
+  }
   res.json({
     address: addr,
     username: user?.username || null,
@@ -447,6 +493,7 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
     unreadMessages,
     followGatedDrops,
     myDrops: isSelf ? myDrops : [],
+    groupChat,
   });
 }
 
@@ -773,6 +820,26 @@ async function collectPost(
   if (payWith === 'POINTS' && currency === 'ETH')
     return res.status(400).json({ error: 'points can only collect SAGE-priced posts' });
   if (payWith === 'POINTS' && post.collectPrice > 0) {
+    // buying with points requires SKIN IN THE GAME: the buyer must hold SAGE
+    // (points accrue from holding it — this closes the freeloader loop).
+    // The threshold only bites on production; testnet wallets rarely hold any.
+    try {
+      const { ethers: e } = await import('ethers');
+      const token = new e.Contract(
+        parameters.ASHTOKEN_ADDRESS,
+        ['function balanceOf(address) view returns (uint256)'],
+        new e.providers.StaticJsonRpcProvider(parameters.RPC_URL)
+      );
+      const bal = Number(e.utils.formatEther(await token.balanceOf(r.walletAddress)));
+      const minHold = process.env.NEXT_PUBLIC_APP_MODE === 'production' ? 1 : 0;
+      if (bal < minHold)
+        return res.status(400).json({
+          error: `hold at least ${minHold} SAGE to collect with pixels`,
+        });
+    } catch (e) {
+      console.error('collect hold-check RPC failed', e);
+      // an RPC blip should not block collecting — the pixels check below still gates
+    }
     const pointsPrice = BigInt(Math.ceil(post.collectPrice * POINTS_PER_SAGE));
     const [earned, spent] = await Promise.all([
       prisma.earnedPoints.findUnique({ where: { address: r.walletAddress } }),
@@ -827,6 +894,11 @@ async function collectPost(
       ? [
           prisma.socialPointsSpend.create({
             data: { address: r.walletAddress, amount: pointsSpent, reason: `collect:${id}` },
+          }),
+          // the SELLER earns the points: a negative row is a credit against
+          // their spend ledger (available = oracle-earned − Σledger)
+          prisma.socialPointsSpend.create({
+            data: { address: post.authorAddress, amount: -pointsSpent, reason: `sale:${id}` },
           }),
         ]
       : []),
@@ -885,7 +957,7 @@ async function getPostMetadata(id: number, res: NextApiResponse) {
     external_url: `${siteUrl()}/social/post/${id}/`,
     image:
       post.mediaType === 'video' || !post.imageUrl
-        ? postCardSvgDataUri(post.text, author, post.createdAt)
+        ? postCardSvgDataUri(post.text, author, post.createdAt, id)
         : post.imageUrl,
     ...(post.mediaType === 'video' && post.imageUrl ? { animation_url: post.imageUrl } : {}),
     attributes: [
@@ -895,33 +967,43 @@ async function getPostMetadata(id: number, res: NextApiResponse) {
   });
 }
 
-/** 800×800 dark card with the post text, in the SAGE design language. */
-function postCardSvgDataUri(text: string, author: string, createdAt: Date): string {
+/**
+ * The collected-post NFT card (800×800) — the BRUTALIST treatment the user
+ * picked from the ten candidates: shouting uppercase type on charcoal, a
+ * lime plinth carrying the REAL SAGE mark, serial and credits on the plinth.
+ */
+function postCardSvgDataUri(text: string, author: string, createdAt: Date, postId?: number): string {
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  // naive word wrap: ~34 chars/line, max 11 lines
-  const words = text.split(/\s+/);
+  // heavy display setting: ~18 chars/line, up to 7 lines
+  const words = text.toUpperCase().split(/\s+/);
   const lines: string[] = [];
   let line = '';
   for (const w of words) {
-    if ((line + ' ' + w).trim().length > 34) {
+    if ((line + ' ' + w).trim().length > 18) {
       lines.push(line.trim());
       line = w;
-      if (lines.length === 10) break;
+      if (lines.length === 6) break;
     } else line = (line + ' ' + w).trim();
   }
-  if (line && lines.length < 11) lines.push(line.trim());
-  if (words.join(' ').length > lines.join(' ').length) lines[lines.length - 1] += '…';
+  if (line && lines.length < 7) lines.push(line.trim());
+  if (words.join(' ').length > lines.join(' ').length + 8) lines[lines.length - 1] += '…';
   const tspans = lines
-    .map((l, i) => `<tspan x="60" dy="${i === 0 ? 0 : 44}">${esc(l)}</tspan>`)
+    .map((l, i) => `<tspan x="56" dy="${i === 0 ? 0 : 58}">${esc(l)}</tspan>`)
     .join('');
+  const logo = sageLogoInner()?.replace(/#d4fc52/g, '#101613');
+  const mark = logo
+    ? `<g transform="translate(56,568) scale(1.35)">${logo}</g>`
+    : `<text x="56" y="640" font-family="DejaVu Sans,Arial,sans-serif" font-size="52" font-weight="900" fill="#101613">SAGE</text>`;
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800">` +
     `<rect width="800" height="800" fill="#131917"/>` +
-    `<rect x="24" y="24" width="752" height="752" fill="none" stroke="#d4fc52" stroke-width="2"/>` +
-    `<text x="60" y="88" font-family="Space Grotesk,Arial,sans-serif" font-size="26" font-weight="800" fill="#d4fc52" letter-spacing="4">SAGE SOCIAL</text>` +
-    `<text x="60" y="200" font-family="Space Grotesk,Arial,sans-serif" font-size="32" font-weight="600" fill="#eef3ec">${tspans}</text>` +
-    `<text x="60" y="720" font-family="Arial,sans-serif" font-size="22" fill="#9daba0">${esc(author)} · ${createdAt.toISOString().slice(0, 10)}</text>` +
+    `<rect x="0" y="530" width="800" height="270" fill="#d4fc52"/>` +
+    `<text y="150" font-family="DejaVu Sans,Arial,sans-serif" font-size="44" font-weight="900" fill="#eef3ec">${tspans}</text>` +
+    mark +
+    `<text x="56" y="720" font-family="DejaVu Sans,Arial,sans-serif" font-size="34" font-weight="900" fill="#101613">SOCIAL №${postId ?? ''}</text>` +
+    `<text x="744" y="720" text-anchor="end" font-family="DejaVu Sans Mono,monospace" font-size="22" fill="#101613">${esc(author)} · ${createdAt.toISOString().slice(0, 10)}</text>` +
+    `<rect x="56" y="480" width="120" height="14" fill="#d4fc52"/>` +
     `</svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }
@@ -966,6 +1048,10 @@ async function purchaseVerification(
     where: { walletAddress: r.walletAddress },
     data: { verifiedAt: new Date(), verifiedTxHash: txHash },
   });
+  // premium perk: the alpha group chat spins up automatically
+  await prisma.socialGroupChat
+    .create({ data: { ownerAddress: r.walletAddress } })
+    .catch(() => {}); // already exists — fine
   res.json({ ok: true, verified: true });
 }
 
@@ -1161,7 +1247,7 @@ async function userCards(addresses: string[]) {
 }
 
 async function getLeaderboard(res: NextApiResponse) {
-  const [tipped, tippers, burners, followed] = await Promise.all([
+  const [tipped, tippers, burners, followed, pointsRows, ledger] = await Promise.all([
     prisma.socialTip.groupBy({
       by: ['toAddress'],
       _sum: { amount: true },
@@ -1186,8 +1272,30 @@ async function getLeaderboard(res: NextApiResponse) {
       orderBy: { _count: { followerAddress: 'desc' } },
       take: 10,
     }),
+    prisma.earnedPoints.findMany({
+      orderBy: { totalPointsEarned: 'desc' },
+      take: 50,
+      select: { address: true, totalPointsEarned: true },
+    }),
+    prisma.socialPointsSpend.groupBy({ by: ['address'], _sum: { amount: true } }),
   ]);
+  // net pixels = oracle-earned − ledger (sales are negative rows, i.e. credits)
+  const ledgerMap = new Map(ledger.map((l) => [l.address, l._sum.amount ?? BigInt(0)]));
+  const seenPts = new Set(pointsRows.map((p) => p.address));
+  // ledger-only users (sold posts without oracle accrual) still rank
+  const pointsPool = [
+    ...pointsRows.map((p) => ({
+      address: p.address,
+      net: p.totalPointsEarned - (ledgerMap.get(p.address) ?? BigInt(0)),
+    })),
+    ...ledger
+      .filter((l) => !seenPts.has(l.address) && (l._sum.amount ?? BigInt(0)) < BigInt(0))
+      .map((l) => ({ address: l.address, net: -(l._sum.amount ?? BigInt(0)) })),
+  ]
+    .sort((a, b) => (b.net > a.net ? 1 : -1))
+    .slice(0, 10);
   const cards = await userCards([
+    ...pointsPool.map((p) => p.address),
     ...tipped.map((t) => t.toAddress),
     ...tippers.map((t) => t.fromAddress),
     ...burners.map((b) => b.fromAddress),
@@ -1202,6 +1310,7 @@ async function getLeaderboard(res: NextApiResponse) {
       user: cards[f.followingAddress],
       count: f._count._all,
     })),
+    topPoints: pointsPool.map((p) => ({ user: cards[p.address], count: Number(p.net) })),
   });
 }
 
@@ -1488,6 +1597,540 @@ async function getGlobalActivity(res: NextApiResponse) {
       target: e.target
         ? cards[e.target] || { address: e.target, username: null, verified: false }
         : null,
+    })),
+  });
+}
+
+
+// ─────────────────────── token launchpad (pump.fun-style) ───────────────────────
+
+/** Records a token the creator already launched on-chain (they paid the fee). */
+async function recordTokenLaunch(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  r: { walletAddress: string }
+) {
+  if (!(await requireVerified(r.walletAddress, res))) return; // premium: launching is a paid perk
+  const { tokenAddress, name, symbol, launchTxHash, imageUrl, airdropEnabled } = req.body || {};
+  const token = canon(tokenAddress);
+  if (!token || !launchTxHash || !name || !symbol)
+    return res.status(400).json({ error: 'tokenAddress, name, symbol, launchTxHash required' });
+  const factory = parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
+  if (!factory) return res.status(400).json({ error: 'token launches are not enabled here' });
+  // verify the launch tx really came from this creator to the factory
+  try {
+    const { ethers } = await import('ethers');
+    const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+    const rcpt = await provider.getTransactionReceipt(launchTxHash);
+    if (!rcpt || rcpt.status !== 1) throw new Error('launch tx not mined');
+    if (rcpt.from.toLowerCase() !== r.walletAddress.toLowerCase()) throw new Error('not your launch');
+    if (rcpt.to?.toLowerCase() !== factory.toLowerCase()) throw new Error('wrong factory');
+  } catch (e: any) {
+    return res.status(400).json({ error: `launch not verified: ${e.message}` });
+  }
+  try {
+    const launch = await prisma.socialTokenLaunch.create({
+      data: {
+        creatorAddress: r.walletAddress,
+        tokenAddress: token,
+        name: String(name).slice(0, 40),
+        symbol: String(symbol).slice(0, 12),
+        launchTxHash,
+        imageUrl: imageUrl || null,
+        airdropEnabled: airdropEnabled !== false,
+      },
+    });
+    res.json({ ok: true, token: launch.tokenAddress });
+  } catch {
+    return res.status(400).json({ error: 'you already launched a token' });
+  }
+}
+
+async function recordAirdrop(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  r: { walletAddress: string }
+) {
+  const count = Number(req.body?.count || 0);
+  const launch = await prisma.socialTokenLaunch.findUnique({
+    where: { creatorAddress: r.walletAddress },
+  });
+  if (!launch) return res.status(404).json({ error: 'no token to airdrop' });
+  await prisma.socialTokenLaunch.update({
+    where: { creatorAddress: r.walletAddress },
+    data: { airdropCount: { increment: Math.max(0, count) } },
+  });
+  res.json({ ok: true });
+}
+
+/** Followers of a creator — the airdrop recipient list for the launch UI. */
+async function getProfileToken(address: string, res: NextApiResponse) {
+  const addr = canon(address);
+  if (!addr) return res.status(400).json({ error: 'bad address' });
+  const [launch, followers] = await Promise.all([
+    prisma.socialTokenLaunch.findUnique({ where: { creatorAddress: addr } }),
+    prisma.socialFollow.findMany({
+      where: { followingAddress: addr },
+      select: { followerAddress: true },
+      take: 200,
+    }),
+  ]);
+  res.json({
+    token: launch
+      ? {
+          tokenAddress: launch.tokenAddress,
+          name: launch.name,
+          symbol: launch.symbol,
+          imageUrl: launch.imageUrl,
+          airdropEnabled: launch.airdropEnabled,
+          airdropCount: launch.airdropCount,
+        }
+      : null,
+    factory: parameters.SOCIAL_TOKEN_FACTORY_ADDRESS || null,
+    followers: followers.map((f) => f.followerAddress),
+  });
+}
+
+async function getTokens(res: NextApiResponse) {
+  const launches = await prisma.socialTokenLaunch.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+    include: { Creator: { select: { username: true, profilePicture: true, verifiedAt: true } } },
+  });
+  res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
+  res.json({
+    tokens: launches.map((l) => ({
+      tokenAddress: l.tokenAddress,
+      name: l.name,
+      symbol: l.symbol,
+      imageUrl: l.imageUrl,
+      creator: {
+        address: l.creatorAddress,
+        username: l.Creator?.username || null,
+        profilePicture: l.Creator?.profilePicture || null,
+        verified: !!l.Creator?.verifiedAt,
+      },
+    })),
+  });
+}
+
+// ─────────────── buyer-pays-gas collect: settle payment, hand back a voucher ───────────────
+
+/**
+ * The buyer-pays-gas collect path. The server settles payment exactly like
+ * CollectPost (points/SAGE/ETH, replay-safe), freezes the NFT metadata to
+ * Filebase (falling back to the on-site tokenURI), and returns an EIP-712
+ * voucher the collector redeems on SocialCollectMinter — so THE COLLECTOR
+ * pays the mint gas, not the platform.
+ */
+async function requestCollectVoucher(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  r: { walletAddress: string }
+) {
+  if (!(await requireVerified(r.walletAddress, res))) return;
+  const minterAddress = parameters.SOCIAL_COLLECT_MINTER_ADDRESS;
+  if (!minterAddress)
+    return res.status(400).json({ error: 'buyer-paid minting is not enabled here' });
+  const { postId, txHash, payWith } = req.body || {};
+  const id = Number(postId);
+  const post = await prisma.socialPost.findUnique({ where: { id } });
+  if (!post) return res.status(404).json({ error: 'post not found' });
+  if (post.collectPrice === null) return res.status(400).json({ error: 'post is not collectible' });
+  if (post.authorAddress === r.walletAddress)
+    return res.status(400).json({ error: 'you cannot collect your own post' });
+  const already = await prisma.socialCollect.findUnique({
+    where: { postId_collectorAddress: { postId: id, collectorAddress: r.walletAddress } },
+  });
+  if (already) return res.status(400).json({ error: 'already collected' });
+
+  const currency = (post.collectCurrency === 'ETH' ? 'ETH' : 'SAGE') as 'SAGE' | 'ETH';
+  let amount = 0;
+  let pointsSpent: bigint | null = null;
+  if (payWith === 'POINTS' && post.collectPrice > 0) {
+    if (currency === 'ETH')
+      return res.status(400).json({ error: 'points can only collect SAGE-priced posts' });
+    const pointsPrice = BigInt(Math.ceil(post.collectPrice * POINTS_PER_SAGE));
+    const [earned, spent] = await Promise.all([
+      prisma.earnedPoints.findUnique({ where: { address: r.walletAddress } }),
+      prisma.socialPointsSpend.aggregate({ where: { address: r.walletAddress }, _sum: { amount: true } }),
+    ]);
+    const available = (earned?.totalPointsEarned ?? BigInt(0)) - (spent._sum.amount ?? BigInt(0));
+    if (available < pointsPrice)
+      return res.status(400).json({ error: `not enough pixels (need ${pointsPrice}, have ${available})` });
+    pointsSpent = pointsPrice;
+  } else if (post.collectPrice > 0) {
+    if (!txHash) return res.status(400).json({ error: 'payment tx required' });
+    const spent = await prisma.socialCollect.findUnique({ where: { payTxHash: txHash } });
+    if (spent) return res.status(400).json({ error: 'this payment was already used' });
+    try {
+      amount = await verifyPayment(txHash, r.walletAddress, post.authorAddress, post.collectPrice, currency);
+    } catch (e: any) {
+      return res.status(400).json({ error: `payment not verified: ${e.message}` });
+    }
+  }
+
+  // freeze metadata (Filebase/IPFS if configured, else the on-site tokenURI)
+  const author =
+    (await prisma.user.findUnique({ where: { walletAddress: post.authorAddress }, select: { username: true } }))
+      ?.username || `${post.authorAddress.slice(0, 6)}…${post.authorAddress.slice(-4)}`;
+  const metadata = {
+    name: `SAGE Social #${id}`,
+    description: `${post.text}\n\n— ${author} on SAGE Social`,
+    external_url: `${siteUrl()}/social/post/${id}/`,
+    image:
+      post.mediaType === 'video' || !post.imageUrl
+        ? postCardSvgDataUri(post.text, author, post.createdAt, id)
+        : post.imageUrl,
+    ...(post.mediaType === 'video' && post.imageUrl ? { animation_url: post.imageUrl } : {}),
+  };
+  let uri: string;
+  try {
+    uri = (await uploadJsonToFilebase(`social/post-${id}.json`, metadata)) || '';
+  } catch (e) {
+    console.error('filebase upload failed, falling back', e);
+    uri = '';
+  }
+  if (!uri) uri = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
+
+  const chainId = Number(parameters.CHAIN_ID);
+  const signature = await signCollectVoucher(minterAddress, chainId, id, r.walletAddress, uri);
+
+  // record the collect NOW (payment already settled); the on-chain mint the
+  // collector then submits is idempotent (minter rejects a second redeem)
+  await prisma.$transaction([
+    prisma.socialCollect.create({
+      data: {
+        postId: id,
+        collectorAddress: r.walletAddress,
+        amount,
+        currency,
+        pointsSpent,
+        payTxHash: amount > 0 ? txHash : null,
+        mintTxHash: 'voucher', // buyer submits the mint; tx not known server-side
+        contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
+        tokenId: 0, // assigned on-chain when the collector redeems
+      },
+    }),
+    ...(pointsSpent !== null
+      ? [
+          prisma.socialPointsSpend.create({ data: { address: r.walletAddress, amount: pointsSpent, reason: `collect:${id}` } }),
+          prisma.socialPointsSpend.create({ data: { address: post.authorAddress, amount: -pointsSpent, reason: `sale:${id}` } }),
+        ]
+      : []),
+    prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
+  ]);
+
+  res.json({ ok: true, minter: minterAddress, postId: id, uri, signature });
+}
+
+
+// ───────────────────── alpha group chats (premium perk) ─────────────────────
+
+/** Membership: the owner, or any follower of the owner. */
+async function groupChatAccess(owner: string, viewer: string) {
+  const chat = await prisma.socialGroupChat.findUnique({ where: { ownerAddress: owner } });
+  if (!chat) return { chat: null, member: false };
+  const member =
+    owner === viewer ||
+    !!(await prisma.socialFollow.findUnique({
+      where: { followerAddress_followingAddress: { followerAddress: viewer, followingAddress: owner } },
+    }));
+  return { chat, member };
+}
+
+async function getGroupChat(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const owner = canon(String(req.query.owner || req.body?.owner || ''));
+  if (!owner) return res.status(400).json({ error: 'bad owner address' });
+  const { chat, member } = await groupChatAccess(owner, r.walletAddress);
+  if (!chat || !chat.enabled) return res.status(404).json({ error: 'no alpha chat here' });
+  if (!member) return res.status(403).json({ error: 'follow to enter the alpha chat' });
+  const messages = await prisma.socialGroupMessage.findMany({
+    where: { ownerAddress: owner },
+    orderBy: { id: 'desc' },
+    take: 100,
+  });
+  const cards = await userCards(messages.map((m) => m.fromAddress));
+  res.json({
+    enabled: chat.enabled,
+    isOwner: owner === r.walletAddress,
+    messages: messages.reverse().map((m) => ({
+      id: m.id,
+      from: cards[m.fromAddress] || { address: m.fromAddress, username: null, verified: false },
+      text: m.text,
+      createdAt: m.createdAt,
+      mine: m.fromAddress === r.walletAddress,
+    })),
+  });
+}
+
+async function sendGroupMessage(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const owner = canon(req.body?.owner as string);
+  const text = String(req.body?.text || '').trim();
+  if (!owner) return res.status(400).json({ error: 'bad owner address' });
+  if (!text || text.length > 1000) return res.status(400).json({ error: 'message must be 1-1000 chars' });
+  const { chat, member } = await groupChatAccess(owner, r.walletAddress);
+  if (!chat || !chat.enabled) return res.status(404).json({ error: 'no alpha chat here' });
+  if (!member) return res.status(403).json({ error: 'follow to enter the alpha chat' });
+  const m = await prisma.socialGroupMessage.create({
+    data: { ownerAddress: owner, fromAddress: r.walletAddress, text },
+  });
+  res.json({ ok: true, id: m.id });
+}
+
+/** The owner's kill switch. */
+async function toggleGroupChat(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const enabled = !!req.body?.enabled;
+  const chat = await prisma.socialGroupChat.findUnique({ where: { ownerAddress: r.walletAddress } });
+  if (!chat) return res.status(404).json({ error: 'you have no alpha chat' });
+  await prisma.socialGroupChat.update({ where: { ownerAddress: r.walletAddress }, data: { enabled } });
+  res.json({ ok: true, enabled });
+}
+
+// ───────────── avatar / banner set (image already compressed by social-upload) ─────────────
+
+async function setProfileImage(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const { url, kind } = req.body || {};
+  if (!url || !/^https:\/\/[a-z0-9.-]+\.amazonaws\.com\/social\//.test(url))
+    return res.status(400).json({ error: 'image must be uploaded through SAGE Social' });
+  if (kind === 'banner') {
+    await prisma.user.update({
+      where: { walletAddress: r.walletAddress },
+      data: { bannerImageS3Path: url },
+    });
+  } else {
+    // custom avatar replaces any NFT pfp (verification ring self-heals off)
+    await prisma.user.update({
+      where: { walletAddress: r.walletAddress },
+      data: { profilePicture: url, pfpNftId: null },
+    });
+  }
+  res.json({ ok: true, url, kind: kind === 'banner' ? 'banner' : 'avatar' });
+}
+
+
+// ─────────────── NFT edition launcher (artists + project mints) ───────────────
+
+async function recordEditionLaunch(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  r: { walletAddress: string }
+) {
+  if (!(await requireVerified(r.walletAddress, res))) return; // premium perk
+  const { editionAddress, name, symbol, imageUrl, priceEth, maxSupply, launchTxHash } = req.body || {};
+  const edition = canon(editionAddress);
+  const launcher = parameters.SOCIAL_NFT_LAUNCHER_ADDRESS;
+  if (!launcher) return res.status(400).json({ error: 'edition launches are not enabled here' });
+  if (!edition || !name || !symbol || !imageUrl || !launchTxHash)
+    return res.status(400).json({ error: 'editionAddress, name, symbol, imageUrl, launchTxHash required' });
+  if (!/^https:\/\/[a-z0-9.-]+\.amazonaws\.com\/social\//.test(imageUrl))
+    return res.status(400).json({ error: 'edition art must be uploaded through SAGE Social' });
+  try {
+    const { ethers } = await import('ethers');
+    const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+    const rcpt = await provider.getTransactionReceipt(launchTxHash);
+    if (!rcpt || rcpt.status !== 1) throw new Error('launch tx not mined');
+    if (rcpt.from.toLowerCase() !== r.walletAddress.toLowerCase()) throw new Error('not your launch');
+    if (rcpt.to?.toLowerCase() !== launcher.toLowerCase()) throw new Error('wrong launcher');
+  } catch (e: any) {
+    return res.status(400).json({ error: `launch not verified: ${e.message}` });
+  }
+  try {
+    const row = await prisma.socialNftEdition.create({
+      data: {
+        artistAddress: r.walletAddress,
+        editionAddress: edition,
+        name: String(name).slice(0, 60),
+        symbol: String(symbol).slice(0, 12),
+        imageUrl,
+        priceEth: Number(priceEth) || 0,
+        maxSupply: Number(maxSupply) || 0,
+        launchTxHash,
+      },
+    });
+    res.json({ ok: true, id: row.id });
+  } catch {
+    return res.status(400).json({ error: 'edition already recorded' });
+  }
+}
+
+async function getProfileEditions(address: string, res: NextApiResponse) {
+  const addr = canon(address);
+  if (!addr) return res.status(400).json({ error: 'bad address' });
+  const rows = await prisma.socialNftEdition.findMany({
+    where: { artistAddress: addr },
+    orderBy: { id: 'desc' },
+    take: 20,
+  });
+  res.json({
+    launcher: parameters.SOCIAL_NFT_LAUNCHER_ADDRESS || null,
+    editions: rows.map((e) => ({
+      id: e.id,
+      editionAddress: e.editionAddress,
+      name: e.name,
+      symbol: e.symbol,
+      imageUrl: e.imageUrl,
+      priceEth: e.priceEth,
+      maxSupply: e.maxSupply,
+    })),
+  });
+}
+
+/** ERC-721 metadata for an edition (every token shares it). */
+async function getEditionMetadata(id: number, res: NextApiResponse) {
+  const e = await prisma.socialNftEdition.findUnique({ where: { id } });
+  if (!e) return res.status(404).json({ error: 'not found' });
+  res.setHeader('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=86400');
+  res.json({
+    name: e.name,
+    description: `${e.name} — an open edition by ${e.artistAddress} on SAGE Social.`,
+    image: e.imageUrl,
+    external_url: `${siteUrl()}/social/${e.artistAddress}/`,
+  });
+}
+
+
+// ─────────────────────── token trade recording + detail page ───────────────────────
+
+const FACTORY_ABI = [
+  'function curves(address) view returns (uint256 virtualTokenReserves, uint256 virtualEthReserves, uint256 realTokenReserves, uint256 realEthReserves, address creator, bool complete, bool airdropEnabled)',
+  'function spotPriceWei(address) view returns (uint256)',
+];
+
+/** Records a mined buy/sell so the chart, trades feed and holders stay live. */
+async function recordTrade(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const { tokenAddress, side, txHash } = req.body || {};
+  const token = canon(tokenAddress);
+  const factory = parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
+  if (!token || !txHash || (side !== 'buy' && side !== 'sell'))
+    return res.status(400).json({ error: 'tokenAddress, side, txHash required' });
+  if (!factory) return res.status(400).json({ error: 'trading not enabled here' });
+  const dupe = await prisma.socialTokenTrade.findUnique({ where: { txHash } });
+  if (dupe) return res.json({ ok: true, already: true });
+  try {
+    const { ethers } = await import('ethers');
+    const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+    const rcpt = await provider.getTransactionReceipt(txHash);
+    if (!rcpt || rcpt.status !== 1) throw new Error('trade tx not mined');
+    if (rcpt.from.toLowerCase() !== r.walletAddress.toLowerCase()) throw new Error('not your trade');
+    if (rcpt.to?.toLowerCase() !== factory.toLowerCase()) throw new Error('wrong factory');
+    // decode the Bought/Sold event to get amounts
+    const iface = new ethers.utils.Interface([
+      'event Bought(address indexed token, address indexed buyer, uint256 ethIn, uint256 tokensOut, uint256 fee, uint256 creatorFee)',
+      'event Sold(address indexed token, address indexed seller, uint256 tokensIn, uint256 ethOut, uint256 fee, uint256 creatorFee)',
+    ]);
+    let ethAmount = 0;
+    let tokenAmount = 0;
+    for (const log of rcpt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === 'Bought' && side === 'buy') {
+          ethAmount = Number(ethers.utils.formatEther(parsed.args.ethIn));
+          tokenAmount = Number(ethers.utils.formatEther(parsed.args.tokensOut));
+        } else if (parsed.name === 'Sold' && side === 'sell') {
+          ethAmount = Number(ethers.utils.formatEther(parsed.args.ethOut));
+          tokenAmount = Number(ethers.utils.formatEther(parsed.args.tokensIn));
+        }
+      } catch {
+        /* not our event */
+      }
+    }
+    if (tokenAmount <= 0) throw new Error('no trade event found');
+    // spot price AFTER the trade, ETH per 1M tokens, straight off the curve
+    const f = new ethers.Contract(factory, FACTORY_ABI, provider);
+    const spotWei = await f.spotPriceWei(token);
+    const priceEth = Number(ethers.utils.formatEther(spotWei.mul(1_000_000)));
+    await prisma.socialTokenTrade.create({
+      data: { tokenAddress: token, trader: r.walletAddress, side, ethAmount, tokenAmount, priceEth, txHash },
+    });
+    res.json({ ok: true, priceEth });
+  } catch (e: any) {
+    return res.status(400).json({ error: `trade not verified: ${e.message}` });
+  }
+}
+
+/** Everything the pump.fun-style token page needs. */
+async function getTokenDetail(address: string, res: NextApiResponse) {
+  const token = canon(address);
+  if (!token) return res.status(400).json({ error: 'bad address' });
+  const launch = await prisma.socialTokenLaunch.findUnique({
+    where: { tokenAddress: token },
+    include: { Creator: { select: { username: true, profilePicture: true, verifiedAt: true } } },
+  });
+  if (!launch) return res.status(404).json({ error: 'token not found' });
+
+  const trades = await prisma.socialTokenTrade.findMany({
+    where: { tokenAddress: token },
+    orderBy: { id: 'asc' },
+    take: 500,
+  });
+
+  // holders derived from recorded trades (buys add, sells subtract) — a
+  // testnet approximation; the chain is authoritative for real balances
+  const balances = new Map<string, number>();
+  for (const t of trades) {
+    const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
+    balances.set(t.trader, (balances.get(t.trader) || 0) + d);
+  }
+  const holders = Array.from(balances.entries())
+    .filter(([, b]) => b > 0.000001)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20);
+  const holderCards = await userCards(holders.map(([a]) => a));
+
+  // live curve state for the bonding-curve progress bar + price
+  let curve: { realTokenReserves: number; complete: boolean; priceEth: number } | null = null;
+  try {
+    const { ethers } = await import('ethers');
+    const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+    const f = new ethers.Contract(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, FACTORY_ABI, provider);
+    const c = await f.curves(token);
+    const spot = await f.spotPriceWei(token);
+    curve = {
+      realTokenReserves: Number(ethers.utils.formatEther(c.realTokenReserves)),
+      complete: c.complete,
+      priceEth: Number(ethers.utils.formatEther(spot.mul(1_000_000))),
+    };
+  } catch (e) {
+    console.error('curve read failed', e);
+  }
+  const INITIAL_REAL = 793_100_000; // pump.fun-shaped initial real reserves
+  const soldPct = curve ? Math.min(100, ((INITIAL_REAL - curve.realTokenReserves) / INITIAL_REAL) * 100) : 0;
+
+  res.setHeader('Cache-Control', 'public, s-maxage=15, stale-while-revalidate=60');
+  res.json({
+    token: {
+      tokenAddress: launch.tokenAddress,
+      name: launch.name,
+      symbol: launch.symbol,
+      imageUrl: launch.imageUrl,
+      airdropEnabled: launch.airdropEnabled,
+      creator: {
+        address: launch.creatorAddress,
+        username: launch.Creator?.username || null,
+        profilePicture: launch.Creator?.profilePicture || null,
+        verified: !!launch.Creator?.verifiedAt,
+      },
+    },
+    priceEth: curve?.priceEth ?? (trades.length ? trades[trades.length - 1].priceEth : 0),
+    complete: curve?.complete ?? false,
+    bondingProgressPct: Math.round(soldPct * 10) / 10,
+    holderCount: holders.length,
+    tradeCount: trades.length,
+    series: trades.map((t) => ({ t: t.createdAt, price: t.priceEth })),
+    trades: trades
+      .slice(-30)
+      .reverse()
+      .map((t) => ({
+        side: t.side,
+        trader: t.trader,
+        ethAmount: t.ethAmount,
+        tokenAmount: t.tokenAmount,
+        createdAt: t.createdAt,
+      })),
+    holders: holders.map(([addr, bal]) => ({
+      user: holderCards[addr] || { address: addr, username: null, verified: false },
+      balance: bal,
     })),
   });
 }

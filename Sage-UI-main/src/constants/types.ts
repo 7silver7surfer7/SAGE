@@ -20,6 +20,11 @@ export interface Parameters {
   // SAGE Social collects: the platform SageNFT posts are minted into when
   // collected. Empty string = collecting disabled on this network.
   SOCIAL_COLLECTS_ADDRESS: string;
+  // SAGE Social pump.fun-style token launchpad + buyer-paid voucher minter.
+  // Empty string = feature disabled on this network.
+  SOCIAL_TOKEN_FACTORY_ADDRESS: string;
+  SOCIAL_COLLECT_MINTER_ADDRESS: string;
+  SOCIAL_NFT_LAUNCHER_ADDRESS: string;
   APP_URL: string;
 }
 

@@ -7,6 +7,8 @@ import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
 import { tipSage, burnSage, sendEth } from '@/utilities/tip';
+import { redeemCollectVoucher } from '@/utilities/socialToken';
+import { parameters } from '@/constants/config';
 import {
   SocialPost,
   useDeletePostMutation,
@@ -16,6 +18,7 @@ import {
   useBoostPostMutation,
   useSetCollectibleMutation,
   useCollectPostMutation,
+  useRequestCollectVoucherMutation,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import VerifiedBadge from './VerifiedBadge';
@@ -76,6 +79,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [boostPost] = useBoostPostMutation();
   const [setCollectible] = useSetCollectibleMutation();
   const [collectPost] = useCollectPostMutation();
+  const [requestVoucher] = useRequestCollectVoucherMutation();
   const [deletePost] = useDeletePostMutation();
   const [busy, setBusy] = useState(false);
   const [showVerify, setShowVerify] = useState(false);
@@ -260,14 +264,28 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
           cur === 'ETH'
             ? await sendEth(post.author.address, price, signer as any)
             : await tipSage(post.author.address, price, signer as any);
-      toast.update(t, { render: 'Minting your NFT…', isLoading: true });
-      const r = await collectPost({ postId: post.id, txHash, payWith }).unwrap();
-      toast.update(t, {
-        render: `Collected! SAGE Social #${post.id} is yours (token ${r.tokenId}) ⬡`,
-        type: 'success',
-        isLoading: false,
-        autoClose: 6000,
-      });
+      // buyer-pays-gas: if the voucher minter is live, the collector submits
+      // the mint themselves (paying its gas) with a server-signed voucher
+      if (parameters.SOCIAL_COLLECT_MINTER_ADDRESS && signer) {
+        const v = await requestVoucher({ postId: post.id, txHash, payWith }).unwrap();
+        toast.update(t, { render: 'Sign to mint your NFT…', isLoading: true });
+        const mintTx = await redeemCollectVoucher(v.minter, v.postId, v.uri, v.signature, signer as any);
+        toast.update(t, {
+          render: `Collected! You minted SAGE Social #${post.id} (${mintTx.slice(0, 10)}…) ⬡`,
+          type: 'success',
+          isLoading: false,
+          autoClose: 6000,
+        });
+      } else {
+        toast.update(t, { render: 'Minting your NFT…', isLoading: true });
+        const r = await collectPost({ postId: post.id, txHash, payWith }).unwrap();
+        toast.update(t, {
+          render: `Collected! SAGE Social #${post.id} is yours (token ${r.tokenId}) ⬡`,
+          type: 'success',
+          isLoading: false,
+          autoClose: 6000,
+        });
+      }
     } catch (err: any) {
       toast.update(t, { render: 'Collect failed', type: 'error', isLoading: false, autoClose: 1 });
       handleGateError(err, 'Collect failed');
@@ -319,31 +337,36 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
         )}
         {post.collectPrice !== null && !isOwnPost && (
           <div className='social-post__collect-row'>
+            {post.collectPrice > 0 && post.collectCurrency === 'SAGE' && !post.collectedByViewer && (
+              <button
+                className='social-post__collect'
+                onClick={(e) => onCollect(e, 'POINTS')}
+                disabled={busy}
+                title='Hold SAGE, spend the pixels it earns — the seller receives them'
+              >
+                <HexIcon />
+                {`Collect · ${Math.ceil(post.collectPrice * 100)} pixels`}
+                {post.collectCount > 0 && (
+                  <span className='social-post__collect-count'>{post.collectCount} minted</span>
+                )}
+              </button>
+            )}
             <button
-              className='social-post__collect'
+              className={`social-post__collect ${post.collectPrice > 0 && post.collectCurrency === 'SAGE' && !post.collectedByViewer ? 'social-post__collect--points' : ''}`}
               onClick={(e) => onCollect(e, 'SAGE')}
               disabled={busy || post.collectedByViewer}
             >
-              <HexIcon filled={post.collectedByViewer} />
+              {post.collectedByViewer ? <HexIcon filled /> : null}
               {post.collectedByViewer
                 ? 'Collected'
                 : post.collectPrice > 0
-                ? `Collect · ${post.collectPrice} ${post.collectCurrency}`
+                ? `${post.collectPrice} ${post.collectCurrency}`
                 : 'Collect · free'}
-              {post.collectCount > 0 && (
-                <span className='social-post__collect-count'>{post.collectCount} minted</span>
-              )}
+              {(post.collectPrice === 0 || post.collectCurrency === 'ETH' || post.collectedByViewer) &&
+                post.collectCount > 0 && (
+                  <span className='social-post__collect-count'>{post.collectCount} minted</span>
+                )}
             </button>
-            {post.collectPrice > 0 && post.collectCurrency === 'SAGE' && !post.collectedByViewer && (
-              <button
-                className='social-post__collect social-post__collect--points'
-                onClick={(e) => onCollect(e, 'POINTS')}
-                disabled={busy}
-                title='Verified users can pay with earned pixels'
-              >
-                {Math.ceil(post.collectPrice * 100)} pixels
-              </button>
-            )}
           </div>
         )}
         <div className='social-post__actions'>

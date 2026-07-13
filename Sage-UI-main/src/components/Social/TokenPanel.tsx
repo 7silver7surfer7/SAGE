@@ -1,0 +1,197 @@
+import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
+import { useSigner, useProvider } from 'wagmi';
+import {
+  useGetProfileTokenQuery,
+  useRecordTokenLaunchMutation,
+  useRecordAirdropMutation,
+} from '@/store/socialReducer';
+import {
+  launchToken,
+  buyToken,
+  airdropToken,
+  tokenSpotPriceEthPerMillion,
+} from '@/utilities/socialToken';
+import VerificationModal from './VerificationModal';
+
+/** Launch modal — a verified creator mints their coin (pays the launch fee). */
+function LaunchModal({ onClose }: { onClose: () => void }) {
+  const { data: signer } = useSigner();
+  const [record] = useRecordTokenLaunchMutation();
+  const [name, setName] = useState('');
+  const [symbol, setSymbol] = useState('');
+  // default OFF: no-dump launches are the norm — opting IN reserves the 2%
+  const [withAirdrop, setWithAirdrop] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [needVerify, setNeedVerify] = useState(false);
+
+  const go = async () => {
+    if (!signer) { toast.info('Connect your wallet'); return; }
+    if (!name.trim() || !symbol.trim()) { toast.error('Name and symbol required'); return; }
+    setBusy(true);
+    const t = toast.loading('Launching your coin… (free — you only pay gas)');
+    try {
+      const { token, txHash } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any);
+      await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop }).unwrap();
+      toast.update(t, { render: `$${symbol.toUpperCase()} is live 🚀`, type: 'success', isLoading: false, autoClose: 5000 });
+      onClose();
+    } catch (err: any) {
+      if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
+      else toast.update(t, { render: err?.data?.error || err?.message?.slice(0, 90) || 'Launch failed', type: 'error', isLoading: false, autoClose: 6000 });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (needVerify) return <VerificationModal onClose={onClose} />;
+  return (
+    <div className='social-verify__overlay' onClick={onClose}>
+      <div className='social-verify' onClick={(e) => e.stopPropagation()}>
+        <div className='social-verify__head'>
+          <h3>🚀 Launch your coin</h3>
+          <button className='social-verify__close' onClick={onClose}>✕</button>
+        </div>
+        <p className='social-verify__blurb'>
+          The pump.fun bonding curve, ported to ETH: 1B supply, 793.1M sold off the curve,
+          graduation when it sells out. Launching is FREE (gas only). Every trade pays a 1%
+          fee — 0.05% streams back to YOU, the rest to the platform.
+        </p>
+        <input className='social-search__input' placeholder='Coin name (e.g. Chartreuse Gang)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
+        <input className='social-search__input' placeholder='Ticker (e.g. CHRT)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 12 }} />
+        <label className='social-profile__gate-row' style={{ marginBottom: 14 }}>
+          <input
+            type='checkbox'
+            checked={withAirdrop}
+            onChange={(e) => setWithAirdrop(e.target.checked)}
+          />
+          <span>
+            Reserve 2% (20M) for follower airdrops
+            <br />
+            <small style={{ opacity: 0.65 }}>
+              Off by default: you launch holding ZERO tokens — nothing can be dumped; every
+              token is earned off the curve. Turn on only if you want an airdrop budget.
+            </small>
+          </span>
+        </label>
+        <button className='social-verify__buy' disabled={busy} onClick={go}>
+          {busy ? 'Launching…' : 'Launch — free (gas only)'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface Props {
+  address: string;
+  isSelf: boolean;
+  followers: string[];
+}
+
+export default function TokenPanel({ address, isSelf }: Props) {
+  const { data } = useGetProfileTokenQuery(address, { skip: !address });
+  const { data: signer } = useSigner();
+  const provider = useProvider();
+  const [recordAirdrop] = useRecordAirdropMutation();
+  const [launchOpen, setLaunchOpen] = useState(false);
+  const [price, setPrice] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const token = data?.token;
+  useEffect(() => {
+    if (token?.tokenAddress && provider) {
+      tokenSpotPriceEthPerMillion(token.tokenAddress, provider as any).then(setPrice).catch(() => {});
+    }
+  }, [token?.tokenAddress, provider]);
+
+  // launchpad disabled on this network (no factory) → render nothing
+  if (!data?.factory) return null;
+
+  if (!token) {
+    // no coin yet: only the profile owner sees the launch CTA
+    if (!isSelf) return null;
+    return (
+      <div className='social-token'>
+        <div className='social-token__empty'>
+          <div>
+            <h4>Launch your creator coin</h4>
+            <p>Give your followers something to ape. pump.fun-style, on Robinhood Chain.</p>
+          </div>
+          <button className='social-token__launch' onClick={() => setLaunchOpen(true)}>🚀 Launch</button>
+        </div>
+        {launchOpen && <LaunchModal onClose={() => setLaunchOpen(false)} />}
+      </div>
+    );
+  }
+
+  const buy = async () => {
+    if (!signer) { toast.info('Connect your wallet'); return; }
+    const raw = window.prompt(`Buy $${token.symbol} — how much ETH?`, '0.01');
+    if (!raw) return;
+    const amt = Number(raw);
+    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    setBusy(true);
+    const t = toast.loading(`Buying $${token.symbol}…`);
+    try {
+      await buyToken(token.tokenAddress, amt, signer as any);
+      toast.update(t, { render: `Bought $${token.symbol} 🎉`, type: 'success', isLoading: false, autoClose: 4000 });
+      if (provider) tokenSpotPriceEthPerMillion(token.tokenAddress, provider as any).then(setPrice).catch(() => {});
+    } catch (err: any) {
+      toast.update(t, { render: err?.message?.slice(0, 80) || 'Buy failed', type: 'error', isLoading: false, autoClose: 5000 });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const airdrop = async () => {
+    if (!signer) { toast.info('Connect your wallet'); return; }
+    const recipients = data.followers;
+    if (!recipients.length) { toast.info('No followers to airdrop yet'); return; }
+    const raw = window.prompt(`Airdrop $${token.symbol} to ${recipients.length} followers — how many tokens EACH?`, '1000');
+    if (!raw) return;
+    const each = Number(raw);
+    if (!each || each <= 0) { toast.error('Enter a valid amount'); return; }
+    setBusy(true);
+    const t = toast.loading(`Airdropping to ${recipients.length} followers…`);
+    try {
+      await airdropToken(token.tokenAddress, recipients, each, signer as any);
+      await recordAirdrop({ count: recipients.length }).unwrap();
+      toast.update(t, { render: `Airdropped ${each} $${token.symbol} to ${recipients.length} followers 🪂`, type: 'success', isLoading: false, autoClose: 5000 });
+    } catch (err: any) {
+      toast.update(t, { render: err?.message?.slice(0, 80) || 'Airdrop failed', type: 'error', isLoading: false, autoClose: 5000 });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className='social-token'>
+      <div className='social-token__head'>
+        <span className='social-token__ticker'>${token.symbol}</span>
+        <span className='social-token__name'>{token.name}</span>
+        {price !== null && (
+          <span className='social-token__price'>
+            {price ? price.toPrecision(3) : '0'} ETH / 1M
+          </span>
+        )}
+      </div>
+      <div className='social-token__actions'>
+        <button className='social-token__buy' disabled={busy} onClick={buy}>
+          Buy ${token.symbol}
+        </button>
+        {isSelf && token.airdropEnabled && (
+          <button className='social-token__airdrop' disabled={busy} onClick={airdrop}>
+            🪂 Airdrop followers
+          </button>
+        )}
+        {!token.airdropEnabled && (
+          <span className='social-token__stat' title='Launched without a creator allocation'>
+            🔒 no-dump launch
+          </span>
+        )}
+      </div>
+      {token.airdropCount > 0 && (
+        <p className='social-token__stat'>{token.airdropCount} followers airdropped</p>
+      )}
+    </div>
+  );
+}

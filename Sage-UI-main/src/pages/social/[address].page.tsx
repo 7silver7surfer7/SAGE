@@ -7,6 +7,8 @@ import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import ReferCard from '@/components/Social/ReferCard';
+import TokenPanel from '@/components/Social/TokenPanel';
+import EditionPanel from '@/components/Social/EditionPanel';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
@@ -18,7 +20,10 @@ import {
   useToggleFollowMutation,
   useSetNftPfpMutation,
   useSetFollowGateMutation,
+  useSetProfileImageMutation,
+  useToggleGroupChatMutation,
 } from '@/store/socialReducer';
+import { useRef } from 'react';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 
 /** Grid of the viewer's own NFTs — pick one to become the NFT avatar. */
@@ -118,6 +123,41 @@ export default function SocialProfilePage() {
   });
   const [toggleFollow, { isLoading: following }] = useToggleFollowMutation();
   const [setFollowGate, { isLoading: gating }] = useSetFollowGateMutation();
+  const [setProfileImage] = useSetProfileImageMutation();
+  const [toggleGroupChat] = useToggleGroupChatMutation();
+  const avatarFileRef = useRef<HTMLInputElement>(null);
+  const bannerFileRef = useRef<HTMLInputElement>(null);
+
+  // upload + compress (server-side crop per kind), then attach to the profile
+  const onImageFile = async (kind: 'avatar' | 'banner', file?: File) => {
+    if (!file) return;
+    if (file.size > 12 * 1024 * 1024) {
+      toast.error('Images are capped at 12MB');
+      return;
+    }
+    const t = toast.loading(`Uploading ${kind}…`);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(`/api/social-upload/?kind=${kind}`, { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'upload failed');
+      await setProfileImage({ url: data.url, kind }).unwrap();
+      toast.update(t, {
+        render: `${kind === 'banner' ? 'Banner' : 'Avatar'} updated (${(data.bytes / 1024).toFixed(0)}KB)`,
+        type: 'success',
+        isLoading: false,
+        autoClose: 3000,
+      });
+    } catch (err: any) {
+      toast.update(t, {
+        render: err?.data?.error || err?.message?.slice(0, 80) || 'Upload failed',
+        type: 'error',
+        isLoading: false,
+        autoClose: 5000,
+      });
+    }
+  };
 
   if (loadingProfile || !profile)
     return (
@@ -161,9 +201,29 @@ export default function SocialProfilePage() {
   return (
     <SocialShell>
     <div className='social social--profile'>
-      <div className='social-profile__banner'>
+      <div
+        className='social-profile__banner'
+        data-editable={profile.isSelf}
+        title={profile.isSelf ? 'Upload a banner' : undefined}
+        onClick={() => profile.isSelf && bannerFileRef.current?.click()}
+      >
         {profile.bannerImageS3Path && <PfpImage src={profile.bannerImageS3Path} />}
+        {profile.isSelf && <span className='social-profile__banner-edit'>Edit banner</span>}
       </div>
+      <input
+        ref={bannerFileRef}
+        type='file'
+        accept='image/jpeg,image/png,image/webp'
+        style={{ display: 'none' }}
+        onChange={(e) => onImageFile('banner', e.target.files?.[0])}
+      />
+      <input
+        ref={avatarFileRef}
+        type='file'
+        accept='image/jpeg,image/png,image/webp'
+        style={{ display: 'none' }}
+        onChange={(e) => onImageFile('avatar', e.target.files?.[0])}
+      />
       <div className='social-profile__head'>
         <div className='social-profile__avatar' data-verified={profile.pfpVerified}>
           <PfpImage src={profile.profilePicture} />
@@ -176,6 +236,31 @@ export default function SocialProfilePage() {
                   Get verified
                 </button>
               )}
+              {profile.groupChat &&
+                (profile.groupChat.enabled ? (
+                  <button
+                    className='social-profile__follow'
+                    onClick={() => router.push(`/social/chat/${profile.address}`)}
+                  >
+                    ⚡ Alpha chat
+                  </button>
+                ) : (
+                  <button
+                    className='social-profile__follow social-profile__follow--on'
+                    onClick={async () => {
+                      await toggleGroupChat({ enabled: true }).unwrap();
+                      toast.success('Alpha chat is back on');
+                    }}
+                  >
+                    Turn alpha chat on
+                  </button>
+                ))}
+              <button
+                className='social-profile__follow social-profile__follow--on'
+                onClick={() => avatarFileRef.current?.click()}
+              >
+                Upload avatar
+              </button>
               <button
                 className='social-profile__follow social-profile__follow--on'
                 onClick={() => setPickerOpen(true)}
@@ -185,6 +270,20 @@ export default function SocialProfilePage() {
             </>
           ) : (
             <>
+              {profile.groupChat?.enabled && (
+                <button
+                  className='social-profile__follow'
+                  onClick={() => {
+                    if (!profile.groupChat?.isMember) {
+                      toast.info('Follow first — the alpha chat is followers-only');
+                      return;
+                    }
+                    router.push(`/social/chat/${profile.address}`);
+                  }}
+                >
+                  ⚡ Alpha chat
+                </button>
+              )}
               <button
                 className='social-profile__follow social-profile__follow--on'
                 onClick={() => router.push(`/social/messages/?to=${profile.address}`)}
@@ -226,6 +325,8 @@ export default function SocialProfilePage() {
             <b>{profile.followGatedDrops.map((d) => d.name).join(', ')}</b>
           </div>
         )}
+        <TokenPanel address={profile.address} isSelf={profile.isSelf} followers={[]} />
+        <EditionPanel address={profile.address} isSelf={profile.isSelf} />
         {profile.isSelf && <ReferCard />}
         {profile.isSelf && profile.myDrops.length > 0 && (
           <div className='social-profile__gates'>
