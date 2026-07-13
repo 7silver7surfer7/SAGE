@@ -2,6 +2,7 @@ import { useRouter } from 'next/router';
 import LoaderDots from '@/components/LoaderDots';
 import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
+import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
 import { useGetActivityQuery, ActivityItem } from '@/store/socialReducer';
@@ -59,7 +60,18 @@ export default function ActivityPage() {
                 else router.push(`/social/${a.actor.address}`);
               }}
             >
-              <span className='social-activity__icon'>{ICONS[a.type]}</span>
+              <div
+                className='social-activity__avatar'
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push(`/social/${a.actor.address}`);
+                }}
+              >
+                <span className='social-activity__avatar-img'>
+                  <PfpImage src={a.actor.profilePicture} />
+                </span>
+                <span className='social-activity__badge'>{ICONS[a.type]}</span>
+              </div>
               <div className='social-activity__body'>
                 <span>
                   <b
