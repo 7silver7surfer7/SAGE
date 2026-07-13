@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import { useSigner, useProvider } from 'wagmi';
 import {
@@ -88,6 +89,7 @@ interface Props {
 }
 
 export default function TokenPanel({ address, isSelf }: Props) {
+  const router = useRouter();
   const { data } = useGetProfileTokenQuery(address, { skip: !address });
   const { data: signer } = useSigner();
   const provider = useProvider();
@@ -165,7 +167,10 @@ export default function TokenPanel({ address, isSelf }: Props) {
 
   return (
     <div className='social-token'>
-      <div className='social-token__head'>
+      <div
+        className='social-token__head social-token__head--link'
+        onClick={() => router.push(`/social/token/${token.tokenAddress}`)}
+      >
         <span className='social-token__ticker'>${token.symbol}</span>
         <span className='social-token__name'>{token.name}</span>
         {price !== null && (
