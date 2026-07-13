@@ -5,7 +5,7 @@ import SocialShell from '@/components/Social/SocialShell';
 import PostCard from '@/components/Social/PostCard';
 import { useGetFeedQuery } from '@/store/socialReducer';
 
-type Scope = 'global' | 'following';
+type Scope = 'global' | 'latest' | 'following';
 
 export default function SocialFeedPage() {
   const [scope, setScope] = useState<Scope>('global');
@@ -53,6 +53,12 @@ export default function SocialFeedPage() {
           onClick={() => switchScope('global')}
         >
           Global
+        </button>
+        <button
+          className={`social__tab ${scope === 'latest' ? 'social__tab--active' : ''}`}
+          onClick={() => switchScope('latest')}
+        >
+          Latest
         </button>
         <button
           className={`social__tab ${scope === 'following' ? 'social__tab--active' : ''}`}

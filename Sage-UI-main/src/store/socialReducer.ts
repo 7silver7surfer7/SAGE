@@ -147,18 +147,21 @@ export interface Leaderboard {
 }
 
 export interface PostMint {
+  source: 'collect' | 'owned';
+  kind: 'nft';
+  ref: string;
   tokenId: number;
   contractAddress: string;
-  amount: number;
   pointsSpent: string | null;
-  mintTxHash: string;
-  createdAt: string;
+  createdAt: string | null;
+  image: string | null;
+  title: string;
   post: {
     id: number;
     text: string;
     imageUrl: string | null;
     author: { address: string; username: string | null; verified: boolean };
-  };
+  } | null;
 }
 
 export interface ProfileToken {
@@ -212,7 +215,7 @@ export interface TokenDetail {
   holders: TokenHolder[];
 }
 
-type Scope = 'global' | 'following';
+type Scope = 'global' | 'latest' | 'following';
 
 export interface FeedPage {
   posts: SocialPost[];
@@ -459,6 +462,13 @@ const socialApi = baseApi.injectEndpoints({
       query: (body) => ({ url: 'social?action=RecordAirdrop', method: 'POST', body }),
       invalidatesTags: ['SocialProfile'],
     }),
+    toggleHideItem: builder.mutation<
+      { ok: boolean; hidden: boolean },
+      { kind: 'token' | 'edition' | 'nft'; ref: string; hide: boolean }
+    >({
+      query: (body) => ({ url: 'social?action=ToggleHideItem', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile', 'SocialFeed'],
+    }),
     recordTrade: builder.mutation<
       { ok: boolean; priceEth?: number },
       { tokenAddress: string; side: 'buy' | 'sell'; txHash: string }
@@ -522,6 +532,7 @@ export const {
   useRecordTokenLaunchMutation,
   useRecordAirdropMutation,
   useRecordTradeMutation,
+  useToggleHideItemMutation,
   useRequestCollectVoucherMutation,
   useCreatePostMutation,
   useToggleLikeMutation,

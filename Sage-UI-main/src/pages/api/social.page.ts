@@ -145,6 +145,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => sendMessage(request, response, r));
       case 'GetActivity':
         return await withAuth(request, response, (r) => getActivity(response, r));
+      case 'ToggleHideItem':
+        return await withAuth(request, response, (r) => toggleHideItem(request, response, r));
       case 'RecordTokenLaunch':
         return await withAuth(request, response, (r) => recordTokenLaunch(request, response, r));
       case 'RecordAirdrop':
@@ -332,7 +334,10 @@ async function isPfpVerified(user: {
 }
 
 async function getFeed(req: NextApiRequest, res: NextApiResponse) {
-  const scope = (req.query.scope as string) || 'global'; // 'global' | 'following'
+  // 'global' = boosted posts pinned atop the reverse-chron river;
+  // 'following' = only wallets the viewer follows;
+  // 'latest' = strict newest-first, no boost pinning.
+  const scope = (req.query.scope as string) || 'global';
   const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
   const viewer = canon((await getRequester(req))?.walletAddress);
 
@@ -1295,24 +1300,44 @@ async function getLeaderboard(res: NextApiResponse) {
 async function getUserMints(address: string, res: NextApiResponse) {
   const addr = canon(address);
   if (!addr) return res.status(400).json({ error: 'bad address' });
-  const collects = await prisma.socialCollect.findMany({
-    where: { collectorAddress: addr },
-    include: {
-      Post: {
-        include: { Author: { select: { username: true, profilePicture: true, verifiedAt: true } } },
+  const [collects, ownedNfts, hidden] = await Promise.all([
+    // 1) posts this wallet collected on SAGE Social
+    prisma.socialCollect.findMany({
+      where: { collectorAddress: addr },
+      include: {
+        Post: { include: { Author: { select: { username: true, profilePicture: true, verifiedAt: true } } } },
       },
-    },
-    orderBy: { id: 'desc' },
-    take: 60,
-  });
-  res.json({
-    mints: collects.map((c) => ({
+      orderBy: { id: 'desc' },
+      take: 60,
+    }),
+    // 2) ANY NFT this wallet owns in the SAGE marketplace (incl. ones the
+    //    wallet minted itself or acquired elsewhere on-chain, not just
+    //    platform collects). True cross-contract holdings need an indexer;
+    //    this covers every SAGE-tracked NFT.
+    prisma.nft.findMany({
+      where: { ownerAddress: { equals: addr, mode: 'insensitive' }, isHidden: false },
+      select: { id: true, name: true, s3Path: true, s3PathOptimized: true, tokenId: true },
+      orderBy: { id: 'desc' },
+      take: 100,
+    }),
+    prisma.socialHiddenItem.findMany({ where: { ownerAddress: addr, kind: 'nft' } }),
+  ]);
+  const hiddenRefs = new Set(hidden.map((h) => h.ref));
+  const isHidden = (contract: string, tokenId: number | null) =>
+    hiddenRefs.has(`${contract}:${tokenId}`.toLowerCase());
+
+  const collectMints = collects
+    .filter((c) => !isHidden(c.contractAddress, c.tokenId))
+    .map((c) => ({
+      source: 'collect' as const,
+      kind: 'nft' as const,
+      ref: `${c.contractAddress}:${c.tokenId}`.toLowerCase(),
       tokenId: c.tokenId,
       contractAddress: c.contractAddress,
-      amount: c.amount,
       pointsSpent: c.pointsSpent?.toString() ?? null,
-      mintTxHash: c.mintTxHash,
       createdAt: c.createdAt,
+      image: null as string | null,
+      title: `SAGE Social #${c.Post.id}`,
       post: {
         id: c.Post.id,
         text: c.Post.text,
@@ -1323,8 +1348,22 @@ async function getUserMints(address: string, res: NextApiResponse) {
           verified: !!c.Post.Author?.verifiedAt,
         },
       },
-    })),
-  });
+    }));
+  const ownedMints = ownedNfts
+    .filter((n) => !isHidden('nft', n.id))
+    .map((n) => ({
+      source: 'owned' as const,
+      kind: 'nft' as const,
+      ref: `nft:${n.id}`.toLowerCase(),
+      tokenId: n.tokenId ?? n.id,
+      contractAddress: '',
+      pointsSpent: null,
+      createdAt: null,
+      image: n.s3PathOptimized || n.s3Path,
+      title: n.name,
+      post: null as any,
+    }));
+  res.json({ mints: [...collectMints, ...ownedMints] });
 }
 
 async function getActivity(res: NextApiResponse, r: { walletAddress: string }) {
@@ -1677,16 +1716,19 @@ async function recordAirdrop(
 async function getProfileToken(address: string, res: NextApiResponse) {
   const addr = canon(address);
   if (!addr) return res.status(400).json({ error: 'bad address' });
-  const [launch, followers] = await Promise.all([
+  const [launch, followers, hidden] = await Promise.all([
     prisma.socialTokenLaunch.findUnique({ where: { creatorAddress: addr } }),
     prisma.socialFollow.findMany({
       where: { followingAddress: addr },
       select: { followerAddress: true },
       take: 200,
     }),
+    prisma.socialHiddenItem.findMany({ where: { ownerAddress: addr, kind: 'token' } }),
   ]);
+  const tokenHidden =
+    launch && hidden.some((h) => h.ref === launch.tokenAddress.toLowerCase());
   res.json({
-    token: launch
+    token: launch && !tokenHidden
       ? {
           tokenAddress: launch.tokenAddress,
           name: launch.name,
@@ -1966,14 +2008,14 @@ async function recordEditionLaunch(
 async function getProfileEditions(address: string, res: NextApiResponse) {
   const addr = canon(address);
   if (!addr) return res.status(400).json({ error: 'bad address' });
-  const rows = await prisma.socialNftEdition.findMany({
-    where: { artistAddress: addr },
-    orderBy: { id: 'desc' },
-    take: 20,
-  });
+  const [rows, hidden] = await Promise.all([
+    prisma.socialNftEdition.findMany({ where: { artistAddress: addr }, orderBy: { id: 'desc' }, take: 20 }),
+    prisma.socialHiddenItem.findMany({ where: { ownerAddress: addr, kind: 'edition' } }),
+  ]);
+  const hiddenRefs = new Set(hidden.map((h) => h.ref));
   res.json({
     launcher: parameters.SOCIAL_NFT_LAUNCHER_ADDRESS || null,
-    editions: rows.map((e) => ({
+    editions: rows.filter((e) => !hiddenRefs.has(e.editionAddress.toLowerCase())).map((e) => ({
       id: e.id,
       editionAddress: e.editionAddress,
       name: e.name,
@@ -2166,4 +2208,24 @@ async function kickFromGroupChat(req: NextApiRequest, res: NextApiResponse, r: {
     }),
   ]);
   res.json({ ok: true });
+}
+
+
+/** Hide/show a token, edition or owned NFT on your own profile. */
+async function toggleHideItem(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const kind = String(req.body?.kind || '');
+  const ref = String(req.body?.ref || '').toLowerCase();
+  const hide = req.body?.hide !== false;
+  if (!['token', 'edition', 'nft'].includes(kind) || !ref)
+    return res.status(400).json({ error: 'kind + ref required' });
+  if (hide) {
+    await prisma.socialHiddenItem
+      .create({ data: { ownerAddress: r.walletAddress, kind, ref } })
+      .catch(() => {});
+  } else {
+    await prisma.socialHiddenItem
+      .delete({ where: { ownerAddress_kind_ref: { ownerAddress: r.walletAddress, kind, ref } } })
+      .catch(() => {});
+  }
+  res.json({ ok: true, hidden: hide });
 }
