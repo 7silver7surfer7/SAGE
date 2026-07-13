@@ -21,7 +21,11 @@ IMAGE=us-west1-docker.pkg.dev/sage-testnet-market/sage/sage-ui:staging
 SERVICE=sage-staging
 
 echo "==> building (linux/amd64, staging mode)…"
-docker build --platform linux/amd64 --secret id=buildenv,src=.env.staging-deploy \
+# --provenance=false --sbom=false: without these, buildx (containerd image
+# store) pushes an OCI index with attestation manifests, which Cloud Run
+# rejects with "does not provide any platform". Force a single-platform image.
+docker build --platform linux/amd64 --provenance=false --sbom=false \
+  --secret id=buildenv,src=.env.staging-deploy \
   --build-arg NEXT_PUBLIC_APP_MODE=staging -t "$IMAGE" .
 
 echo "==> pushing…"

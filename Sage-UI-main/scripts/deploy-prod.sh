@@ -23,7 +23,8 @@ echo "==> building (linux/amd64, MAINNET production mode)…"
 # mainnet launch, sageart.xyz IS mainnet: bake production, and mirror the
 # same value into the runtime env below so server-side code (which reads
 # process.env at runtime) selects the same config block as the client.
-docker build --platform linux/amd64 --secret id=buildenv,src=.env.deploy \
+docker build --platform linux/amd64 --provenance=false --sbom=false \
+  --secret id=buildenv,src=.env.deploy \
   --build-arg NEXT_PUBLIC_APP_MODE=production -t "$IMAGE" .
 
 echo "==> pushing…"
