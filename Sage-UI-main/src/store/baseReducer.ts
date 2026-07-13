@@ -20,6 +20,7 @@ export const baseApi = createApi({
     'PrimaryPlatformCut',
     'Prizes',
     'SocialFeed',
+    'SocialMessages',
     'SocialProfile',
     'SocialPost',
     'Refunds',

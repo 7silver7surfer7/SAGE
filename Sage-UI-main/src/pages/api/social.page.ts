@@ -36,6 +36,23 @@ const BOOST_SAGE_PER_DAY = 10;
 const BOOST_MAX_DAYS = 7;
 const BOOST_MIN_SAGE = 1;
 
+// paid verification: $10 worth of SAGE to the platform treasury buys the
+// checkmark + premium features (sell/collect posts, points-collect, boost,
+// DMs). Posting stays free. Price is computed live off the SAGE/WETH pair;
+// FALLBACK_SAGE covers a dead price feed (testnet SAGE has no real market).
+const VERIFICATION_PRICE_USD = 10;
+const VERIFICATION_FALLBACK_SAGE = 100;
+const TREASURY_ADDRESS = '0x3E099aF007CaB8233D44782D8E6fe80FECDC321e'; // platform multisig
+
+// points-collect: verified users may spend pixels instead of SAGE
+const POINTS_PER_SAGE = 100;
+
+// referral economics: everyone who can post gets one 5-use code; going
+// verified upgrades you to three 10-use codes; admins get a fat code.
+const INVITES_BASE = { codes: 1, maxUses: 5 };
+const INVITES_VERIFIED = { codes: 3, maxUses: 10 };
+const INVITES_ADMIN = { codes: 3, maxUses: 1000 };
+
 export default async function handler(request: NextApiRequest, response: NextApiResponse) {
   const { action } = request.query;
   try {
@@ -51,6 +68,16 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getProfile(request.query.address as string, request, response);
       case 'GetPostMetadata':
         return await getPostMetadata(Number(request.query.id), response);
+      case 'GetVerificationInfo':
+        return await getVerificationInfo(response);
+      case 'GetInvite':
+        return await getInvite(String(request.query.code || ''), response);
+      case 'InviteImage':
+        return await inviteImage(String(request.query.code || ''), response);
+      case 'GetLeaderboard':
+        return await getLeaderboard(response);
+      case 'GetUserMints':
+        return await getUserMints(String(request.query.address || ''), response);
       // ---- authed writes ----
       case 'CreatePost':
         return await withAuth(request, response, (r) => createPost(request, response, r));
@@ -74,6 +101,20 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => setNftPfp(request, response, r));
       case 'SetFollowGate':
         return await withAuth(request, response, (r) => setFollowGate(request, response, r));
+      case 'PurchaseVerification':
+        return await withAuth(request, response, (r) => purchaseVerification(request, response, r));
+      case 'GetMyInvites':
+        return await withAuth(request, response, (r) => getMyInvites(response, r));
+      case 'RedeemInvite':
+        return await withAuth(request, response, (r) => redeemInvite(request, response, r));
+      case 'GetConversations':
+        return await withAuth(request, response, (r) => getConversations(response, r));
+      case 'GetMessages':
+        return await withAuth(request, response, (r) => getMessages(request, response, r));
+      case 'SendMessage':
+        return await withAuth(request, response, (r) => sendMessage(request, response, r));
+      case 'GetActivity':
+        return await withAuth(request, response, (r) => getActivity(response, r));
       default:
         return response.status(400).json({ error: 'unknown action' });
     }
@@ -131,6 +172,7 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
       username: p.Author?.username || null,
       profilePicture: p.Author?.profilePicture || null,
       pfpVerified: verifiedMap?.[p.authorAddress] || false,
+      verified: !!p.Author?.verifiedAt, // paid checkmark
     },
     likedByViewer: viewer ? (p.Likes?.length ?? 0) > 0 : false,
     repostedByViewer: viewer ? (p.Reposts?.length ?? 0) > 0 : false,
@@ -139,7 +181,7 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
 }
 
 const postInclude = (viewer?: string | null) => ({
-  Author: { select: { username: true, profilePicture: true, pfpNftId: true } },
+  Author: { select: { username: true, profilePicture: true, pfpNftId: true, verifiedAt: true } },
   ...(viewer
     ? {
         Likes: { where: { userAddress: viewer }, select: { userAddress: true } },
@@ -177,6 +219,56 @@ async function pfpVerifiedMap(posts: any[]): Promise<Record<string, boolean>> {
     );
   }
   return map;
+}
+
+/**
+ * Referral gate: who may post/interact. Artists, admins, verified users and
+ * anyone who redeemed an invite code participate; a brand-new USER wallet can
+ * browse and read but the composer asks for an invite code.
+ */
+async function canParticipate(wallet: string): Promise<boolean> {
+  const u = await prisma.user.findUnique({
+    where: { walletAddress: wallet },
+    select: { role: true, verifiedAt: true, invitedByCode: true },
+  });
+  if (!u) return false;
+  return u.role !== Role.USER || !!u.verifiedAt || !!u.invitedByCode;
+}
+
+/** Premium gate: paid checkmark (admins ride free). Sends the 403 itself. */
+async function requireVerified(wallet: string, res: NextApiResponse): Promise<boolean> {
+  const u = await prisma.user.findUnique({
+    where: { walletAddress: wallet },
+    select: { role: true, verifiedAt: true },
+  });
+  if (u && (u.verifiedAt || u.role === Role.ADMIN)) return true;
+  res.status(403).json({
+    error: 'This is a premium feature — get verified to unlock it',
+    needsVerification: true,
+  });
+  return false;
+}
+
+// module-level 5-min cache: the verification price only needs to be roughly
+// live, and the SAGE/WETH pair read costs an RPC round-trip
+let verificationPriceCache: { sage: number; at: number } | null = null;
+async function verificationPriceSage(): Promise<number> {
+  if (verificationPriceCache && Date.now() - verificationPriceCache.at < 300_000)
+    return verificationPriceCache.sage;
+  let sage = VERIFICATION_FALLBACK_SAGE;
+  // live $10-worth pricing only on production — testnet SAGE isn't the token
+  // the price feed tracks, and a mispriced feed would quote absurd amounts
+  if (process.env.NEXT_PUBLIC_APP_MODE === 'production') {
+    try {
+      const { getSagePriceUsd } = await import('@/utilities/sagePrice');
+      const usd = await getSagePriceUsd();
+      if (usd && usd > 0) sage = Math.ceil((VERIFICATION_PRICE_USD / usd) * 100) / 100;
+    } catch {
+      // dead feed → fallback price
+    }
+  }
+  verificationPriceCache = { sage, at: Date.now() };
+  return sage;
 }
 
 async function isPfpVerified(user: {
@@ -281,6 +373,9 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
           pfpNftId: true,
           bio: true,
           bannerImageS3Path: true,
+          verifiedAt: true,
+          role: true,
+          invitedByCode: true,
         },
       }),
       prisma.socialFollow.count({ where: { followingAddress: addr } }),
@@ -312,11 +407,18 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
           })
         : [],
     ]);
+  // self-only extras: does the composer need an invite code, unread DMs
+  const needsInvite =
+    isSelf && user ? user.role === Role.USER && !user.verifiedAt && !user.invitedByCode : false;
+  const unreadMessages = isSelf
+    ? await prisma.socialMessage.count({ where: { toAddress: addr, readAt: null } })
+    : 0;
   res.json({
     address: addr,
     username: user?.username || null,
     profilePicture: user?.profilePicture || null,
     pfpVerified: user ? await isPfpVerified(user) : false,
+    verified: !!user?.verifiedAt, // paid checkmark
     bio: user?.bio || null,
     bannerImageS3Path: user?.bannerImageS3Path || null,
     followers,
@@ -324,6 +426,8 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
     postCount,
     followedByViewer: !!followsViewer,
     isSelf,
+    needsInvite,
+    unreadMessages,
     followGatedDrops,
     myDrops: isSelf ? myDrops : [],
   });
@@ -334,6 +438,11 @@ async function createPost(
   res: NextApiResponse,
   r: { walletAddress: string }
 ) {
+  if (!(await canParticipate(r.walletAddress)))
+    return res.status(403).json({
+      error: 'SAGE Social is invite-only — redeem an invite code to start posting',
+      needsInvite: true,
+    });
   const { text, imageUrl, replyToId } = req.body || {};
   const trimmed = (text || '').trim();
   if (!trimmed && !imageUrl) return res.status(400).json({ error: 'empty post' });
@@ -546,6 +655,7 @@ async function recordTip(req: NextApiRequest, res: NextApiResponse, r: { walletA
 }
 
 async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  if (!(await requireVerified(r.walletAddress, res))) return;
   const { postId, txHash } = req.body || {};
   const id = Number(postId);
   if (!id || !txHash) return res.status(400).json({ error: 'bad boost' });
@@ -588,6 +698,7 @@ async function setCollectible(
   res: NextApiResponse,
   r: { walletAddress: string }
 ) {
+  if (!(await requireVerified(r.walletAddress, res))) return;
   const { postId, price } = req.body || {};
   const id = Number(postId);
   const post = await prisma.socialPost.findUnique({ where: { id } });
@@ -608,7 +719,8 @@ async function collectPost(
   res: NextApiResponse,
   r: { walletAddress: string }
 ) {
-  const { postId, txHash } = req.body || {};
+  if (!(await requireVerified(r.walletAddress, res))) return;
+  const { postId, txHash, payWith } = req.body || {};
   const id = Number(postId);
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
@@ -621,9 +733,26 @@ async function collectPost(
   });
   if (already) return res.status(400).json({ error: 'already collected' });
 
-  // paid collects: the SAGE payment to the author must be mined + sufficient
+  // two ways to pay: SAGE straight to the author, or (points) burn pixels
   let amount = 0;
-  if (post.collectPrice > 0) {
+  let pointsSpent: bigint | null = null;
+  if (payWith === 'POINTS' && post.collectPrice > 0) {
+    const pointsPrice = BigInt(Math.ceil(post.collectPrice * POINTS_PER_SAGE));
+    const [earned, spent] = await Promise.all([
+      prisma.earnedPoints.findUnique({ where: { address: r.walletAddress } }),
+      prisma.socialPointsSpend.aggregate({
+        where: { address: r.walletAddress },
+        _sum: { amount: true },
+      }),
+    ]);
+    const available = (earned?.totalPointsEarned ?? BigInt(0)) - (spent._sum.amount ?? BigInt(0));
+    if (available < pointsPrice)
+      return res.status(400).json({
+        error: `not enough pixels (need ${pointsPrice}, have ${available})`,
+      });
+    pointsSpent = pointsPrice;
+  } else if (post.collectPrice > 0) {
+    // SAGE path: the payment to the author must be mined + sufficient
     if (!txHash) return res.status(400).json({ error: 'payment tx required' });
     const spent = await prisma.socialCollect.findUnique({ where: { payTxHash: txHash } });
     if (spent) return res.status(400).json({ error: 'this payment was already used' });
@@ -649,15 +778,23 @@ async function collectPost(
         postId: id,
         collectorAddress: r.walletAddress,
         amount,
-        payTxHash: post.collectPrice > 0 ? txHash : null,
+        pointsSpent,
+        payTxHash: amount > 0 ? txHash : null,
         mintTxHash: mint.txHash,
         contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
         tokenId: mint.tokenId,
       },
     }),
+    ...(pointsSpent !== null
+      ? [
+          prisma.socialPointsSpend.create({
+            data: { address: r.walletAddress, amount: pointsSpent, reason: `collect:${id}` },
+          }),
+        ]
+      : []),
     prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
   ]);
-  res.json({ ok: true, tokenId: mint.tokenId, mintTxHash: mint.txHash });
+  res.json({ ok: true, tokenId: mint.tokenId, mintTxHash: mint.txHash, pointsSpent: pointsSpent?.toString() ?? null });
 }
 
 async function getOwnedNfts(res: NextApiResponse, r: { walletAddress: string }) {
@@ -745,4 +882,414 @@ function postCardSvgDataUri(text: string, author: string, createdAt: Date): stri
     `<text x="60" y="720" font-family="Arial,sans-serif" font-size="22" fill="#9daba0">${esc(author)} · ${createdAt.toISOString().slice(0, 10)}</text>` +
     `</svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+}
+
+// ─────────────────────── paid verification ($10 checkmark) ───────────────────────
+
+async function getVerificationInfo(res: NextApiResponse) {
+  const priceSage = await verificationPriceSage();
+  res.json({
+    priceUsd: VERIFICATION_PRICE_USD,
+    priceSage,
+    treasury: TREASURY_ADDRESS,
+    pointsPerSage: POINTS_PER_SAGE,
+  });
+}
+
+async function purchaseVerification(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  r: { walletAddress: string }
+) {
+  const { txHash } = req.body || {};
+  if (!txHash) return res.status(400).json({ error: 'payment tx required' });
+  const me = await prisma.user.findUnique({
+    where: { walletAddress: r.walletAddress },
+    select: { verifiedAt: true },
+  });
+  if (me?.verifiedAt) return res.status(400).json({ error: 'already verified' });
+  const dupe = await prisma.user.findFirst({ where: { verifiedTxHash: txHash } });
+  if (dupe) return res.status(400).json({ error: 'this payment was already used' });
+  const priceSage = await verificationPriceSage();
+  try {
+    // 5% tolerance: the quoted price can drift between quote and mined tx
+    await verifySageTransfer(txHash, r.walletAddress, TREASURY_ADDRESS, priceSage * 0.95);
+  } catch (e: any) {
+    return res.status(400).json({ error: `payment not verified: ${e.message}` });
+  }
+  await prisma.user.update({
+    where: { walletAddress: r.walletAddress },
+    data: { verifiedAt: new Date(), verifiedTxHash: txHash },
+  });
+  res.json({ ok: true, verified: true });
+}
+
+// ───────────────────────── referral system (invite codes) ─────────────────────────
+
+function generateInviteCode(): string {
+  // unambiguous alphabet (no 0/O/1/I/L), 6 chars after the SAGE- prefix
+  const alphabet = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+  let s = '';
+  for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return `SAGE-${s}`;
+}
+
+/** Tops a user up to their invite allowance (base / verified / admin tier). */
+async function provisionInvites(wallet: string) {
+  const u = await prisma.user.findUnique({
+    where: { walletAddress: wallet },
+    select: { role: true, verifiedAt: true, invitedByCode: true },
+  });
+  if (!u) return [];
+  const participates = u.role !== Role.USER || !!u.verifiedAt || !!u.invitedByCode;
+  if (!participates) return [];
+  const tier =
+    u.role === Role.ADMIN ? INVITES_ADMIN : u.verifiedAt ? INVITES_VERIFIED : INVITES_BASE;
+  const existing = await prisma.socialInviteCode.findMany({ where: { ownerAddress: wallet } });
+  for (let i = existing.length; i < tier.codes; i++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        existing.push(
+          await prisma.socialInviteCode.create({
+            data: { code: generateInviteCode(), ownerAddress: wallet, maxUses: tier.maxUses },
+          })
+        );
+        break;
+      } catch {
+        // code collision — regenerate
+      }
+    }
+  }
+  return prisma.socialInviteCode.findMany({
+    where: { ownerAddress: wallet },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+async function getMyInvites(res: NextApiResponse, r: { walletAddress: string }) {
+  const codes = await provisionInvites(r.walletAddress);
+  res.json({
+    invites: codes.map((c) => ({
+      code: c.code,
+      uses: c.uses,
+      maxUses: c.maxUses,
+      url: `${siteUrl()}/invite/${c.code}/`,
+    })),
+  });
+}
+
+async function redeemInvite(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const code = String(req.body?.code || '').trim().toUpperCase();
+  if (!code) return res.status(400).json({ error: 'invite code required' });
+  const me = await prisma.user.findUnique({
+    where: { walletAddress: r.walletAddress },
+    select: { invitedByCode: true },
+  });
+  if (me?.invitedByCode) return res.status(400).json({ error: 'you already joined' });
+  const invite = await prisma.socialInviteCode.findUnique({ where: { code } });
+  if (!invite) return res.status(404).json({ error: 'invalid invite code' });
+  if (invite.ownerAddress === r.walletAddress)
+    return res.status(400).json({ error: 'you cannot redeem your own code' });
+  if (invite.uses >= invite.maxUses)
+    return res.status(400).json({ error: 'this invite code is used up' });
+  await prisma.$transaction([
+    prisma.socialInviteCode.update({ where: { code }, data: { uses: { increment: 1 } } }),
+    prisma.user.update({
+      where: { walletAddress: r.walletAddress },
+      data: { invitedByCode: code },
+    }),
+  ]);
+  res.json({ ok: true, joined: true });
+}
+
+async function getInvite(code: string, res: NextApiResponse) {
+  const invite = await prisma.socialInviteCode.findUnique({
+    where: { code: code.trim().toUpperCase() },
+    include: { Owner: { select: { username: true, walletAddress: true, profilePicture: true } } },
+  });
+  if (!invite) return res.status(404).json({ error: 'invalid invite code' });
+  res.json({
+    code: invite.code,
+    valid: invite.uses < invite.maxUses,
+    usesLeft: invite.maxUses - invite.uses,
+    owner: {
+      address: invite.Owner.walletAddress,
+      username: invite.Owner.username,
+      profilePicture: invite.Owner.profilePicture,
+    },
+  });
+}
+
+/**
+ * The Twitter-card PNG for /invite/{code} (1200×630). SAGE design language:
+ * dark canvas, lime accents, the circle-triangle logo mark, the inviter's
+ * name and the code front and center. Rasterized with sharp (librsvg) — the
+ * Docker image ships fonts-dejavu-core for the text.
+ */
+async function inviteImage(code: string, res: NextApiResponse) {
+  const invite = await prisma.socialInviteCode.findUnique({
+    where: { code: code.trim().toUpperCase() },
+    include: { Owner: { select: { username: true, walletAddress: true } } },
+  });
+  if (!invite) return res.status(404).json({ error: 'invalid invite code' });
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const name = esc(
+    invite.Owner.username ||
+      `${invite.Owner.walletAddress.slice(0, 6)}…${invite.Owner.walletAddress.slice(-4)}`
+  );
+  const host = siteUrl().replace(/^https?:\/\//, '');
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">` +
+    `<rect width="1200" height="630" fill="#131917"/>` +
+    `<rect x="28" y="28" width="1144" height="574" fill="none" stroke="#d4fc52" stroke-width="3"/>` +
+    `<circle cx="140" cy="140" r="52" fill="none" stroke="#d4fc52" stroke-width="6"/>` +
+    `<path d="M140 104 L172 168 L108 168 Z" fill="none" stroke="#d4fc52" stroke-width="6" stroke-linejoin="round"/>` +
+    `<text x="220" y="128" font-family="DejaVu Sans,Arial,sans-serif" font-size="40" font-weight="bold" fill="#d4fc52" letter-spacing="8">SAGE SOCIAL</text>` +
+    `<text x="220" y="172" font-family="DejaVu Sans,Arial,sans-serif" font-size="24" fill="#9daba0">your wallet is your handle · tip in SAGE</text>` +
+    `<text x="96" y="330" font-family="DejaVu Sans,Arial,sans-serif" font-size="52" fill="#eef3ec">${name} invited you</text>` +
+    `<text x="96" y="440" font-family="DejaVu Sans,Arial,sans-serif" font-size="88" font-weight="bold" fill="#d4fc52" letter-spacing="6">${esc(invite.code)}</text>` +
+    `<text x="96" y="540" font-family="DejaVu Sans,Arial,sans-serif" font-size="30" fill="#9daba0">${esc(host)}/invite/${esc(invite.code)}</text>` +
+    `</svg>`;
+  const sharp = (await import('sharp')).default;
+  const png = await sharp(Buffer.from(svg), { density: 96 }).png().toBuffer();
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
+  res.send(png);
+}
+
+// ─────────────────────────── leaderboard / activity / mints ───────────────────────────
+
+async function userCards(addresses: string[]) {
+  const users = await prisma.user.findMany({
+    where: { walletAddress: { in: addresses } },
+    select: { walletAddress: true, username: true, profilePicture: true, verifiedAt: true },
+  });
+  const map: Record<string, any> = {};
+  for (const u of users)
+    map[u.walletAddress] = {
+      address: u.walletAddress,
+      username: u.username,
+      profilePicture: u.profilePicture,
+      verified: !!u.verifiedAt,
+    };
+  return map;
+}
+
+async function getLeaderboard(res: NextApiResponse) {
+  const [tipped, tippers, burners, followed] = await Promise.all([
+    prisma.socialTip.groupBy({
+      by: ['toAddress'],
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      take: 10,
+    }),
+    prisma.socialTip.groupBy({
+      by: ['fromAddress'],
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      take: 10,
+    }),
+    prisma.socialBoost.groupBy({
+      by: ['fromAddress'],
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      take: 10,
+    }),
+    prisma.socialFollow.groupBy({
+      by: ['followingAddress'],
+      _count: { _all: true },
+      orderBy: { _count: { followerAddress: 'desc' } },
+      take: 10,
+    }),
+  ]);
+  const cards = await userCards([
+    ...tipped.map((t) => t.toAddress),
+    ...tippers.map((t) => t.fromAddress),
+    ...burners.map((b) => b.fromAddress),
+    ...followed.map((f) => f.followingAddress),
+  ]);
+  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+  res.json({
+    topEarners: tipped.map((t) => ({ user: cards[t.toAddress], sage: t._sum.amount || 0 })),
+    topTippers: tippers.map((t) => ({ user: cards[t.fromAddress], sage: t._sum.amount || 0 })),
+    topBurners: burners.map((b) => ({ user: cards[b.fromAddress], sage: b._sum.amount || 0 })),
+    mostFollowed: followed.map((f) => ({
+      user: cards[f.followingAddress],
+      count: f._count._all,
+    })),
+  });
+}
+
+async function getUserMints(address: string, res: NextApiResponse) {
+  const addr = canon(address);
+  if (!addr) return res.status(400).json({ error: 'bad address' });
+  const collects = await prisma.socialCollect.findMany({
+    where: { collectorAddress: addr },
+    include: {
+      Post: {
+        include: { Author: { select: { username: true, profilePicture: true, verifiedAt: true } } },
+      },
+    },
+    orderBy: { id: 'desc' },
+    take: 60,
+  });
+  res.json({
+    mints: collects.map((c) => ({
+      tokenId: c.tokenId,
+      contractAddress: c.contractAddress,
+      amount: c.amount,
+      pointsSpent: c.pointsSpent?.toString() ?? null,
+      mintTxHash: c.mintTxHash,
+      createdAt: c.createdAt,
+      post: {
+        id: c.Post.id,
+        text: c.Post.text,
+        imageUrl: c.Post.imageUrl,
+        author: {
+          address: c.Post.authorAddress,
+          username: c.Post.Author?.username || null,
+          verified: !!c.Post.Author?.verifiedAt,
+        },
+      },
+    })),
+  });
+}
+
+async function getActivity(res: NextApiResponse, r: { walletAddress: string }) {
+  const me = r.walletAddress;
+  const myPosts = { Post: { authorAddress: me } };
+  const [likes, reposts, tips, collects, follows, replies] = await Promise.all([
+    prisma.socialLike.findMany({
+      where: { ...myPosts, NOT: { userAddress: me } },
+      include: { Post: { select: { id: true, text: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    }),
+    prisma.socialRepost.findMany({
+      where: { ...myPosts, NOT: { userAddress: me } },
+      include: { Post: { select: { id: true, text: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    }),
+    prisma.socialTip.findMany({
+      where: { toAddress: me },
+      include: { Post: { select: { id: true, text: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    }),
+    prisma.socialCollect.findMany({
+      where: { ...myPosts, NOT: { collectorAddress: me } },
+      include: { Post: { select: { id: true, text: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    }),
+    prisma.socialFollow.findMany({
+      where: { followingAddress: me },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    }),
+    prisma.socialPost.findMany({
+      where: { ReplyTo: { authorAddress: me }, NOT: { authorAddress: me } },
+      select: { id: true, text: true, authorAddress: true, createdAt: true, replyToId: true },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    }),
+  ]);
+  type Item = {
+    type: string;
+    actor: string;
+    postId?: number;
+    snippet?: string;
+    amount?: number;
+    createdAt: Date;
+  };
+  const items: Item[] = [
+    ...likes.map((x) => ({ type: 'like', actor: x.userAddress, postId: x.postId, snippet: x.Post.text.slice(0, 60), createdAt: x.createdAt })),
+    ...reposts.map((x) => ({ type: 'repost', actor: x.userAddress, postId: x.postId, snippet: x.Post.text.slice(0, 60), createdAt: x.createdAt })),
+    ...tips.map((x) => ({ type: 'tip', actor: x.fromAddress, postId: x.postId, snippet: x.Post.text.slice(0, 60), amount: x.amount, createdAt: x.createdAt })),
+    ...collects.map((x) => ({ type: 'collect', actor: x.collectorAddress, postId: x.postId, snippet: x.Post.text.slice(0, 60), amount: x.amount, createdAt: x.createdAt })),
+    ...follows.map((x) => ({ type: 'follow', actor: x.followerAddress, createdAt: x.createdAt })),
+    ...replies.map((x) => ({ type: 'reply', actor: x.authorAddress, postId: x.replyToId ?? x.id, snippet: x.text.slice(0, 60), createdAt: x.createdAt })),
+  ]
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, 50);
+  const cards = await userCards(items.map((i) => i.actor));
+  res.json({
+    activity: items.map((i) => ({
+      ...i,
+      actor: cards[i.actor] || { address: i.actor, username: null, verified: false },
+    })),
+  });
+}
+
+// ───────────────────────────── messaging (premium DMs) ─────────────────────────────
+
+async function getConversations(res: NextApiResponse, r: { walletAddress: string }) {
+  const me = r.walletAddress;
+  const recent = await prisma.socialMessage.findMany({
+    where: { OR: [{ fromAddress: me }, { toAddress: me }] },
+    orderBy: { id: 'desc' },
+    take: 300,
+  });
+  const byPartner = new Map<string, { last: (typeof recent)[0]; unread: number }>();
+  for (const m of recent) {
+    const partner = m.fromAddress === me ? m.toAddress : m.fromAddress;
+    const entry = byPartner.get(partner) || { last: m, unread: 0 };
+    if (m.toAddress === me && !m.readAt) entry.unread++;
+    byPartner.set(partner, entry);
+  }
+  const partners = Array.from(byPartner.keys());
+  const cards = await userCards(partners);
+  res.json({
+    conversations: partners.map((p) => ({
+      partner: cards[p] || { address: p, username: null, verified: false },
+      lastMessage: byPartner.get(p)!.last.text.slice(0, 80),
+      lastAt: byPartner.get(p)!.last.createdAt,
+      unread: byPartner.get(p)!.unread,
+    })),
+  });
+}
+
+async function getMessages(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const partner = canon(String(req.query.partner || req.body?.partner || ''));
+  if (!partner) return res.status(400).json({ error: 'bad partner address' });
+  const me = r.walletAddress;
+  const messages = await prisma.socialMessage.findMany({
+    where: {
+      OR: [
+        { fromAddress: me, toAddress: partner },
+        { fromAddress: partner, toAddress: me },
+      ],
+    },
+    orderBy: { id: 'desc' },
+    take: 100,
+  });
+  // opening the thread reads it
+  await prisma.socialMessage.updateMany({
+    where: { fromAddress: partner, toAddress: me, readAt: null },
+    data: { readAt: new Date() },
+  });
+  res.json({
+    messages: messages.reverse().map((m) => ({
+      id: m.id,
+      from: m.fromAddress,
+      text: m.text,
+      createdAt: m.createdAt,
+      mine: m.fromAddress === me,
+    })),
+  });
+}
+
+async function sendMessage(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  if (!(await requireVerified(r.walletAddress, res))) return;
+  const to = canon(req.body?.to as string);
+  const text = String(req.body?.text || '').trim();
+  if (!to || to === r.walletAddress) return res.status(400).json({ error: 'bad recipient' });
+  if (!text || text.length > 1000) return res.status(400).json({ error: 'message must be 1-1000 chars' });
+  const target = await prisma.user.findUnique({ where: { walletAddress: to } });
+  if (!target) return res.status(404).json({ error: 'user not found' });
+  const message = await prisma.socialMessage.create({
+    data: { fromAddress: r.walletAddress, toAddress: to, text },
+  });
+  res.json({ ok: true, id: message.id });
 }

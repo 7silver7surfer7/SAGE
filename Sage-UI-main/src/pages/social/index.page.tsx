@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import LoaderDots from '@/components/LoaderDots';
 import Composer from '@/components/Social/Composer';
+import SocialNav from '@/components/Social/SocialNav';
 import PostCard from '@/components/Social/PostCard';
 import { useGetFeedQuery } from '@/store/socialReducer';
 
@@ -16,6 +17,7 @@ export default function SocialFeedPage() {
         <h1 className='social__title'>SOCIAL</h1>
         <p className='social__subtitle'>your wallet is your handle · tip in SAGE</p>
       </header>
+      <SocialNav />
 
       <div className='social__tabs'>
         <button

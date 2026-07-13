@@ -18,7 +18,9 @@ FROM node:20-slim
 
 # ffmpeg (+ffprobe): the /api/media proxy transcodes oversized videos to an
 # iOS-safe rendition on demand (see src/pages/api/media/[txid].page.ts)
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/*
+# fonts-dejavu-core: sharp/librsvg rasterizes the SAGE Social invite OG image
+# (SVG with text) — a fontless slim image renders the text as blank boxes.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

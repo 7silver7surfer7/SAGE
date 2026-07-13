@@ -337,6 +337,18 @@ model User {
   // still match and profilePicture must still be that NFT's image), so a
   // sold NFT or a custom re-upload silently un-verifies without any cron.
   pfpNftId                      Int?
+  // SAGE Social paid verification ($10 in SAGE to the platform treasury):
+  // the checkmark + premium features (sell/collect posts, points-collect,
+  // boost, DMs). Posting stays free.
+  verifiedAt                    DateTime?
+  verifiedTxHash                String?       @db.Char(66)
+  // Referral gate: the invite code this wallet redeemed to join SAGE Social.
+  // Null + role USER + unverified = can browse but not post yet.
+  invitedByCode                 String?
+  SocialInviteCodes             SocialInviteCode[] @relation("InviteOwner")
+  SocialMessagesSent            SocialMessage[]    @relation("SocialMsgFrom")
+  SocialMessagesReceived        SocialMessage[]    @relation("SocialMsgTo")
+  SocialPointsSpends            SocialPointsSpend[]
   DropsApproved                 Drop[]        @relation("Drop_approvedByToUser")
   NftContract                   NftContract?  @relation("ArtistContract")
   EarnedPoints                  EarnedPoints?
@@ -449,7 +461,8 @@ model SocialCollect {
   id               Int        @id @default(autoincrement())
   postId           Int
   collectorAddress String     @db.Char(42)
-  amount           Float      // SAGE paid to the author (0 = free collect)
+  amount           Float      // SAGE paid to the author (0 = free/points collect)
+  pointsSpent      BigInt?    // pixels burned instead of SAGE (verified users)
   payTxHash        String?    @db.Char(66) @unique // null for free collects
   mintTxHash       String     @db.Char(66)
   contractAddress  String     @db.Char(42) // SageNFT the token was minted into
@@ -458,6 +471,48 @@ model SocialCollect {
   Post             SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
   @@unique([postId, collectorAddress]) // one edition per wallet
   @@index([postId])
+  @@index([collectorAddress])
+}
+
+// Referral gate: sign-ups (well, participation — SIWE itself is permissionless)
+// require redeeming an invite code. Codes auto-provision per user; verified
+// users get more. The code doubles as the share slug: /invite/{code}.
+model SocialInviteCode {
+  code          String   @id // e.g. SAGE-7F3K2A
+  ownerAddress  String   @db.Char(42)
+  Owner         User     @relation("InviteOwner", fields: [ownerAddress], references: [walletAddress])
+  maxUses       Int      @default(5)
+  uses          Int      @default(0)
+  createdAt     DateTime @default(now())
+  @@index([ownerAddress])
+}
+
+// Wallet-to-wallet DMs. Sending is a premium (verified) feature; reading is
+// free so invitees can see the messages that recruited them.
+model SocialMessage {
+  id          Int       @id @default(autoincrement())
+  fromAddress String    @db.Char(42)
+  toAddress   String    @db.Char(42)
+  From        User      @relation("SocialMsgFrom", fields: [fromAddress], references: [walletAddress])
+  To          User      @relation("SocialMsgTo", fields: [toAddress], references: [walletAddress])
+  text        String    @db.VarChar(1000)
+  createdAt   DateTime  @default(now())
+  readAt      DateTime?
+  @@index([toAddress, readAt])
+  @@index([fromAddress, toAddress, id])
+  @@index([toAddress, fromAddress, id])
+}
+
+// Off-chain pixels spend ledger: available = EarnedPoints.totalPointsEarned
+// (oracle-accrued, never decremented here) minus the sum of these rows.
+model SocialPointsSpend {
+  id        Int      @id @default(autoincrement())
+  address   String   @db.Char(42)
+  User      User     @relation(fields: [address], references: [walletAddress])
+  amount    BigInt   // pixels spent
+  reason    String   // e.g. "collect:123"
+  createdAt DateTime @default(now())
+  @@index([address])
 }
 
 model Offer {

@@ -5,6 +5,7 @@ export interface SocialAuthor {
   username: string | null;
   profilePicture: string | null;
   pfpVerified: boolean;
+  verified: boolean; // paid checkmark
 }
 
 export interface SocialPost {
@@ -38,6 +39,7 @@ export interface SocialProfile {
   username: string | null;
   profilePicture: string | null;
   pfpVerified: boolean;
+  verified: boolean; // paid checkmark
   bio: string | null;
   bannerImageS3Path: string | null;
   followers: number;
@@ -45,9 +47,9 @@ export interface SocialProfile {
   postCount: number;
   followedByViewer: boolean;
   isSelf: boolean;
-  // public: drops whose allowlist a follow of this profile earns a spot on
+  needsInvite: boolean; // self only: composer should ask for an invite code
+  unreadMessages: number; // self only
   followGatedDrops: FollowGatedDrop[];
-  // own profile only: all whitelisted drops, for the follow-gate toggles
   myDrops: FollowGatedDrop[];
 }
 
@@ -56,6 +58,86 @@ export interface OwnedNft {
   name: string;
   s3Path: string;
   s3PathOptimized: string;
+}
+
+export interface VerificationInfo {
+  priceUsd: number;
+  priceSage: number;
+  treasury: string;
+  pointsPerSage: number;
+}
+
+export interface InviteCode {
+  code: string;
+  uses: number;
+  maxUses: number;
+  url: string;
+}
+
+export interface InvitePreview {
+  code: string;
+  valid: boolean;
+  usesLeft: number;
+  owner: { address: string; username: string | null; profilePicture: string | null };
+}
+
+export interface Conversation {
+  partner: SocialUserCard;
+  lastMessage: string;
+  lastAt: string;
+  unread: number;
+}
+
+export interface SocialUserCard {
+  address: string;
+  username: string | null;
+  profilePicture?: string | null;
+  verified: boolean;
+}
+
+export interface DirectMessage {
+  id: number;
+  from: string;
+  text: string;
+  createdAt: string;
+  mine: boolean;
+}
+
+export interface ActivityItem {
+  type: 'like' | 'repost' | 'tip' | 'collect' | 'follow' | 'reply';
+  actor: SocialUserCard;
+  postId?: number;
+  snippet?: string;
+  amount?: number;
+  createdAt: string;
+}
+
+export interface LeaderboardRow {
+  user: SocialUserCard;
+  sage?: number;
+  count?: number;
+}
+
+export interface Leaderboard {
+  topEarners: LeaderboardRow[];
+  topTippers: LeaderboardRow[];
+  topBurners: LeaderboardRow[];
+  mostFollowed: LeaderboardRow[];
+}
+
+export interface PostMint {
+  tokenId: number;
+  contractAddress: string;
+  amount: number;
+  pointsSpent: string | null;
+  mintTxHash: string;
+  createdAt: string;
+  post: {
+    id: number;
+    text: string;
+    imageUrl: string | null;
+    author: { address: string; username: string | null; verified: boolean };
+  };
 }
 
 type Scope = 'global' | 'following';
@@ -81,6 +163,36 @@ const socialApi = baseApi.injectEndpoints({
     }),
     getOwnedNfts: builder.query<{ nfts: OwnedNft[] }, void>({
       query: () => ({ url: 'social?action=GetOwnedNfts' }),
+    }),
+    getVerificationInfo: builder.query<VerificationInfo, void>({
+      query: () => ({ url: 'social?action=GetVerificationInfo' }),
+    }),
+    getMyInvites: builder.query<{ invites: InviteCode[] }, void>({
+      query: () => ({ url: 'social?action=GetMyInvites' }),
+      providesTags: ['SocialProfile'],
+    }),
+    getInvitePreview: builder.query<InvitePreview, string>({
+      query: (code) => ({ url: `social?action=GetInvite&code=${code}` }),
+    }),
+    getConversations: builder.query<{ conversations: Conversation[] }, void>({
+      query: () => ({ url: 'social?action=GetConversations' }),
+      providesTags: ['SocialMessages'],
+    }),
+    getMessages: builder.query<{ messages: DirectMessage[] }, string>({
+      query: (partner) => ({ url: `social?action=GetMessages&partner=${partner}` }),
+      providesTags: ['SocialMessages'],
+    }),
+    getActivity: builder.query<{ activity: ActivityItem[] }, void>({
+      query: () => ({ url: 'social?action=GetActivity' }),
+      providesTags: ['SocialFeed'],
+    }),
+    getLeaderboard: builder.query<Leaderboard, void>({
+      query: () => ({ url: 'social?action=GetLeaderboard' }),
+      providesTags: ['SocialFeed'],
+    }),
+    getUserMints: builder.query<{ mints: PostMint[] }, string>({
+      query: (address) => ({ url: `social?action=GetUserMints&address=${address}` }),
+      providesTags: ['SocialFeed'],
     }),
     createPost: builder.mutation<
       { post: SocialPost },
@@ -124,8 +236,8 @@ const socialApi = baseApi.injectEndpoints({
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
     }),
     collectPost: builder.mutation<
-      { ok: boolean; tokenId: number; mintTxHash: string },
-      { postId: number; txHash?: string }
+      { ok: boolean; tokenId: number; mintTxHash: string; pointsSpent: string | null },
+      { postId: number; txHash?: string; payWith?: 'SAGE' | 'POINTS' }
     >({
       query: (body) => ({ url: 'social?action=CollectPost', method: 'POST', body }),
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
@@ -144,6 +256,18 @@ const socialApi = baseApi.injectEndpoints({
       query: (body) => ({ url: 'social?action=SetFollowGate', method: 'POST', body }),
       invalidatesTags: ['SocialProfile'],
     }),
+    purchaseVerification: builder.mutation<{ ok: boolean; verified: boolean }, { txHash: string }>({
+      query: (body) => ({ url: 'social?action=PurchaseVerification', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile', 'SocialFeed'],
+    }),
+    redeemInvite: builder.mutation<{ ok: boolean; joined: boolean }, { code: string }>({
+      query: (body) => ({ url: 'social?action=RedeemInvite', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile', 'SocialFeed'],
+    }),
+    sendMessage: builder.mutation<{ ok: boolean; id: number }, { to: string; text: string }>({
+      query: (body) => ({ url: 'social?action=SendMessage', method: 'POST', body }),
+      invalidatesTags: ['SocialMessages'],
+    }),
   }),
 });
 
@@ -153,6 +277,14 @@ export const {
   useGetPostThreadQuery,
   useGetSocialProfileQuery,
   useGetOwnedNftsQuery,
+  useGetVerificationInfoQuery,
+  useGetMyInvitesQuery,
+  useGetInvitePreviewQuery,
+  useGetConversationsQuery,
+  useGetMessagesQuery,
+  useGetActivityQuery,
+  useGetLeaderboardQuery,
+  useGetUserMintsQuery,
   useCreatePostMutation,
   useToggleLikeMutation,
   useToggleRepostMutation,
@@ -163,4 +295,7 @@ export const {
   useCollectPostMutation,
   useSetNftPfpMutation,
   useSetFollowGateMutation,
+  usePurchaseVerificationMutation,
+  useRedeemInviteMutation,
+  useSendMessageMutation,
 } = socialApi;

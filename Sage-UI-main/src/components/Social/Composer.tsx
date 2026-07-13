@@ -2,7 +2,11 @@ import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
-import { useCreatePostMutation } from '@/store/socialReducer';
+import {
+  useCreatePostMutation,
+  useGetSocialProfileQuery,
+  useRedeemInviteMutation,
+} from '@/store/socialReducer';
 
 interface Props {
   replyToId?: number;
@@ -13,8 +17,53 @@ interface Props {
 
 const MAX = 500;
 
+/** Invite-gate state of the composer: SAGE Social sign-ups run on referrals. */
+function InviteGate() {
+  const [code, setCode] = useState('');
+  const [redeemInvite, { isLoading }] = useRedeemInviteMutation();
+  const redeem = async () => {
+    try {
+      await redeemInvite({ code: code.trim() }).unwrap();
+      toast.success('Welcome to SAGE Social 🎉');
+    } catch (e: any) {
+      toast.error(e?.data?.error || 'Invalid invite code');
+    }
+  };
+  return (
+    <div className='social-composer social-composer--locked'>
+      <div className='social-composer__gate'>
+        <p>
+          SAGE Social is <b>invite-only</b>. Redeem an invite code to start posting — ask a
+          member for theirs.
+        </p>
+        <div className='social-composer__gate-row'>
+          <input
+            className='social-composer__gate-input'
+            placeholder='SAGE-XXXXXX'
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && code.trim()) redeem();
+            }}
+          />
+          <button
+            className='social-composer__submit'
+            disabled={!code.trim() || isLoading}
+            onClick={redeem}
+          >
+            Join
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Composer({ replyToId, placeholder, autoFocus, onPosted }: Props) {
-  const { isSignedIn, userData } = useSAGEAccount();
+  const { isSignedIn, userData, walletAddress } = useSAGEAccount();
+  const { data: me } = useGetSocialProfileQuery(walletAddress || '', {
+    skip: !isSignedIn || !walletAddress,
+  });
   const [createPost, { isLoading }] = useCreatePostMutation();
   const [text, setText] = useState('');
 
@@ -25,6 +74,7 @@ export default function Composer({ replyToId, placeholder, autoFocus, onPosted }
       </div>
     );
   }
+  if (me?.needsInvite) return <InviteGate />;
 
   const submit = async () => {
     const trimmed = text.trim();

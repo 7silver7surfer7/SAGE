@@ -3,12 +3,17 @@ import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import LoaderDots from '@/components/LoaderDots';
 import PostCard from '@/components/Social/PostCard';
+import SocialNav from '@/components/Social/SocialNav';
+import VerifiedBadge from '@/components/Social/VerifiedBadge';
+import VerificationModal from '@/components/Social/VerificationModal';
+import ReferCard from '@/components/Social/ReferCard';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
 import {
   useGetSocialProfileQuery,
   useGetUserPostsQuery,
+  useGetUserMintsQuery,
   useGetOwnedNftsQuery,
   useToggleFollowMutation,
   useSetNftPfpMutation,
@@ -16,21 +21,14 @@ import {
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 
-const VerifiedBadge = () => (
-  <svg width='18' height='18' viewBox='0 0 24 24' fill='#d4fc52' style={{ marginLeft: 6 }}>
-    <path d='M12 1l2.7 2 3.3-.4 1.2 3.1 3 1.5-.7 3.3L23 13l-2.3 2.4.4 3.3-3.1 1.2-1.5 3-3.3-.7L11 23l-2.4-2.3-3.3.4-1.2-3.1-3-1.5.7-3.3L1 11l2.3-2.4L2.9 5.3 6 4.1l1.5-3 3.3.7L12 1z' />
-    <path d='M8 12.5l2.6 2.6L16.4 9' stroke='#131917' strokeWidth='2.4' fill='none' />
-  </svg>
-);
-
-/** Grid of the viewer's own NFTs — pick one to become the verified avatar. */
+/** Grid of the viewer's own NFTs — pick one to become the NFT avatar. */
 function NftPfpPicker({ onClose }: { onClose: () => void }) {
   const { data, isFetching } = useGetOwnedNftsQuery();
   const [setNftPfp, { isLoading: saving }] = useSetNftPfpMutation();
   const pick = async (nftId: number) => {
     try {
       await setNftPfp(nftId).unwrap();
-      toast.success('Verified NFT avatar set ⬡');
+      toast.success('NFT avatar set ⬡');
       onClose();
     } catch (e: any) {
       toast.error(e?.data?.error || 'Could not set avatar');
@@ -71,11 +69,47 @@ function NftPfpPicker({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Grid of post-NFTs this wallet collected. */
+function MintsGrid({ address }: { address: string }) {
+  const router = useRouter();
+  const { data, isFetching } = useGetUserMintsQuery(address);
+  if (isFetching && !data) return <LoaderDots />;
+  if (!data?.mints.length)
+    return <div className='social__empty'>No collected posts yet.</div>;
+  return (
+    <div className='social-mints'>
+      {data.mints.map((m) => (
+        <div
+          key={`${m.contractAddress}-${m.tokenId}`}
+          className='social-mints__card'
+          onClick={() => router.push(`/social/post/${m.post.id}`)}
+        >
+          {m.post.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={m.post.imageUrl} alt='' />
+          ) : (
+            <p className='social-mints__text'>{m.post.text}</p>
+          )}
+          <div className='social-mints__meta'>
+            <span>SAGE Social #{m.post.id}</span>
+            <span className='social-mints__token'>token {m.tokenId}</span>
+          </div>
+          <div className='social-mints__paid'>
+            {m.pointsSpent ? `${m.pointsSpent} pixels` : m.amount > 0 ? `${m.amount} SAGE` : 'free'}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SocialProfilePage() {
   const router = useRouter();
   const address = (router.query.address as string) || '';
   const { isSignedIn } = useSAGEAccount();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [tab, setTab] = useState<'posts' | 'mints'>('posts');
   const { data: profile, isFetching: loadingProfile } = useGetSocialProfileQuery(address, {
     skip: !address,
   });
@@ -121,6 +155,7 @@ export default function SocialProfilePage() {
 
   return (
     <div className='social social--profile'>
+      <SocialNav />
       <div className='social-profile__banner'>
         {profile.bannerImageS3Path && <PfpImage src={profile.bannerImageS3Path} />}
       </div>
@@ -128,24 +163,44 @@ export default function SocialProfilePage() {
         <div className='social-profile__avatar' data-verified={profile.pfpVerified}>
           <PfpImage src={profile.profilePicture} />
         </div>
-        {profile.isSelf ? (
-          <button className='social-profile__follow' onClick={() => setPickerOpen(true)}>
-            {profile.pfpVerified ? 'Change NFT avatar' : 'Use an NFT as avatar'}
-          </button>
-        ) : (
-          <button
-            className={`social-profile__follow ${profile.followedByViewer ? 'social-profile__follow--on' : ''}`}
-            disabled={following}
-            onClick={onFollow}
-          >
-            {profile.followedByViewer ? 'Following' : 'Follow'}
-          </button>
-        )}
+        <div className='social-profile__cta'>
+          {profile.isSelf ? (
+            <>
+              {!profile.verified && (
+                <button className='social-profile__follow' onClick={() => setVerifyOpen(true)}>
+                  Get verified
+                </button>
+              )}
+              <button
+                className='social-profile__follow social-profile__follow--on'
+                onClick={() => setPickerOpen(true)}
+              >
+                {profile.pfpVerified ? 'Change NFT avatar' : 'Use an NFT as avatar'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className='social-profile__follow social-profile__follow--on'
+                onClick={() => router.push(`/social/messages/?to=${profile.address}`)}
+              >
+                Message
+              </button>
+              <button
+                className={`social-profile__follow ${profile.followedByViewer ? 'social-profile__follow--on' : ''}`}
+                disabled={following}
+                onClick={onFollow}
+              >
+                {profile.followedByViewer ? 'Following' : 'Follow'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <div className='social-profile__info'>
         <h1 className='social-profile__name'>
           {displayName}
-          {profile.pfpVerified && <VerifiedBadge />}
+          {profile.verified && <VerifiedBadge size={18} />}
         </h1>
         <span className='social-profile__handle'>{shortenAddress(profile.address)}</span>
         {profile.bio && <p className='social-profile__bio'>{profile.bio}</p>}
@@ -166,6 +221,7 @@ export default function SocialProfilePage() {
             <b>{profile.followGatedDrops.map((d) => d.name).join(', ')}</b>
           </div>
         )}
+        {profile.isSelf && <ReferCard />}
         {profile.isSelf && profile.myDrops.length > 0 && (
           <div className='social-profile__gates'>
             <h4>Follow-to-allowlist</h4>
@@ -190,16 +246,35 @@ export default function SocialProfilePage() {
           <NftPfpPicker onClose={() => setPickerOpen(false)} />
         </div>
       )}
+      {verifyOpen && <VerificationModal onClose={() => setVerifyOpen(false)} />}
 
-      <div className='social__feed'>
-        {loadingPosts && !postsData ? (
-          <LoaderDots />
-        ) : postsData?.posts.length ? (
-          postsData.posts.map((p) => <PostCard key={p.id} post={p} />)
-        ) : (
-          <div className='social__empty'>No posts yet.</div>
-        )}
+      <div className='social__tabs'>
+        <button
+          className={`social__tab ${tab === 'posts' ? 'social__tab--active' : ''}`}
+          onClick={() => setTab('posts')}
+        >
+          Posts
+        </button>
+        <button
+          className={`social__tab ${tab === 'mints' ? 'social__tab--active' : ''}`}
+          onClick={() => setTab('mints')}
+        >
+          Mints
+        </button>
       </div>
+      {tab === 'mints' ? (
+        <MintsGrid address={profile.address} />
+      ) : (
+        <div className='social__feed'>
+          {loadingPosts && !postsData ? (
+            <LoaderDots />
+          ) : postsData?.posts.length ? (
+            postsData.posts.map((p) => <PostCard key={p.id} post={p} />)
+          ) : (
+            <div className='social__empty'>No posts yet.</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

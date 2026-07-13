@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import { useSigner } from 'wagmi';
+import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
@@ -16,6 +17,8 @@ import {
   useCollectPostMutation,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
+import VerifiedBadge from './VerifiedBadge';
+import VerificationModal from './VerificationModal';
 
 function timeAgo(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -56,13 +59,6 @@ const HexIcon = ({ filled }: { filled?: boolean }) => (
     <path d='M12 2l8.5 5v10L12 22l-8.5-5V7L12 2z' />
   </svg>
 );
-const VerifiedBadge = () => (
-  <svg className='social-post__verified-badge' width='14' height='14' viewBox='0 0 24 24' fill='#d4fc52'>
-    <path d='M12 1l2.7 2 3.3-.4 1.2 3.1 3 1.5-.7 3.3L23 13l-2.3 2.4.4 3.3-3.1 1.2-1.5 3-3.3-.7L11 23l-2.4-2.3-3.3.4-1.2-3.1-3-1.5.7-3.3L1 11l2.3-2.4L2.9 5.3 6 4.1l1.5-3 3.3.7L12 1z' />
-    <path d='M8 12.5l2.6 2.6L16.4 9' stroke='#131917' strokeWidth='2.4' fill='none' />
-  </svg>
-);
-
 interface Props {
   post: SocialPost;
   onReply?: (post: SocialPost) => void;
@@ -80,6 +76,8 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [setCollectible] = useSetCollectibleMutation();
   const [collectPost] = useCollectPostMutation();
   const [busy, setBusy] = useState(false);
+  const [showVerify, setShowVerify] = useState(false);
+  const { openConnectModal } = useConnectModal();
 
   const displayName = post.author.username
     ? transformTitle(post.author.username)
@@ -97,10 +95,22 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const requireSigner = () => {
     if (!requireAuth()) return false;
     if (!signer) {
-      toast.info('Sign in with your wallet first');
+      // session cookie survives reloads but the wallet connection doesn't —
+      // reopen the connect modal instead of dead-ending the click
+      toast.info('Reconnect your wallet to sign transactions');
+      openConnectModal?.();
       return false;
     }
     return true;
+  };
+
+  // premium-gated API errors carry needsVerification — open the paywall
+  const handleGateError = (err: any, fallback: string) => {
+    if (err?.data?.needsVerification) {
+      setShowVerify(true);
+      return;
+    }
+    toast.error(err?.data?.error || err?.message?.slice(0, 80) || fallback);
   };
 
   const goToProfile = (e: React.MouseEvent) => {
@@ -171,12 +181,8 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       const until = new Date(r.boostedUntil).toLocaleString();
       toast.update(t, { render: `Boosted until ${until} 🔥`, type: 'success', isLoading: false, autoClose: 5000 });
     } catch (err: any) {
-      toast.update(t, {
-        render: err?.data?.error || err?.message?.slice(0, 80) || 'Boost failed',
-        type: 'error',
-        isLoading: false,
-        autoClose: 5000,
-      });
+      toast.update(t, { render: 'Boost failed', type: 'error', isLoading: false, autoClose: 1 });
+      handleGateError(err, 'Boost failed');
     } finally {
       setBusy(false);
     }
@@ -200,28 +206,34 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       await setCollectible({ postId: post.id, price }).unwrap();
       toast.success(price === null ? 'Collecting closed' : `Collectible at ${price} SAGE`);
     } catch (err: any) {
-      toast.error(err?.data?.error || 'Could not update');
+      handleGateError(err, 'Could not update');
     }
   };
 
-  const onCollect = async (e: React.MouseEvent) => {
+  const onCollect = async (e: React.MouseEvent, payWith: 'SAGE' | 'POINTS' = 'SAGE') => {
     e.stopPropagation();
-    if (!requireSigner()) return;
+    if (payWith === 'SAGE' && !requireSigner()) return;
+    if (payWith === 'POINTS' && !requireAuth()) return;
     if (post.collectedByViewer) return;
     const price = post.collectPrice || 0;
     const confirmed = window.confirm(
-      price > 0
+      payWith === 'POINTS'
+        ? `Collect this post for ${Math.ceil(price * 100)} pixels? The post is minted to your wallet as an NFT.`
+        : price > 0
         ? `Collect this post for ${price} SAGE? You pay @${displayName} directly and the post is minted to your wallet as an NFT.`
         : 'Collect this post for free? It will be minted to your wallet as an NFT.'
     );
     if (!confirmed) return;
     setBusy(true);
-    const t = toast.loading(price > 0 ? `Paying ${price} SAGE…` : 'Minting…');
+    const t = toast.loading(
+      payWith === 'POINTS' ? 'Spending pixels…' : price > 0 ? `Paying ${price} SAGE…` : 'Minting…'
+    );
     try {
       let txHash: string | undefined;
-      if (price > 0) txHash = await tipSage(post.author.address, price, signer as any);
+      if (payWith === 'SAGE' && price > 0)
+        txHash = await tipSage(post.author.address, price, signer as any);
       toast.update(t, { render: 'Minting your NFT…', isLoading: true });
-      const r = await collectPost({ postId: post.id, txHash }).unwrap();
+      const r = await collectPost({ postId: post.id, txHash, payWith }).unwrap();
       toast.update(t, {
         render: `Collected! SAGE Social #${post.id} is yours (token ${r.tokenId}) ⬡`,
         type: 'success',
@@ -229,12 +241,8 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
         autoClose: 6000,
       });
     } catch (err: any) {
-      toast.update(t, {
-        render: err?.data?.error || err?.message?.slice(0, 80) || 'Collect failed',
-        type: 'error',
-        isLoading: false,
-        autoClose: 6000,
-      });
+      toast.update(t, { render: 'Collect failed', type: 'error', isLoading: false, autoClose: 1 });
+      handleGateError(err, 'Collect failed');
     } finally {
       setBusy(false);
     }
@@ -254,7 +262,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
           <span className='social-post__name' onClick={goToProfile}>
             {displayName}
           </span>
-          {post.author.pfpVerified && <VerifiedBadge />}
+          {post.author.verified && <VerifiedBadge />}
           <span className='social-post__handle'>{shortenAddress(post.author.address)}</span>
           <span className='social-post__dot'>·</span>
           <span className='social-post__time'>{timeAgo(post.createdAt)}</span>
@@ -272,21 +280,33 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
           </div>
         )}
         {post.collectPrice !== null && !isOwnPost && (
-          <button
-            className='social-post__collect'
-            onClick={onCollect}
-            disabled={busy || post.collectedByViewer}
-          >
-            <HexIcon filled={post.collectedByViewer} />
-            {post.collectedByViewer
-              ? 'Collected'
-              : post.collectPrice > 0
-              ? `Collect · ${post.collectPrice} SAGE`
-              : 'Collect · free'}
-            {post.collectCount > 0 && (
-              <span className='social-post__collect-count'>{post.collectCount} minted</span>
+          <div className='social-post__collect-row'>
+            <button
+              className='social-post__collect'
+              onClick={(e) => onCollect(e, 'SAGE')}
+              disabled={busy || post.collectedByViewer}
+            >
+              <HexIcon filled={post.collectedByViewer} />
+              {post.collectedByViewer
+                ? 'Collected'
+                : post.collectPrice > 0
+                ? `Collect · ${post.collectPrice} SAGE`
+                : 'Collect · free'}
+              {post.collectCount > 0 && (
+                <span className='social-post__collect-count'>{post.collectCount} minted</span>
+              )}
+            </button>
+            {post.collectPrice > 0 && !post.collectedByViewer && (
+              <button
+                className='social-post__collect social-post__collect--points'
+                onClick={(e) => onCollect(e, 'POINTS')}
+                disabled={busy}
+                title='Verified users can pay with earned pixels'
+              >
+                {Math.ceil(post.collectPrice * 100)} pixels
+              </button>
             )}
-          </button>
+          </div>
         )}
         <div className='social-post__actions'>
           <button
@@ -348,6 +368,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
           )}
         </div>
       </div>
+      {showVerify && <VerificationModal onClose={() => setShowVerify(false)} />}
     </article>
   );
 }
