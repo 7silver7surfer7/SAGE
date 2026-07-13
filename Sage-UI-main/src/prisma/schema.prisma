@@ -333,10 +333,84 @@ model User {
   NftContract                   NftContract?  @relation("ArtistContract")
   EarnedPoints                  EarnedPoints?
   FavoriteDrops                 Drop[]        @relation("userFavoriteDrops")
-  Bids                          BidHistory[]  
-  PrizeProofs                   PrizeProof[] 
+  Bids                          BidHistory[]
+  PrizeProofs                   PrizeProof[]
+  // SAGE Social: wallet == identity for the BlueSky-style network
+  SocialPosts                   SocialPost[]    @relation("SocialAuthor")
+  SocialLikes                   SocialLike[]
+  SocialReposts                 SocialRepost[]
+  Following                     SocialFollow[]  @relation("SocialFollower")
+  Followers                     SocialFollow[]  @relation("SocialFollowing")
   @@index([walletAddress])
   @@unique([username])
+}
+
+// ─────────────────────────── SAGE Social ───────────────────────────
+// A wallet-native BlueSky clone: identity is the SIWE wallet, posts can be
+// tipped in SAGE tokens, and avatars are the user's (NFT) profilePicture.
+
+model SocialPost {
+  id           Int            @id @default(autoincrement())
+  authorAddress String        @db.Char(42)
+  Author       User           @relation("SocialAuthor", fields: [authorAddress], references: [walletAddress])
+  text         String         @db.VarChar(500)
+  imageUrl     String?        // optional media (arweave/S3 URL)
+  createdAt    DateTime       @default(now())
+  // reply threading (self-relation); null = top-level post
+  replyToId    Int?
+  ReplyTo      SocialPost?    @relation("SocialReplies", fields: [replyToId], references: [id], onDelete: Cascade)
+  Replies      SocialPost[]   @relation("SocialReplies")
+  // denormalized counters kept in sync on write (cheap reads on the feed)
+  likeCount    Int            @default(0)
+  repostCount  Int            @default(0)
+  replyCount   Int            @default(0)
+  tipTotal     Float          @default(0) // total SAGE tipped to this post
+  Likes        SocialLike[]
+  Reposts      SocialRepost[]
+  Tips         SocialTip[]
+  @@index([createdAt])
+  @@index([authorAddress])
+  @@index([replyToId])
+}
+
+model SocialFollow {
+  followerAddress  String   @db.Char(42)
+  followingAddress String   @db.Char(42)
+  createdAt        DateTime @default(now())
+  Follower         User     @relation("SocialFollower", fields: [followerAddress], references: [walletAddress])
+  Following        User     @relation("SocialFollowing", fields: [followingAddress], references: [walletAddress])
+  @@id([followerAddress, followingAddress])
+  @@index([followingAddress])
+}
+
+model SocialLike {
+  postId       Int
+  userAddress  String     @db.Char(42)
+  createdAt    DateTime   @default(now())
+  Post         SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  User         User       @relation(fields: [userAddress], references: [walletAddress])
+  @@id([postId, userAddress])
+}
+
+model SocialRepost {
+  postId       Int
+  userAddress  String     @db.Char(42)
+  createdAt    DateTime   @default(now())
+  Post         SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  User         User       @relation(fields: [userAddress], references: [walletAddress])
+  @@id([postId, userAddress])
+}
+
+model SocialTip {
+  id          Int        @id @default(autoincrement())
+  postId      Int
+  fromAddress String     @db.Char(42)
+  toAddress   String     @db.Char(42)
+  amount      Float      // SAGE amount
+  txHash      String     @db.Char(66)
+  createdAt   DateTime   @default(now())
+  Post        SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  @@index([postId])
 }
 
 model Offer {

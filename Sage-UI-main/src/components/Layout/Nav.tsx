@@ -18,6 +18,7 @@ export default function Nav() {
     pushToSubmissions,
     pushToAgentApi,
     pushToHowToBuyAsh,
+    pushToSocial,
     isProfilePage,
     isSingleDropsPage,
     pushToProfile,
@@ -39,6 +40,10 @@ export default function Nav() {
     {
       name: 'Drops',
       routeFunction: pushToDrops,
+    },
+    {
+      name: 'Social',
+      routeFunction: () => pushToSocial(),
     },
     {
       name: 'Apply',

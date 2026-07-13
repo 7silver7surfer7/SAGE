@@ -37,6 +37,10 @@ const navLinks: NavLink[] = [
     url: basePathDrops,
   },
   {
+    name: 'Social',
+    url: '/social',
+  },
+  {
     name: 'Apply',
     url: basePathSubmissions,
   },

@@ -48,6 +48,10 @@ export default function useSageRoutes() {
     await router.push(basePathProfile);
   }
 
+  async function pushToSocial(address?: string) {
+    await router.push(address ? `/social/${address}` : '/social');
+  }
+
   async function pushToCollection() {
     shallowRoute('2');
   }
@@ -81,6 +85,7 @@ export default function useSageRoutes() {
     pushToSubmissions,
     pushToAgentApi,
     pushToProfile,
+    pushToSocial,
     pushToHowToBuyAsh,
     pushToPrivacyPolicy,
     pushToTermsOfService,
