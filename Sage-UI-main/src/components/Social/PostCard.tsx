@@ -72,7 +72,7 @@ interface Props {
 export default function PostCard({ post, onReply, clickable = true }: Props) {
   const router = useRouter();
   const { data: signer } = useSigner();
-  const { isSignedIn, walletAddress } = useSAGEAccount();
+  const { isSignedIn, walletAddress, userData } = useSAGEAccount();
   const [toggleLike] = useToggleLikeMutation();
   const [toggleRepost] = useToggleRepostMutation();
   const [recordTip] = useRecordTipMutation();
@@ -131,8 +131,14 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const displayName = post.author.username
     ? transformTitle(post.author.username)
     : shortenAddress(post.author.address);
-  const isOwnPost =
-    !!walletAddress && walletAddress.toLowerCase() === post.author.address.toLowerCase();
+  // Ownership is session-based, not just the live wallet connection: the
+  // signed-in user's address (userData.walletAddress) still resolves even when
+  // the wagmi connection is momentarily undefined on load — so "Sell as NFT"
+  // reliably shows on your own posts.
+  const authorLc = post.author.address.toLowerCase();
+  const myAddress = (walletAddress || (userData as any)?.walletAddress || '').toLowerCase();
+  const isOwnPost = !!myAddress && myAddress === authorLc;
+  const viewerVerified = !!(userData as any)?.verifiedAt || (userData as any)?.role === 'ADMIN';
 
   const requireAuth = () => {
     if (!isSignedIn) {
@@ -259,6 +265,12 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
 
   const onSetCollectible = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    // selling is a premium feature — an unverified author gets the $10 verify
+    // prompt straight away (the conversion moment), not after entering a price
+    if (!viewerVerified) {
+      setShowVerify(true);
+      return;
+    }
     const raw = window.prompt(
       post.collectPrice === null
         ? 'Sell this post as an NFT — set a price in pixels (e.g. "500"). Collectors spend pixels, you earn them. 0 = free. Leave empty to cancel.'
