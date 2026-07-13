@@ -2665,3 +2665,95 @@ $col-width: 620px;
     border: 2px solid m.t(base);
   }
 }
+
+/* ── boost modal (Twitter-style budget × duration) ── */
+.social-boost {
+  border-radius: 16px;
+  padding: 22px;
+  width: min(440px, 92vw);
+  @include m.theme() {
+    background: m.t(base2);
+    border: 1px solid rgba(m.t(contrast), 0.15);
+    color: m.t(contrast);
+  }
+  &__row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin: 16px 0 6px;
+    font-size: 0.95rem;
+    @include m.theme() {
+      color: m.t(contrast2);
+    }
+    b {
+      font-size: 1.1rem;
+      @include m.theme() {
+        color: m.t(contrast);
+      }
+    }
+  }
+  &__slider {
+    width: 100%;
+    appearance: none;
+    height: 6px;
+    border-radius: 999px;
+    outline: none;
+    @include m.theme() {
+      background: rgba(m.t(contrast), 0.15);
+    }
+    &::-webkit-slider-thumb {
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      cursor: pointer;
+      @include m.theme() {
+        background: m.t(accent);
+      }
+    }
+    &::-moz-range-thumb {
+      width: 20px;
+      height: 20px;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      @include m.theme() {
+        background: m.t(accent);
+      }
+    }
+  }
+  &__est {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin: 22px 0 16px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  &__muted {
+    font-weight: 400;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.5);
+    }
+  }
+  &__cta {
+    width: 100%;
+    border: none;
+    border-radius: 999px;
+    padding: 13px 22px;
+    font-weight: 800;
+    font-size: 0.98rem;
+    cursor: pointer;
+    @include m.theme() {
+      background: m.t(accent);
+      color: m.t(base);
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+}

@@ -397,9 +397,14 @@ model SocialPost {
   // Currency the author sells this post in when collectible ("SAGE" | "ETH"),
   // mirroring the per-drop currency pattern. Points-collect is SAGE-only.
   collectCurrency String      @default("SAGE")
-  // burn-to-boost: SAGE burned (sent to 0x…dEaD) pins the post to the top of
-  // the global feed until boostedUntil. Verified on-chain server-side.
+  // burn-to-boost (Twitter-style, SOFT): a boost is a budget × duration
+  // campaign that gently lifts the post in the ranked feed for its window,
+  // then fades. boostedAt..boostedUntil is the active window; boostStrength
+  // (set from the daily budget) is the max soft rank bonus, decayed linearly
+  // across the window in getFeed. Verified on-chain server-side (SAGE burn).
+  boostedAt    DateTime?
   boostedUntil DateTime?
+  boostStrength Float         @default(0)
   boostBurned  Float          @default(0) // lifetime SAGE burned on this post
   // collect-as-NFT: author sets a SAGE price (0 = free collect); each collect
   // pays the author directly and server-mints the post into the platform's
