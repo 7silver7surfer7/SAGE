@@ -211,7 +211,7 @@ async function tick() {
 
   // fresh posts (1-3)
   const newPosts = [];
-  const nPosts = 10 + Math.floor(Math.random() * 12); // 10-21 posts/tick
+  const nPosts = 5 + Math.floor(Math.random() * 6); // 5-10 posts/tick (~50% slower)
   for (let i = 0; i < nPosts; i++) {
     await attempt(async () => {
       const author = pick(active);
