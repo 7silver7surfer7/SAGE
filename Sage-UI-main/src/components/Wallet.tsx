@@ -19,6 +19,31 @@ interface Props {
   isOpen: ModalProps['isOpen'];
 }
 
+/**
+ * wagmi's injected connector reports "Unknown Wallet" for extensions that
+ * don't flag as MetaMask — identify the common ones from their provider
+ * flags so users never see a scary UNKNOWN button (reported by a real user).
+ */
+function detectInjectedWalletName(): string {
+  const eth: any = typeof window !== 'undefined' ? (window as any).ethereum : undefined;
+  if (!eth) return 'Browser Wallet';
+  const candidates: [string, string][] = [
+    ['isRabby', 'Rabby'],
+    ['isBraveWallet', 'Brave Wallet'],
+    ['isCoinbaseWallet', 'Coinbase Wallet'],
+    ['isOkxWallet', 'OKX Wallet'],
+    ['isZerion', 'Zerion'],
+    ['isTrust', 'Trust Wallet'],
+    ['isFrame', 'Frame'],
+    ['isPhantom', 'Phantom'],
+    ['isMetaMask', 'MetaMask'], // last: many wallets fake this flag
+  ];
+  for (const [flag, name] of candidates) {
+    if (eth[flag]) return name;
+  }
+  return 'Browser Wallet';
+}
+
 export default function Wallet({ closeModal, isOpen }: Props) {
   const {
     isSignedIn,
@@ -76,7 +101,11 @@ export default function Wallet({ closeModal, isOpen }: Props) {
                   // browser, where the provider IS injected
                   const useMetaMaskDeepLink = !c.ready && isMobile && c.id === 'injected';
                   if (!c.ready && !useMetaMaskDeepLink) return null;
-                  const displayName = useMetaMaskDeepLink ? 'MetaMask' : c.name;
+                  const displayName = useMetaMaskDeepLink
+                    ? 'MetaMask'
+                    : /unknown/i.test(c.name)
+                    ? detectInjectedWalletName()
+                    : c.name;
                   function onClick() {
                     if (useMetaMaskDeepLink) {
                       window.location.href = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}${window.location.search}`;
@@ -84,7 +113,8 @@ export default function Wallet({ closeModal, isOpen }: Props) {
                     }
                     connect({ connector: c });
                   }
-                  const className = `wallet__wallet-item wallet__${displayName}`;
+                  // class-safe variant: names can contain spaces ("Brave Wallet")
+                  const className = `wallet__wallet-item wallet__${displayName.replace(/[^A-Za-z0-9]/g, '')}`;
                   return (
                     <button
                       className={className}
