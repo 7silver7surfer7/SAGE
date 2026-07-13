@@ -13,6 +13,7 @@ import {
   isWhitelistedOnChain,
   uploadJsonToFilebase,
   signCollectVoucher,
+  DEAD_ADDRESS,
 } from '@/utilities/serverWallet';
 
 /**
@@ -33,17 +34,11 @@ import {
  */
 const AUTHED: Role[] = [Role.USER, Role.ARTIST, Role.ADMIN];
 
-// boost economics: $3 worth of native ETH (priced live off Uniswap, same
-// feed as verification's ETH leg) goes to the TREASURY multisig — no more
-// SAGE burn. A boost is a short, DECAYING surface, not a permanent pin: the
-// post floats up on purchase and sinks back as newer posts arrive over the
-// window (see getFeed's decay merge), so it's "seen and then gone".
-const BOOST_PRICE_USD = 3;
-const BOOST_FALLBACK_ETH = 0.001; // ≈$3 if the ETH/USD feed is down
-const BOOST_WINDOW_MS = 45 * 60 * 1000; // 45 min of decaying prominence
-// how many "post positions" a fresh boost jumps above the newest post; the
-// bonus decays linearly to 0 across BOOST_WINDOW_MS
-const BOOST_MAX_RANK_BONUS = 60;
+// burn-to-boost economics: 10 SAGE buys 24h at the top of the global feed,
+// linear, capped 7 days out so a whale can't squat the feed for a year.
+const BOOST_SAGE_PER_DAY = 10;
+const BOOST_MAX_DAYS = 7;
+const BOOST_MIN_SAGE = 1;
 
 // paid verification: $10 worth of SAGE to the platform treasury buys the
 // checkmark + premium features (sell/collect posts, points-collect, boost,
@@ -81,8 +76,6 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getPostMetadata(Number(request.query.id), response);
       case 'GetVerificationInfo':
         return await getVerificationInfo(response);
-      case 'GetBoostInfo':
-        return await getBoostInfo(response);
       case 'GetInvite':
         return await getInvite(String(request.query.code || ''), response);
       case 'InviteImage':
@@ -358,17 +351,15 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
     authorFilter = { authorAddress: { in: following.map((f) => f.followingAddress) } };
   }
 
-  // pay-to-boost: active boosts get a DECAYING rank bump on the global feed's
-  // first page — they surface near the top on purchase and sink back as newer
-  // posts arrive and the 45-min window elapses (see the score merge below).
-  // 'latest' and 'following' ignore boosts entirely.
+  // burn-to-boost: active boosts open the global feed (first page only),
+  // biggest lifetime burn first, then the normal reverse-chron river.
   let boosted: any[] = [];
   if (scope === 'global' && !cursor) {
     boosted = await prisma.socialPost.findMany({
       where: { replyToId: null, deletedAt: null, boostedUntil: { gt: new Date() } },
       include: postInclude(viewer),
-      orderBy: { boostedUntil: 'desc' },
-      take: 8,
+      orderBy: { boostBurned: 'desc' },
+      take: 5,
     });
   }
 
@@ -385,28 +376,7 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
   const nextCursor = posts.length > 20 ? posts[19].id : null;
-
-  let page: any[];
-  if (boosted.length) {
-    // decaying rank: score = post.id + boostBonus, where the bonus starts at
-    // BOOST_MAX_RANK_BONUS "positions" and fades to 0 as boostedUntil nears.
-    // A boosted post jumps up on purchase, then real posts (higher ids) plus
-    // the shrinking bonus let it drift down and out — seen, then gone.
-    const now = Date.now();
-    const scoreOf = (p: any) => {
-      const until = p.boostedUntil ? new Date(p.boostedUntil).getTime() : 0;
-      const frac = until > now ? Math.min(1, (until - now) / BOOST_WINDOW_MS) : 0;
-      return p.id + BOOST_MAX_RANK_BONUS * frac;
-    };
-    const merged = new Map<number, any>();
-    for (const p of [...boosted, ...posts.slice(0, 20)]) merged.set(p.id, p);
-    page = Array.from(merged.values())
-      .sort((a, b) => scoreOf(b) - scoreOf(a))
-      .slice(0, 20);
-  } else {
-    page = posts.slice(0, 20);
-  }
-
+  const page = [...boosted, ...posts.slice(0, 20)];
   const verified = await pfpVerifiedMap(page);
   res.json({ posts: page.map((p) => serializePost(p, viewer, verified)), nextCursor });
 }
@@ -457,7 +427,6 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
           profilePicture: true,
           pfpNftId: true,
           bio: true,
-          webpage: true,
           bannerImageS3Path: true,
           verifiedAt: true,
           role: true,
@@ -521,7 +490,6 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
     pfpVerified: user ? await isPfpVerified(user) : false,
     verified: !!user?.verifiedAt, // paid checkmark
     bio: user?.bio || null,
-    webpage: user?.webpage || null,
     bannerImageS3Path: user?.bannerImageS3Path || null,
     followers,
     following,
@@ -769,26 +737,6 @@ async function recordTip(req: NextApiRequest, res: NextApiResponse, r: { walletA
   res.json({ ok: true, amount, currency });
 }
 
-/** $3-worth of ETH, priced live off Uniswap; module-cached 5 min. */
-let boostPriceCache: { eth: number; at: number } | null = null;
-async function boostPriceEth(): Promise<number> {
-  if (boostPriceCache && Date.now() - boostPriceCache.at < 300_000) return boostPriceCache.eth;
-  let eth = BOOST_FALLBACK_ETH;
-  try {
-    const { getEthUsd } = await import('@/utilities/sagePrice');
-    const usd = await getEthUsd(); // Uniswap USDC/WETH, CoinGecko fallback
-    if (usd > 0) eth = Math.ceil((BOOST_PRICE_USD / usd) * 1e6) / 1e6;
-  } catch {
-    // dead feed → fallback
-  }
-  boostPriceCache = { eth, at: Date.now() };
-  return eth;
-}
-
-async function getBoostInfo(res: NextApiResponse) {
-  res.json({ priceUsd: BOOST_PRICE_USD, priceEth: await boostPriceEth(), treasury: TREASURY_ADDRESS });
-}
-
 async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   if (!(await requireVerified(r.walletAddress, res))) return;
   const { postId, txHash } = req.body || {};
@@ -797,25 +745,25 @@ async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletA
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
 
-  // pay-to-boost: $3 of native ETH to the treasury multisig (no SAGE burn)
-  const priceEth = await boostPriceEth();
   let amount: number;
   try {
-    // 5% tolerance for price drift between quote and mined tx
-    amount = await verifyEthTransfer(txHash, r.walletAddress, TREASURY_ADDRESS, priceEth * 0.95);
+    amount = await verifySageTransfer(txHash, r.walletAddress, DEAD_ADDRESS, BOOST_MIN_SAGE);
   } catch (e: any) {
-    return res.status(400).json({ error: `boost payment not verified: ${e.message}` });
+    return res.status(400).json({ error: `burn not verified: ${e.message}` });
   }
 
-  // a boost is a fresh, DECAYING surface: each purchase resets the 45-min
-  // window from now (it does NOT stack open-endedly, so a post can't be
-  // pinned forever). boostBurned tracks cumulative ETH spent, for stats.
-  const boostedUntil = new Date(Date.now() + BOOST_WINDOW_MS);
+  const hours = (amount / BOOST_SAGE_PER_DAY) * 24;
+  const now = new Date();
+  const base = post.boostedUntil && post.boostedUntil > now ? post.boostedUntil : now;
+  const cap = new Date(now.getTime() + BOOST_MAX_DAYS * 24 * 3600 * 1000);
+  const boostedUntil = new Date(
+    Math.min(base.getTime() + hours * 3600 * 1000, cap.getTime())
+  );
 
   try {
     await prisma.$transaction([
       prisma.socialBoost.create({
-        data: { postId: id, fromAddress: r.walletAddress, amount, hours: BOOST_WINDOW_MS / 3.6e6, txHash },
+        data: { postId: id, fromAddress: r.walletAddress, amount, hours, txHash },
       }),
       prisma.socialPost.update({
         where: { id },
@@ -823,7 +771,7 @@ async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletA
       }),
     ]);
   } catch {
-    return res.status(400).json({ error: 'this payment was already credited' });
+    return res.status(400).json({ error: 'this burn was already credited' });
   }
   res.json({ ok: true, amount, boostedUntil });
 }

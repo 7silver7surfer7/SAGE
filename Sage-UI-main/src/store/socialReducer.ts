@@ -44,7 +44,6 @@ export interface SocialProfile {
   pfpVerified: boolean;
   verified: boolean; // paid checkmark
   bio: string | null;
-  webpage: string | null;
   bannerImageS3Path: string | null;
   followers: number;
   following: number;
@@ -262,9 +261,6 @@ const socialApi = baseApi.injectEndpoints({
     }),
     getVerificationInfo: builder.query<VerificationInfo, void>({
       query: () => ({ url: 'social?action=GetVerificationInfo' }),
-    }),
-    getBoostInfo: builder.query<{ priceUsd: number; priceEth: number; treasury: string }, void>({
-      query: () => ({ url: 'social?action=GetBoostInfo' }),
     }),
     getMyInvites: builder.query<{ invites: InviteCode[] }, void>({
       query: () => ({ url: 'social?action=GetMyInvites' }),
@@ -516,7 +512,6 @@ export const {
   useGetSocialProfileQuery,
   useGetOwnedNftsQuery,
   useGetVerificationInfoQuery,
-  useGetBoostInfoQuery,
   useGetMyInvitesQuery,
   useGetInvitePreviewQuery,
   useGetConversationsQuery,
