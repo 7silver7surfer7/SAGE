@@ -89,7 +89,11 @@ export default function Layout({ children, router }: Props) {
         <Footer></Footer>
       </div>
 
-      {!isCreatorsPage && !isSingleDropsPage && <Motto />}
+      {/* the vertical watermark clutters the social app shell */}
+      {!isCreatorsPage &&
+        !isSingleDropsPage &&
+        !router.pathname.startsWith('/social') &&
+        !router.pathname.startsWith('/invite') && <Motto />}
     </React.Fragment>
   );
 }

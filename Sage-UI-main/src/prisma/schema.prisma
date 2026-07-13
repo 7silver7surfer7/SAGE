@@ -374,7 +374,8 @@ model SocialPost {
   authorAddress String        @db.Char(42)
   Author       User           @relation("SocialAuthor", fields: [authorAddress], references: [walletAddress])
   text         String         @db.VarChar(500)
-  imageUrl     String?        // optional media (arweave/S3 URL)
+  imageUrl     String?        // optional media (S3 URL from /api/social-upload)
+  mediaType    String?        // "image" | "video" (null = legacy/image)
   createdAt    DateTime       @default(now())
   // soft delete: history (tips/leaderboards) stays intact, feeds filter it
   // out, GetPost 404s. Posts with collects can NEVER be deleted — the minted

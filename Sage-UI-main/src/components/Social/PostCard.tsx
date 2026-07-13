@@ -307,9 +307,14 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
         </div>
         {post.text && <p className='social-post__text'>{post.text}</p>}
         {post.imageUrl && (
-          <div className='social-post__media'>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={post.imageUrl} alt='' />
+          <div className='social-post__media' onClick={(e) => e.stopPropagation()}>
+            {post.mediaType === 'video' ? (
+              // eslint-disable-next-line jsx-a11y/media-has-caption
+              <video src={post.imageUrl} controls playsInline preload='metadata' />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={post.imageUrl} alt='' />
+            )}
           </div>
         )}
         {post.collectPrice !== null && !isOwnPost && (

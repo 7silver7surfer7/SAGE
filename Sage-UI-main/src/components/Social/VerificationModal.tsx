@@ -15,7 +15,7 @@ const BENEFITS = [
   ['Collect with pixels', 'Spend the pixels you earn holding SAGE instead of tokens'],
   ['Boost posts', 'Burn SAGE to pin a post to the top of the global feed'],
   ['Direct messages', 'Wallet-to-wallet DMs with anyone on the network'],
-  ['3× invite codes', 'More invites to bring your collectors in'],
+  ['2× invite capacity', 'Your invite code carries 10 uses instead of 5'],
 ];
 
 interface Props {

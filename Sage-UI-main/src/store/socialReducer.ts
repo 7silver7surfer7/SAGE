@@ -12,6 +12,7 @@ export interface SocialPost {
   id: number;
   text: string;
   imageUrl: string | null;
+  mediaType: 'image' | 'video' | null;
   createdAt: string;
   replyToId: number | null;
   likeCount: number;
@@ -216,7 +217,7 @@ const socialApi = baseApi.injectEndpoints({
     }),
     createPost: builder.mutation<
       { post: SocialPost },
-      { text: string; imageUrl?: string; replyToId?: number }
+      { text: string; imageUrl?: string; mediaType?: 'image' | 'video'; replyToId?: number }
     >({
       query: (body) => ({ url: 'social?action=CreatePost', method: 'POST', body }),
       invalidatesTags: (_r, _e, arg) =>

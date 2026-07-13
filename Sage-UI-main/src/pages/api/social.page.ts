@@ -49,11 +49,12 @@ const TREASURY_ADDRESS = '0x3E099aF007CaB8233D44782D8E6fe80FECDC321e'; // platfo
 // points-collect: verified users may spend pixels instead of SAGE
 const POINTS_PER_SAGE = 100;
 
-// referral economics: everyone who can post gets one 5-use code; going
-// verified upgrades you to three 10-use codes; admins get a fat code.
-const INVITES_BASE = { codes: 1, maxUses: 5 };
-const INVITES_VERIFIED = { codes: 3, maxUses: 10 };
-const INVITES_ADMIN = { codes: 3, maxUses: 1000 };
+// referral economics: every user has exactly ONE invite code — the tier only
+// changes how many uses it carries (verified doubles it; admin is unbounded
+// in practice).
+const INVITE_USES_BASE = 5;
+const INVITE_USES_VERIFIED = 10;
+const INVITE_USES_ADMIN = 1000;
 
 export default async function handler(request: NextApiRequest, response: NextApiResponse) {
   const { action } = request.query;
@@ -165,6 +166,7 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
     id: p.id,
     text: p.text,
     imageUrl: p.imageUrl,
+    mediaType: p.mediaType,
     createdAt: p.createdAt,
     replyToId: p.replyToId,
     likeCount: p.likeCount,
@@ -458,16 +460,20 @@ async function createPost(
       error: 'SAGE Social is invite-only — redeem an invite code to start posting',
       needsInvite: true,
     });
-  const { text, imageUrl, replyToId } = req.body || {};
+  const { text, imageUrl, mediaType, replyToId } = req.body || {};
   const trimmed = (text || '').trim();
   if (!trimmed && !imageUrl) return res.status(400).json({ error: 'empty post' });
   if (trimmed.length > 500) return res.status(400).json({ error: 'post too long (500 max)' });
+  // media must come from our own uploader (S3 social/ folder) — no hotlinks
+  if (imageUrl && !/^https:\/\/[a-z0-9.-]+\.amazonaws\.com\/social\//.test(imageUrl))
+    return res.status(400).json({ error: 'media must be uploaded through SAGE Social' });
 
   const post = await prisma.socialPost.create({
     data: {
       authorAddress: r.walletAddress,
       text: trimmed,
       imageUrl: imageUrl || null,
+      mediaType: imageUrl ? (mediaType === 'video' ? 'video' : 'image') : null,
       replyToId: replyToId ? Number(replyToId) : null,
     },
     include: postInclude(r.walletAddress),
@@ -877,7 +883,11 @@ async function getPostMetadata(id: number, res: NextApiResponse) {
     name: `SAGE Social #${id}`,
     description: `${post.text}\n\n— ${author} on SAGE Social`,
     external_url: `${siteUrl()}/social/post/${id}/`,
-    image: post.imageUrl || postCardSvgDataUri(post.text, author, post.createdAt),
+    image:
+      post.mediaType === 'video' || !post.imageUrl
+        ? postCardSvgDataUri(post.text, author, post.createdAt)
+        : post.imageUrl,
+    ...(post.mediaType === 'video' && post.imageUrl ? { animation_url: post.imageUrl } : {}),
     attributes: [
       { trait_type: 'Author', value: author },
       { trait_type: 'Posted', display_type: 'date', value: Math.floor(post.createdAt.getTime() / 1000) },
@@ -969,7 +979,7 @@ function generateInviteCode(): string {
   return `SAGE-${s}`;
 }
 
-/** Tops a user up to their invite allowance (base / verified / admin tier). */
+/** Ensures the user's SINGLE invite code exists at their tier's use count. */
 async function provisionInvites(wallet: string) {
   const u = await prisma.user.findUnique({
     where: { walletAddress: wallet },
@@ -978,27 +988,43 @@ async function provisionInvites(wallet: string) {
   if (!u) return [];
   const participates = u.role !== Role.USER || !!u.verifiedAt || !!u.invitedByCode;
   if (!participates) return [];
-  const tier =
-    u.role === Role.ADMIN ? INVITES_ADMIN : u.verifiedAt ? INVITES_VERIFIED : INVITES_BASE;
-  const existing = await prisma.socialInviteCode.findMany({ where: { ownerAddress: wallet } });
-  for (let i = existing.length; i < tier.codes; i++) {
-    for (let attempt = 0; attempt < 5; attempt++) {
+  const maxUses =
+    u.role === Role.ADMIN
+      ? INVITE_USES_ADMIN
+      : u.verifiedAt
+      ? INVITE_USES_VERIFIED
+      : INVITE_USES_BASE;
+  const existing = await prisma.socialInviteCode.findMany({
+    where: { ownerAddress: wallet },
+    orderBy: { createdAt: 'asc' },
+  });
+  let code = existing[0];
+  if (!code) {
+    for (let attempt = 0; attempt < 5 && !code; attempt++) {
       try {
-        existing.push(
-          await prisma.socialInviteCode.create({
-            data: { code: generateInviteCode(), ownerAddress: wallet, maxUses: tier.maxUses },
-          })
-        );
-        break;
+        code = await prisma.socialInviteCode.create({
+          data: { code: generateInviteCode(), ownerAddress: wallet, maxUses },
+        });
       } catch {
         // code collision — regenerate
       }
     }
+    if (!code) return [];
   }
-  return prisma.socialInviteCode.findMany({
-    where: { ownerAddress: wallet },
-    orderBy: { createdAt: 'asc' },
-  });
+  // tier upgrades raise the SAME code's capacity; extra codes from the old
+  // multi-code scheme are retired once unused
+  if (code.maxUses < maxUses) {
+    code = await prisma.socialInviteCode.update({
+      where: { code: code.code },
+      data: { maxUses },
+    });
+  }
+  if (existing.length > 1) {
+    await prisma.socialInviteCode.deleteMany({
+      where: { ownerAddress: wallet, uses: 0, NOT: { code: code.code } },
+    });
+  }
+  return [code];
 }
 
 async function getMyInvites(res: NextApiResponse, r: { walletAddress: string }) {

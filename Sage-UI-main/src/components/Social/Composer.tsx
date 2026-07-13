@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
@@ -16,6 +16,8 @@ interface Props {
 }
 
 const MAX = 500;
+const MAX_IMAGE_MB = 12;
+const MAX_VIDEO_MB = 25;
 
 /** Invite-gate state of the composer: SAGE Social sign-ups run on referrals. */
 function InviteGate() {
@@ -66,6 +68,9 @@ export default function Composer({ replyToId, placeholder, autoFocus, onPosted }
   });
   const [createPost, { isLoading }] = useCreatePostMutation();
   const [text, setText] = useState('');
+  const [media, setMedia] = useState<{ url: string; mediaType: 'image' | 'video' } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   if (!isSignedIn) {
     return (
@@ -76,12 +81,55 @@ export default function Composer({ replyToId, placeholder, autoFocus, onPosted }
   }
   if (me?.needsInvite) return <InviteGate />;
 
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-picking the same file
+    if (!file) return;
+    const isVideo = file.type.startsWith('video/');
+    const capMb = isVideo ? MAX_VIDEO_MB : MAX_IMAGE_MB;
+    if (file.size > capMb * 1024 * 1024) {
+      toast.error(`${isVideo ? 'Videos' : 'Images'} are capped at ${capMb}MB`);
+      return;
+    }
+    setUploading(true);
+    const t = toast.loading(isVideo ? 'Uploading + compressing video…' : 'Uploading image…');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/social-upload/', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'upload failed');
+      setMedia({ url: data.url, mediaType: data.mediaType });
+      toast.update(t, {
+        render: `Ready (${(data.bytes / 1024).toFixed(0)}KB after compression)`,
+        type: 'success',
+        isLoading: false,
+        autoClose: 2500,
+      });
+    } catch (err: any) {
+      toast.update(t, {
+        render: err?.message?.slice(0, 90) || 'Upload failed',
+        type: 'error',
+        isLoading: false,
+        autoClose: 5000,
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed && !media) return;
     try {
-      await createPost({ text: trimmed, replyToId }).unwrap();
+      await createPost({
+        text: trimmed,
+        imageUrl: media?.url,
+        mediaType: media?.mediaType,
+        replyToId,
+      }).unwrap();
       setText('');
+      setMedia(null);
       onPosted?.();
     } catch (e: any) {
       toast.error(e?.data?.error || 'Could not post');
@@ -107,7 +155,44 @@ export default function Composer({ replyToId, placeholder, autoFocus, onPosted }
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submit();
           }}
         />
+        {media && (
+          <div className='social-composer__preview'>
+            {media.mediaType === 'video' ? (
+              // eslint-disable-next-line jsx-a11y/media-has-caption
+              <video src={media.url} controls playsInline preload='metadata' />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={media.url} alt='' />
+            )}
+            <button
+              className='social-composer__preview-remove'
+              onClick={() => setMedia(null)}
+              title='Remove media'
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <div className='social-composer__footer'>
+          <input
+            ref={fileRef}
+            type='file'
+            accept='image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime'
+            style={{ display: 'none' }}
+            onChange={onFile}
+          />
+          <button
+            className='social-composer__media-btn'
+            disabled={uploading}
+            onClick={() => fileRef.current?.click()}
+            title='Add an image or video'
+          >
+            <svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2'>
+              <rect x='3' y='3' width='18' height='18' rx='3' />
+              <circle cx='8.5' cy='8.5' r='1.5' />
+              <path d='M21 15l-5-5L5 21' />
+            </svg>
+          </button>
           <span
             className='social-composer__count'
             data-low={remaining <= 40 ? 'true' : undefined}
@@ -116,7 +201,7 @@ export default function Composer({ replyToId, placeholder, autoFocus, onPosted }
           </span>
           <button
             className='social-composer__submit'
-            disabled={!text.trim() || isLoading}
+            disabled={(!text.trim() && !media) || isLoading || uploading}
             onClick={submit}
           >
             {isLoading ? 'Posting…' : replyToId ? 'Reply' : 'Post'}
