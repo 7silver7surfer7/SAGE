@@ -1526,38 +1526,7 @@ async function getActivity(res: NextApiResponse, r: { walletAddress: string }) {
 
 async function getConversations(res: NextApiResponse, r: { walletAddress: string }) {
   const me = r.walletAddress;
-  // alpha group chats surface as pinned conversations: the user's own room,
-  // plus the rooms of everyone they follow (followers-only membership).
-  const [ownChat, following] = await Promise.all([
-    prisma.socialGroupChat.findUnique({ where: { ownerAddress: me } }),
-    prisma.socialFollow.findMany({ where: { followerAddress: me }, select: { followingAddress: true } }),
-  ]);
-  const followedChats = await prisma.socialGroupChat.findMany({
-    where: { ownerAddress: { in: following.map((f) => f.followingAddress) }, enabled: true },
-  });
-  const groupOwners = [
-    ...(ownChat && ownChat.enabled ? [me] : []),
-    ...followedChats.map((c) => c.ownerAddress),
-  ];
-  const groupCards = await userCards(groupOwners);
-  const groups = await Promise.all(
-    groupOwners.map(async (owner) => {
-      const last = await prisma.socialGroupMessage.findFirst({
-        where: { ownerAddress: owner },
-        orderBy: { id: 'desc' },
-      });
-      return {
-        isGroup: true as const,
-        owner,
-        partner: groupCards[owner] || { address: owner, username: null, verified: false },
-        lastMessage: last ? last.text.slice(0, 80) : 'Alpha chat — say gm',
-        lastAt: last?.createdAt || new Date(),
-        unread: 0,
-        isOwner: owner === me,
-      };
-    })
-  );
-
+  // Direct messages only — one row per person you've talked to, newest first.
   const recent = await prisma.socialMessage.findMany({
     where: { OR: [{ fromAddress: me }, { toAddress: me }] },
     orderBy: { id: 'desc' },
@@ -1573,13 +1542,12 @@ async function getConversations(res: NextApiResponse, r: { walletAddress: string
   const partners = Array.from(byPartner.keys());
   const cards = await userCards(partners);
   const dms = partners.map((p) => ({
-    isGroup: false as const,
     partner: cards[p] || { address: p, username: null, verified: false },
     lastMessage: byPartner.get(p)!.last.text.slice(0, 80),
     lastAt: byPartner.get(p)!.last.createdAt,
     unread: byPartner.get(p)!.unread,
   }));
-  res.json({ conversations: [...groups, ...dms] });
+  res.json({ conversations: dms });
 }
 
 async function getMessages(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {

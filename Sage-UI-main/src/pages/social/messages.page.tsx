@@ -8,15 +8,12 @@ import VerificationModal from '@/components/Social/VerificationModal';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
+import ComposeMessageModal from '@/components/Social/ComposeMessageModal';
 import {
   useGetConversationsQuery,
   useGetMessagesQuery,
   useLazyGetOlderMessagesQuery,
   useSendMessageMutation,
-  useGetGroupChatQuery,
-  useSendGroupMessageMutation,
-  useToggleGroupChatMutation,
-  useKickFromGroupChatMutation,
   DirectMessage,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
@@ -115,142 +112,87 @@ function DMThread({ partner }: { partner: string }) {
   );
 }
 
-/** Alpha group chat thread — followers-only; the owner can kick + toggle. */
-function GroupThread({ owner }: { owner: string }) {
-  const router = useRouter();
-  const { data, error, isFetching } = useGetGroupChatQuery(owner, { pollingInterval: 10_000 });
-  const [sendGroup, { isLoading: sending }] = useSendGroupMessageMutation();
-  const [toggle] = useToggleGroupChatMutation();
-  const [kick] = useKickFromGroupChatMutation();
-  const [text, setText] = useState('');
-  const [showMembers, setShowMembers] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [data?.messages.length]);
-  const errMessage = (error as any)?.data?.error;
-  const send = async () => {
-    if (!text.trim()) return;
-    try { await sendGroup({ owner, text: text.trim() }).unwrap(); setText(''); }
-    catch (e: any) { toast.error(e?.data?.error || 'Could not send'); }
-  };
-  if (errMessage)
-    return (
-      <div className='social-dm__thread'>
-        <div className='social__empty' style={{ padding: 30 }}>
-          {errMessage}
-          {/follow/i.test(errMessage) && (
-            <div style={{ marginTop: 12 }}>
-              <button className='social-profile__follow' onClick={() => router.push(`/social/${owner}`)}>
-                Follow to enter
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  return (
-    <div className='social-dm__thread'>
-      <div className='social-groupchat__bar'>
-        <span>⚡ Alpha chat{data?.isOwner ? ' · your room' : ''}</span>
-        {data?.isOwner && (
-          <div className='social-groupchat__bar-actions'>
-            <button onClick={() => setShowMembers((v) => !v)}>Members ({data.members.length})</button>
-            <button onClick={async () => { await toggle({ enabled: false }).unwrap(); toast.success('Alpha chat off'); }}>
-              Turn off
-            </button>
-          </div>
-        )}
-      </div>
-      {showMembers && data?.isOwner && (
-        <div className='social-groupchat__members'>
-          {data.members.length ? data.members.map((m) => (
-            <div key={m.address} className='social-groupchat__member'>
-              <span onClick={() => router.push(`/social/${m.address}`)}>
-                {nameOf(m)}{m.verified && <VerifiedBadge size={11} />}
-              </span>
-              <button onClick={async () => {
-                if (!window.confirm(`Kick ${nameOf(m)}? They lose access and their messages are removed.`)) return;
-                try { await kick({ address: m.address }).unwrap(); toast.success('Kicked'); }
-                catch (e: any) { toast.error(e?.data?.error || 'Could not kick'); }
-              }}>Kick</button>
-            </div>
-          )) : <p className='social__empty'>No one has posted yet.</p>}
-        </div>
-      )}
-      <div className='social-dm__scroll'>
-        {isFetching && !data ? <LoaderDots /> : (data?.messages || []).length ? (
-          data!.messages.map((m) => (
-            <div key={m.id} className='social-groupchat__msg' data-mine={m.mine}>
-              <span className='social-groupchat__from' onClick={() => router.push(`/social/${m.from.address}`)}>
-                {nameOf(m.from)}{m.from.verified && <VerifiedBadge size={11} />}
-              </span>
-              <div className='social-dm__bubble' data-mine={m.mine}>{m.text}</div>
-            </div>
-          ))
-        ) : <div className='social__empty'>Quiet room — drop the first alpha.</div>}
-        <div ref={endRef} />
-      </div>
-      <div className='social-dm__composer'>
-        <textarea className='social-dm__input' placeholder='Share alpha…' value={text} maxLength={1000}
-          rows={1} onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-          }} />
-        <button className='social-dm__send' disabled={!text.trim() || sending} onClick={send}>Send</button>
-      </div>
-    </div>
-  );
-}
-
 export default function MessagesPage() {
   const router = useRouter();
   const { isSignedIn } = useSAGEAccount();
+  const [composeOpen, setComposeOpen] = useState(false);
   const { data, isFetching } = useGetConversationsQuery(undefined, {
     skip: !isSignedIn,
     pollingInterval: 30_000,
   });
-  // ?to=addr opens a DM, ?group=addr opens an alpha chat
+  // ?to=addr opens a direct message thread
   const activeDM = (router.query.to as string) || '';
-  const activeGroup = (router.query.group as string) || '';
 
   return (
     <SocialShell>
       <div className='social'>
-        <header className='social__header'>
-          <h1 className='social__title'>MESSAGES</h1>
-          <p className='social__subtitle'>DMs · alpha chats — group rooms live here</p>
+        <header className='social__header social__header--row'>
+          <div>
+            <h1 className='social__title'>MESSAGES</h1>
+            <p className='social__subtitle'>direct messages — private, wallet to wallet</p>
+          </div>
+          {isSignedIn && (
+            <button className='social-dm__new' onClick={() => setComposeOpen(true)}>
+              ＋ New message
+            </button>
+          )}
         </header>
         {!isSignedIn ? (
           <div className='social__empty'>Connect your wallet to see your messages.</div>
         ) : (
           <div className='social-dm'>
             <div className='social-dm__list'>
-              {isFetching && !data ? <LoaderDots /> : data?.conversations.length ? (
+              {isFetching && !data ? (
+                <LoaderDots />
+              ) : data?.conversations.length ? (
                 data.conversations.map((c) => {
-                  const isActive = c.isGroup ? activeGroup === c.owner : activeDM === c.partner.address;
+                  const isActive = activeDM.toLowerCase() === c.partner.address.toLowerCase();
                   return (
-                    <button key={(c.isGroup ? 'g-' : 'd-') + (c.isGroup ? c.owner : c.partner.address)}
-                      className='social-dm__row' data-active={isActive}
-                      onClick={() => router.push(c.isGroup ? `/social/messages/?group=${c.owner}` : `/social/messages/?to=${c.partner.address}`)}>
-                      <div className='social-dm__row-avatar' data-group={c.isGroup}>
-                        {c.isGroup ? <span className='social-dm__group-glyph'>⚡</span> : <PfpImage src={c.partner.profilePicture} />}
+                    <button
+                      key={c.partner.address}
+                      className='social-dm__row'
+                      data-active={isActive}
+                      onClick={() => router.push(`/social/messages/?to=${c.partner.address}`)}
+                    >
+                      <div className='social-dm__row-avatar'>
+                        <PfpImage src={c.partner.profilePicture} />
                       </div>
                       <div className='social-dm__row-main'>
                         <span className='social-dm__row-name'>
-                          {c.isGroup ? `${nameOf(c.partner)}'s alpha` : nameOf(c.partner)}
-                          {!c.isGroup && c.partner.verified && <VerifiedBadge size={12} />}
+                          {nameOf(c.partner)}
+                          {c.partner.verified && <VerifiedBadge size={12} />}
                         </span>
                         <span className='social-dm__row-snippet'>{c.lastMessage}</span>
                       </div>
-                      {!c.isGroup && c.unread > 0 && <span className='social-nav__badge'>{c.unread}</span>}
+                      {c.unread > 0 && <span className='social-nav__badge'>{c.unread}</span>}
                     </button>
                   );
                 })
-              ) : <div className='social__empty'>No conversations yet.</div>}
+              ) : (
+                <div className='social__empty'>
+                  No conversations yet — tap ＋ New message to start one.
+                </div>
+              )}
             </div>
-            {activeGroup ? <GroupThread owner={activeGroup} /> : activeDM ? <DMThread partner={activeDM} /> : null}
+            {activeDM ? (
+              <DMThread partner={activeDM} />
+            ) : (
+              <div className='social-dm__thread social-dm__thread--empty'>
+                <div className='social__empty'>Pick a conversation or start a new one.</div>
+              </div>
+            )}
           </div>
         )}
       </div>
+      {composeOpen && (
+        <ComposeMessageModal
+          onClose={() => setComposeOpen(false)}
+          onSent={(addr) => {
+            setComposeOpen(false);
+            router.push(`/social/messages/?to=${addr}`);
+          }}
+        />
+      )}
     </SocialShell>
   );
 }

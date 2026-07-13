@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import LoaderDots from '@/components/LoaderDots';
@@ -23,9 +23,7 @@ import {
   useSetFollowGateMutation,
   useSetProfileImageMutation,
   useToggleHideItemMutation,
-  useToggleGroupChatMutation,
 } from '@/store/socialReducer';
-import { useRef } from 'react';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 
 /** Grid of the viewer's own NFTs — pick one to become the NFT avatar. */
@@ -134,6 +132,12 @@ export default function SocialProfilePage() {
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [tab, setTab] = useState<'posts' | 'mints'>('posts');
+  // deep-link support: /social/<addr>?tab=mints opens the Mints tab (used by
+  // the "My mints" sidebar link)
+  useEffect(() => {
+    const q = router.query.tab;
+    if (q === 'mints' || q === 'posts') setTab(q);
+  }, [router.query.tab]);
   const { data: profile, isFetching: loadingProfile, refetch: refetchProfile } =
     useGetSocialProfileQuery(address, { skip: !address });
   const { data: postsData, isFetching: loadingPosts } = useGetUserPostsQuery(address, {
@@ -142,7 +146,6 @@ export default function SocialProfilePage() {
   const [toggleFollow, { isLoading: following }] = useToggleFollowMutation();
   const [setFollowGate, { isLoading: gating }] = useSetFollowGateMutation();
   const [setProfileImage] = useSetProfileImageMutation();
-  const [toggleGroupChat] = useToggleGroupChatMutation();
   const avatarFileRef = useRef<HTMLInputElement>(null);
   const bannerFileRef = useRef<HTMLInputElement>(null);
 
@@ -260,25 +263,6 @@ export default function SocialProfilePage() {
                   Get verified
                 </button>
               )}
-              {profile.groupChat &&
-                (profile.groupChat.enabled ? (
-                  <button
-                    className='social-profile__follow'
-                    onClick={() => router.push(`/social/messages/?group=${profile.address}`)}
-                  >
-                    ⚡ Alpha chat
-                  </button>
-                ) : (
-                  <button
-                    className='social-profile__follow social-profile__follow--on'
-                    onClick={async () => {
-                      await toggleGroupChat({ enabled: true }).unwrap();
-                      toast.success('Alpha chat is back on');
-                    }}
-                  >
-                    Turn alpha chat on
-                  </button>
-                ))}
               <button
                 className='social-profile__follow social-profile__follow--on'
                 onClick={() => avatarFileRef.current?.click()}
@@ -294,20 +278,6 @@ export default function SocialProfilePage() {
             </>
           ) : (
             <>
-              {profile.groupChat?.enabled && (
-                <button
-                  className='social-profile__follow'
-                  onClick={() => {
-                    if (!profile.groupChat?.isMember) {
-                      toast.info('Follow first — the alpha chat is followers-only');
-                      return;
-                    }
-                    router.push(`/social/messages/?group=${profile.address}`);
-                  }}
-                >
-                  ⚡ Alpha chat
-                </button>
-              )}
               <button
                 className='social-profile__follow social-profile__follow--on'
                 onClick={() => router.push(`/social/messages/?to=${profile.address}`)}

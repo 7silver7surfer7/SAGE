@@ -24,7 +24,11 @@ export const pointsApi = baseApi.injectEndpoints({
         const pointsEarned = BigInt((data as any).totalPointsEarned);
         const userAddress = (data as EarnedPoints).address;
         const pointsUsed = await getTotalPointsUsed(userAddress);
+        // Never surface a negative balance. On-chain `totalPointsUsed` persists
+        // across DB resets (testnet/staging wipes reset earned but not the
+        // contract), so earned − used can go negative — clamp it to 0.
         let pointsBalance = pointsEarned - pointsUsed;
+        if (pointsBalance < BigInt(0)) pointsBalance = BigInt(0);
         // as the balance is fresh from contract and database, release any escrow on hold
         dispatch(pointsApi.endpoints.releaseEscrowPoints.initiate());
         console.log(`getPointsBalance() :: ${pointsEarned} - ${pointsUsed} = ${pointsBalance}`);
@@ -39,6 +43,7 @@ export const pointsApi = baseApi.injectEndpoints({
         const userAddress = (data as EarnedPoints).address;
         const pointsUsed = await getTotalPointsUsed(userAddress);
         let pointsBalance = pointsEarned - pointsUsed;
+        if (pointsBalance < BigInt(0)) pointsBalance = BigInt(0); // never negative
         console.log(
           `getPointsBalanceByUser(${walletAddress}) :: ${pointsEarned} - ${pointsUsed} = ${pointsBalance}`
         );

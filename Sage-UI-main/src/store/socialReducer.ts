@@ -95,9 +95,12 @@ export interface InvitePreview {
   owner: { address: string; username: string | null; profilePicture: string | null };
 }
 
-export type Conversation =
-  | { isGroup: false; partner: SocialUserCard; lastMessage: string; lastAt: string; unread: number }
-  | { isGroup: true; owner: string; partner: SocialUserCard; lastMessage: string; lastAt: string; unread: number; isOwner: boolean };
+export type Conversation = {
+  partner: SocialUserCard;
+  lastMessage: string;
+  lastAt: string;
+  unread: number;
+};
 
 export interface SocialUserCard {
   address: string;
@@ -283,6 +286,26 @@ const socialApi = baseApi.injectEndpoints({
     getMessages: builder.query<{ messages: DirectMessage[]; hasMore: boolean }, string>({
       query: (partner) => ({ url: `social?action=GetMessages&partner=${partner}` }),
       providesTags: ['SocialMessages'],
+      // Opening a thread marks it read server-side. Reflect that instantly:
+      // zero the conversation's unread pill (cache patch, no refetch) and
+      // refresh the "Messages" nav badge (SocialProfile isn't a tag this query
+      // provides, so invalidating it can't loop).
+      async onQueryStarted(partner, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+        } catch {
+          return;
+        }
+        dispatch(
+          socialApi.util.updateQueryData('getConversations', undefined, (draft) => {
+            const c = draft.conversations.find(
+              (x) => x.partner.address.toLowerCase() === partner.toLowerCase()
+            );
+            if (c) c.unread = 0;
+          })
+        );
+        dispatch(socialApi.util.invalidateTags(['SocialProfile']));
+      },
     }),
     // Scroll-up pagination: fetch the page of messages older than `before`.
     // Kept separate from getMessages so loading history never re-marks read

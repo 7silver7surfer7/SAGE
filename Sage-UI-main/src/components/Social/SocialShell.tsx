@@ -140,7 +140,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
     { name: 'Launch token', url: '/social/launch/token', icon: 'rocket' },
     { name: 'Launch NFT', url: '/social/launch/nft', icon: 'palette' },
     ...(meAddress
-      ? [{ name: 'My mints', url: `/social/${meAddress}`, icon: 'hex' as const }]
+      ? [{ name: 'My mints', url: `/social/${meAddress}?tab=mints`, icon: 'hex' as const }]
       : []),
   ];
   const isCurrent = (url: string) =>
