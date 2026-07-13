@@ -94,6 +94,59 @@ const VIRAL = [
 const DMS = ['yo, your last post deserved more', 'collect my pinned?', 'gm gm', 'that reply thread was gold', 'trade you a boost for a repost', 'alpha chat, now'];
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
+// ── combinatorial post generator: thousands of distinct lines so two bots
+// almost never post the same thing. A post is opener + take (+ optional tag).
+const P_OPEN = [
+  'gm.', 'hot take:', 'unpopular opinion:', 'psa:', 'daily:', 'real talk —',
+  'note to self:', 'shower thought:', 'ok but', 'genuinely,', 'not financial advice but',
+  'been thinking —', 'reminder:', 'low-key,', 'watching the feed and', 'three coffees in and',
+];
+const P_TAKE = [
+  'wallet-native social was the missing primitive',
+  'a post you collect is a post you keep',
+  'the checkmark means something when it costs real money',
+  'tipping culture will out-earn ad culture for small artists',
+  'the brutalist collect cards are unreasonably clean',
+  'points-collect is the feature nobody saw coming',
+  'my pixels finally do something around here',
+  'the hot feed rewards good posts, not just new ones',
+  'boosts fade — as they should. no permanent front page',
+  'the leaderboard is proof-of-taste',
+  'follow-to-allowlist is the quietest growth hack on this chain',
+  'editions where 99% goes to the artist just feel correct',
+  'the ticker moves faster than my group chat',
+  'curation beats the algorithm when the algorithm is this legible',
+  'every share is a storefront now',
+  'owning the moment beats screenshotting it',
+  'the following feed finally beats the global one',
+  'launching a coin should be free and it is',
+  'testnet is a vibe, mainnet is a promise',
+  'art + market in one timeline is the whole thesis',
+  'no email, no password, just keys — this is the way',
+  'my invite tree is three layers deep already',
+  'DMs behind the checkmark killed the spam overnight',
+  'the migration reserve is just patience with a countdown',
+  'chartreuse is a personality type at this point',
+];
+const P_TAG = ['🌱', '⬡', '💚', '🔥', 'gm', 'wagmi', 'onchain', '', '', '', ''];
+// remember recent lines across ticks so we don't repeat network-wide
+const recentPosts = new Set();
+function uniquePost() {
+  for (let tries = 0; tries < 40; tries++) {
+    const open = pick(P_OPEN);
+    const take = pick(P_TAKE);
+    const tag = pick(P_TAG);
+    const text = `${open} ${take}${tag ? ' ' + tag : ''}`.trim();
+    if (!recentPosts.has(text)) {
+      recentPosts.add(text);
+      if (recentPosts.size > 400) recentPosts.delete(recentPosts.values().next().value);
+      return text;
+    }
+  }
+  // fallback: force uniqueness with a nonce fragment
+  return `${pick(P_OPEN)} ${pick(P_TAKE)} · ${Math.random().toString(36).slice(2, 6)}`;
+}
+
 // ── minimal SIWE session (same flow the app uses) ──
 class Session {
   constructor(wallet, name) { this.wallet = wallet; this.name = name; this.jar = {}; }
@@ -215,7 +268,7 @@ async function tick() {
   for (let i = 0; i < nPosts; i++) {
     await attempt(async () => {
       const author = pick(active);
-      const r = await author.api('CreatePost', { text: `${pick(POSTS)}${Math.random() < 0.2 ? ' ' + pick(['🌱', '⬡', '💚', '🔥']) : ''}` });
+      const r = await author.api('CreatePost', { text: uniquePost() });
       newPosts.push(r.post.id); stats.posts++;
     });
   }
@@ -249,7 +302,11 @@ async function tick() {
   if (Math.random() < 0.35) {
     await attempt(async () => {
       const star = pick(active);
-      const r = await star.api('CreatePost', { text: pick(VIRAL) });
+      // dedup viral lines network-wide too (only 4 of them)
+      let vtext = pick(VIRAL);
+      if (recentPosts.has(vtext)) vtext = `${vtext} — ${Math.random().toString(36).slice(2, 6)}`;
+      else recentPosts.add(vtext);
+      const r = await star.api('CreatePost', { text: vtext });
       stats.viral = 1;
       for (const s of active) {
         await attempt(async () => { await s.api('ToggleLike', { postId: r.post.id }); stats.likes++; });
