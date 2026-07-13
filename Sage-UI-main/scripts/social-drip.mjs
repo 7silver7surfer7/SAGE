@@ -180,7 +180,16 @@ async function tick() {
       if (!code) break;
       await s.api('RedeemInvite', { code });
       const persona = cast.find((c) => c.wallet.address === s.wallet.address);
-      await s.profile({ username: persona?.name, bio: pick(['here for the art', 'collector', 'gm only', '', 'points maxi']) || null });
+      // artsy generative avatar (DiceBear, CC0, deterministic per wallet)
+      const style = ['shapes', 'glass', 'rings', 'thumbs'][
+        Math.abs([...s.wallet.address].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 4
+      ];
+      const pfp = `https://api.dicebear.com/9.x/${style}/png?seed=${s.wallet.address}&size=400&backgroundType=gradientLinear,solid`;
+      await s.profile({
+        username: persona?.name,
+        bio: pick(['here for the art', 'collector', 'gm only', '', 'points maxi']) || null,
+        profilePicture: pfp,
+      });
       stats.joined++; joinsLeft--;
       // a joined member's own code feeds the pool for the rest of the ramp
       try {
