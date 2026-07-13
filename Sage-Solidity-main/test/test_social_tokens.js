@@ -236,3 +236,46 @@ describe('SocialNFTLauncher', () => {
     expect(await nft.maxSupply()).to.equal(10000);
   });
 });
+
+describe('SagePoints', () => {
+  let points, owner, oracle, alice, bob;
+  beforeEach(async () => {
+    [owner, oracle, alice, bob] = await ethers.getSigners();
+    const P = await ethers.getContractFactory('SagePoints');
+    points = await P.deploy();
+  });
+
+  it('controller mints accrual; non-controllers cannot', async () => {
+    await points.setController(oracle.address, true);
+    await points.connect(oracle).mint(alice.address, 1000);
+    expect(await points.balanceOf(alice.address)).to.equal(1000);
+    await expect(points.connect(bob).mint(bob.address, 1000)).to.be.revertedWith('not a controller');
+  });
+
+  it('points are non-transferable by default, toggleable by owner', async () => {
+    await points.mint(alice.address, 500);
+    await expect(points.connect(alice).transfer(bob.address, 100)).to.be.revertedWith(
+      'points are non-transferable'
+    );
+    await points.setEconomics(25, 1, 0, true);
+    await points.connect(alice).transfer(bob.address, 100);
+    expect(await points.balanceOf(bob.address)).to.equal(100);
+  });
+
+  it('owner can retune economics without redeploy', async () => {
+    await points.setEconomics(50, 100, 2500, false);
+    const e = await points.economics();
+    expect(e.pointsPerSagePerDay).to.equal(50);
+    expect(e.collectFloorPoints).to.equal(100);
+    expect(e.verificationPoints).to.equal(2500);
+    await expect(points.connect(alice).setEconomics(1, 1, 1, true)).to.be.revertedWith(
+      'Ownable: caller is not the owner'
+    );
+  });
+
+  it('controller burns spends', async () => {
+    await points.mint(alice.address, 1000);
+    await points.burnFrom(alice.address, 400);
+    expect(await points.balanceOf(alice.address)).to.equal(600);
+  });
+});

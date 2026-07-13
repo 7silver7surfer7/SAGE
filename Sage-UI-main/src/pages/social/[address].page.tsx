@@ -7,6 +7,7 @@ import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import ReferCard from '@/components/Social/ReferCard';
+import EditProfileModal from '@/components/Social/EditProfileModal';
 import TokenPanel from '@/components/Social/TokenPanel';
 import EditionPanel from '@/components/Social/EditionPanel';
 import { PfpImage } from '@/components/Media/BaseMedia';
@@ -131,10 +132,10 @@ export default function SocialProfilePage() {
   const { isSignedIn } = useSAGEAccount();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [tab, setTab] = useState<'posts' | 'mints'>('posts');
-  const { data: profile, isFetching: loadingProfile } = useGetSocialProfileQuery(address, {
-    skip: !address,
-  });
+  const { data: profile, isFetching: loadingProfile, refetch: refetchProfile } =
+    useGetSocialProfileQuery(address, { skip: !address });
   const { data: postsData, isFetching: loadingPosts } = useGetUserPostsQuery(address, {
     skip: !address,
   });
@@ -248,6 +249,12 @@ export default function SocialProfilePage() {
         <div className='social-profile__cta'>
           {profile.isSelf ? (
             <>
+              <button
+                className='social-profile__follow social-profile__follow--on'
+                onClick={() => setEditOpen(true)}
+              >
+                Edit profile
+              </button>
               {!profile.verified && (
                 <button className='social-profile__follow' onClick={() => setVerifyOpen(true)}>
                   Get verified
@@ -323,8 +330,27 @@ export default function SocialProfilePage() {
           {displayName}
           {profile.verified && <VerifiedBadge size={18} />}
         </h1>
-        <span className='social-profile__handle'>{shortenAddress(profile.address)}</span>
+        <button
+          className='social-profile__handle social-profile__addr'
+          title='Copy wallet address'
+          onClick={() => {
+            navigator.clipboard.writeText(profile.address);
+            toast.success('Address copied');
+          }}
+        >
+          {shortenAddress(profile.address)} ⧉
+        </button>
         {profile.bio && <p className='social-profile__bio'>{profile.bio}</p>}
+        {profile.webpage && (
+          <a
+            className='social-profile__web'
+            href={/^https?:\/\//.test(profile.webpage) ? profile.webpage : `https://${profile.webpage}`}
+            target='_blank'
+            rel='noreferrer noopener'
+          >
+            🔗 {profile.webpage.replace(/^https?:\/\//, '')}
+          </a>
+        )}
         <div className='social-profile__stats'>
           <span>
             <b>{profile.postCount}</b> posts
@@ -370,6 +396,13 @@ export default function SocialProfilePage() {
         </div>
       )}
       {verifyOpen && <VerificationModal onClose={() => setVerifyOpen(false)} />}
+      {editOpen && (
+        <EditProfileModal
+          initial={{ username: profile.username, bio: profile.bio, webpage: profile.webpage }}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => refetchProfile()}
+        />
+      )}
 
       <div className='social__tabs'>
         <button
