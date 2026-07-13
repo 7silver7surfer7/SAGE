@@ -9,6 +9,7 @@ import { transformTitle } from '@/utilities/strings';
 import { tipSage, burnSage, sendEth } from '@/utilities/tip';
 import {
   SocialPost,
+  useDeletePostMutation,
   useToggleLikeMutation,
   useToggleRepostMutation,
   useRecordTipMutation,
@@ -75,6 +76,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [boostPost] = useBoostPostMutation();
   const [setCollectible] = useSetCollectibleMutation();
   const [collectPost] = useCollectPostMutation();
+  const [deletePost] = useDeletePostMutation();
   const [busy, setBusy] = useState(false);
   const [showVerify, setShowVerify] = useState(false);
   const { openConnectModal } = useConnectModal();
@@ -111,6 +113,18 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       return;
     }
     toast.error(err?.data?.error || err?.message?.slice(0, 80) || fallback);
+  };
+
+  const onDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this post? Tips stay on the record, the post disappears from feeds.'))
+      return;
+    try {
+      await deletePost(post.id).unwrap();
+      toast.success('Post deleted');
+    } catch (err: any) {
+      toast.error(err?.data?.error || 'Could not delete');
+    }
   };
 
   const goToProfile = (e: React.MouseEvent) => {
@@ -284,6 +298,11 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             <span className='social-post__boosted-chip' title={`${post.boostBurned} SAGE burned`}>
               <FlameIcon /> Boosted
             </span>
+          )}
+          {isOwnPost && (
+            <button className='social-post__delete' title='Delete post' onClick={onDelete}>
+              ✕
+            </button>
           )}
         </div>
         {post.text && <p className='social-post__text'>{post.text}</p>}

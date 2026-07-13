@@ -3,7 +3,7 @@ import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import LoaderDots from '@/components/LoaderDots';
 import PostCard from '@/components/Social/PostCard';
-import SocialNav from '@/components/Social/SocialNav';
+import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import ReferCard from '@/components/Social/ReferCard';
@@ -119,7 +119,12 @@ export default function SocialProfilePage() {
   const [toggleFollow, { isLoading: following }] = useToggleFollowMutation();
   const [setFollowGate, { isLoading: gating }] = useSetFollowGateMutation();
 
-  if (loadingProfile || !profile) return <LoaderDots />;
+  if (loadingProfile || !profile)
+    return (
+      <SocialShell>
+        <LoaderDots />
+      </SocialShell>
+    );
 
   const displayName = profile.username
     ? transformTitle(profile.username)
@@ -154,8 +159,8 @@ export default function SocialProfilePage() {
   };
 
   return (
+    <SocialShell>
     <div className='social social--profile'>
-      <SocialNav />
       <div className='social-profile__banner'>
         {profile.bannerImageS3Path && <PfpImage src={profile.bannerImageS3Path} />}
       </div>
@@ -276,5 +281,6 @@ export default function SocialProfilePage() {
         </div>
       )}
     </div>
+    </SocialShell>
   );
 }

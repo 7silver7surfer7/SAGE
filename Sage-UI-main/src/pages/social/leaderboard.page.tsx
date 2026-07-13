@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import LoaderDots from '@/components/LoaderDots';
-import SocialNav from '@/components/Social/SocialNav';
+import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
@@ -23,12 +23,12 @@ export default function LeaderboardPage() {
   const meta = BOARDS.find(([k]) => k === board)!;
 
   return (
+    <SocialShell>
     <div className='social'>
       <header className='social__header'>
         <h1 className='social__title'>LEADERBOARD</h1>
         <p className='social__subtitle'>the SAGE Social economy, ranked</p>
       </header>
-      <SocialNav />
       <div className='social__tabs'>
         {BOARDS.map(([key, label]) => (
           <button
@@ -73,5 +73,6 @@ export default function LeaderboardPage() {
         <div className='social__empty'>No data yet — the economy starts with the first tip.</div>
       )}
     </div>
+    </SocialShell>
   );
 }

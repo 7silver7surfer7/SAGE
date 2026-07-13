@@ -1,6 +1,7 @@
 import { useRouter } from 'next/router';
 import LoaderDots from '@/components/LoaderDots';
 import PostCard from '@/components/Social/PostCard';
+import SocialShell from '@/components/Social/SocialShell';
 import Composer from '@/components/Social/Composer';
 import { useGetPostThreadQuery } from '@/store/socialReducer';
 
@@ -9,9 +10,15 @@ export default function SocialPostPage() {
   const id = Number(router.query.id);
   const { data, isFetching } = useGetPostThreadQuery(id, { skip: !id });
 
-  if (isFetching || !data) return <LoaderDots />;
+  if (isFetching || !data)
+    return (
+      <SocialShell>
+        <LoaderDots />
+      </SocialShell>
+    );
 
   return (
+    <SocialShell>
     <div className='social social--thread'>
       <button className='social__back' onClick={() => router.back()}>
         ← back
@@ -28,5 +35,6 @@ export default function SocialPostPage() {
         )}
       </div>
     </div>
+    </SocialShell>
   );
 }

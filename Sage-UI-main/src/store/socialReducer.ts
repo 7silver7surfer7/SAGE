@@ -115,6 +115,16 @@ export interface ActivityItem {
   createdAt: string;
 }
 
+export interface GlobalEvent {
+  type: 'tip' | 'collect' | 'boost' | 'follow' | 'post';
+  actor: SocialUserCard;
+  target: SocialUserCard | null;
+  postId?: number;
+  amount?: number;
+  currency?: string;
+  createdAt: string;
+}
+
 export interface LeaderboardRow {
   user: SocialUserCard;
   sage?: number;
@@ -197,6 +207,13 @@ const socialApi = baseApi.injectEndpoints({
       query: (address) => ({ url: `social?action=GetUserMints&address=${address}` }),
       providesTags: ['SocialFeed'],
     }),
+    getGlobalActivity: builder.query<{ events: GlobalEvent[] }, void>({
+      query: () => ({ url: 'social?action=GetGlobalActivity' }),
+      providesTags: ['SocialFeed'],
+    }),
+    searchSocial: builder.query<{ users: SocialUserCard[]; posts: SocialPost[] }, string>({
+      query: (q) => ({ url: `social?action=Search&q=${encodeURIComponent(q)}` }),
+    }),
     createPost: builder.mutation<
       { post: SocialPost },
       { text: string; imageUrl?: string; replyToId?: number }
@@ -270,6 +287,10 @@ const socialApi = baseApi.injectEndpoints({
       query: (body) => ({ url: 'social?action=RedeemInvite', method: 'POST', body }),
       invalidatesTags: ['SocialProfile', 'SocialFeed'],
     }),
+    deletePost: builder.mutation<{ ok: boolean }, number>({
+      query: (postId) => ({ url: 'social?action=DeletePost', method: 'POST', body: { postId } }),
+      invalidatesTags: ['SocialFeed'],
+    }),
     sendMessage: builder.mutation<{ ok: boolean; id: number }, { to: string; text: string }>({
       query: (body) => ({ url: 'social?action=SendMessage', method: 'POST', body }),
       invalidatesTags: ['SocialMessages'],
@@ -291,6 +312,9 @@ export const {
   useGetActivityQuery,
   useGetLeaderboardQuery,
   useGetUserMintsQuery,
+  useGetGlobalActivityQuery,
+  useSearchSocialQuery,
+  useDeletePostMutation,
   useCreatePostMutation,
   useToggleLikeMutation,
   useToggleRepostMutation,

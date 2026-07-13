@@ -80,6 +80,10 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getLeaderboard(response);
       case 'GetUserMints':
         return await getUserMints(String(request.query.address || ''), response);
+      case 'GetGlobalActivity':
+        return await getGlobalActivity(response);
+      case 'Search':
+        return await search(String(request.query.q || ''), request, response);
       // ---- authed writes ----
       case 'CreatePost':
         return await withAuth(request, response, (r) => createPost(request, response, r));
@@ -117,6 +121,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => sendMessage(request, response, r));
       case 'GetActivity':
         return await withAuth(request, response, (r) => getActivity(response, r));
+      case 'DeletePost':
+        return await withAuth(request, response, (r) => deletePost(request, response, r));
       default:
         return response.status(400).json({ error: 'unknown action' });
     }
@@ -310,7 +316,7 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
   let boosted: any[] = [];
   if (scope === 'global' && !cursor) {
     boosted = await prisma.socialPost.findMany({
-      where: { replyToId: null, boostedUntil: { gt: new Date() } },
+      where: { replyToId: null, deletedAt: null, boostedUntil: { gt: new Date() } },
       include: postInclude(viewer),
       orderBy: { boostBurned: 'desc' },
       take: 5,
@@ -320,6 +326,7 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
   const posts = await prisma.socialPost.findMany({
     where: {
       replyToId: null,
+      deletedAt: null,
       ...authorFilter,
       ...(boosted.length ? { id: { notIn: boosted.map((b) => b.id) } } : {}),
     },
@@ -339,7 +346,7 @@ async function getUserPosts(address: string, req: NextApiRequest, res: NextApiRe
   if (!addr) return res.status(400).json({ error: 'bad address' });
   const viewer = canon((await getRequester(req))?.walletAddress);
   const posts = await prisma.socialPost.findMany({
-    where: { authorAddress: addr, replyToId: null },
+    where: { authorAddress: addr, replyToId: null, deletedAt: null },
     include: postInclude(viewer),
     orderBy: { id: 'desc' },
     take: 40,
@@ -351,9 +358,9 @@ async function getUserPosts(address: string, req: NextApiRequest, res: NextApiRe
 async function getPost(id: number, req: NextApiRequest, res: NextApiResponse) {
   const viewer = canon((await getRequester(req))?.walletAddress);
   const post = await prisma.socialPost.findUnique({ where: { id }, include: postInclude(viewer) });
-  if (!post) return res.status(404).json({ error: 'not found' });
+  if (!post || post.deletedAt) return res.status(404).json({ error: 'not found' });
   const replies = await prisma.socialPost.findMany({
-    where: { replyToId: id },
+    where: { replyToId: id, deletedAt: null },
     include: postInclude(viewer),
     orderBy: { id: 'asc' },
     take: 100,
@@ -388,7 +395,7 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
       }),
       prisma.socialFollow.count({ where: { followingAddress: addr } }),
       prisma.socialFollow.count({ where: { followerAddress: addr } }),
-      prisma.socialPost.count({ where: { authorAddress: addr, replyToId: null } }),
+      prisma.socialPost.count({ where: { authorAddress: addr, replyToId: null, deletedAt: null } }),
       viewer
         ? prisma.socialFollow.findUnique({
             where: {
@@ -1048,11 +1055,30 @@ async function getInvite(code: string, res: NextApiResponse) {
   });
 }
 
+// The REAL brand mark for the invite card: read the shipped logo SVG once and
+// recolor it lime. Falls back to a drawn approximation if the file is absent.
+let sageLogoCache: string | null | undefined;
+function sageLogoInner(): string | null {
+  if (sageLogoCache !== undefined) return sageLogoCache;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require('fs');
+    const raw = fs.readFileSync(process.cwd() + '/public/branding/sage-full-logo.svg', 'utf8');
+    sageLogoCache = raw
+      .replace(/^[\s\S]*?<svg[^>]*>/, '')
+      .replace(/<\/svg>[\s\S]*$/, '')
+      .replace(/currentColor/g, '#d4fc52');
+  } catch {
+    sageLogoCache = null;
+  }
+  return sageLogoCache;
+}
+
 /**
  * The Twitter-card PNG for /invite/{code} (1200×630). SAGE design language:
- * dark canvas, lime accents, the circle-triangle logo mark, the inviter's
- * name and the code front and center. Rasterized with sharp (librsvg) — the
- * Docker image ships fonts-dejavu-core for the text.
+ * dark canvas, lime accents, the REAL SAGE logo (public/branding), the
+ * inviter's name and the code front and center. Rasterized with sharp
+ * (librsvg) — the Docker image ships fonts-dejavu-core for the text.
  */
 async function inviteImage(code: string, res: NextApiResponse) {
   const invite = await prisma.socialInviteCode.findUnique({
@@ -1066,14 +1092,19 @@ async function inviteImage(code: string, res: NextApiResponse) {
       `${invite.Owner.walletAddress.slice(0, 6)}…${invite.Owner.walletAddress.slice(-4)}`
   );
   const host = siteUrl().replace(/^https?:\/\//, '');
+  const logo = sageLogoInner();
+  const logoBlock = logo
+    ? `<g transform="translate(96,64) scale(1.9)">${logo}</g>` +
+      `<text x="580" y="164" font-family="DejaVu Sans,Arial,sans-serif" font-size="52" font-weight="bold" fill="#d4fc52" letter-spacing="14">SOCIAL</text>`
+    : `<circle cx="140" cy="140" r="52" fill="none" stroke="#d4fc52" stroke-width="6"/>` +
+      `<path d="M140 104 L172 168 L108 168 Z" fill="none" stroke="#d4fc52" stroke-width="6" stroke-linejoin="round"/>` +
+      `<text x="220" y="128" font-family="DejaVu Sans,Arial,sans-serif" font-size="40" font-weight="bold" fill="#d4fc52" letter-spacing="8">SAGE SOCIAL</text>`;
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">` +
     `<rect width="1200" height="630" fill="#131917"/>` +
     `<rect x="28" y="28" width="1144" height="574" fill="none" stroke="#d4fc52" stroke-width="3"/>` +
-    `<circle cx="140" cy="140" r="52" fill="none" stroke="#d4fc52" stroke-width="6"/>` +
-    `<path d="M140 104 L172 168 L108 168 Z" fill="none" stroke="#d4fc52" stroke-width="6" stroke-linejoin="round"/>` +
-    `<text x="220" y="128" font-family="DejaVu Sans,Arial,sans-serif" font-size="40" font-weight="bold" fill="#d4fc52" letter-spacing="8">SAGE SOCIAL</text>` +
-    `<text x="220" y="172" font-family="DejaVu Sans,Arial,sans-serif" font-size="24" fill="#9daba0">your wallet is your handle · tip in SAGE</text>` +
+    logoBlock +
+    `<text x="96" y="230" font-family="DejaVu Sans,Arial,sans-serif" font-size="24" fill="#9daba0">your wallet is your handle · tip in SAGE</text>` +
     `<text x="96" y="330" font-family="DejaVu Sans,Arial,sans-serif" font-size="52" fill="#eef3ec">${name} invited you</text>` +
     `<text x="96" y="440" font-family="DejaVu Sans,Arial,sans-serif" font-size="88" font-weight="bold" fill="#d4fc52" letter-spacing="6">${esc(invite.code)}</text>` +
     `<text x="96" y="540" font-family="DejaVu Sans,Arial,sans-serif" font-size="30" fill="#9daba0">${esc(host)}/invite/${esc(invite.code)}</text>` +
@@ -1320,4 +1351,117 @@ async function sendMessage(req: NextApiRequest, res: NextApiResponse, r: { walle
     data: { fromAddress: r.walletAddress, toAddress: to, text },
   });
   res.json({ ok: true, id: message.id });
+}
+
+
+// ─────────────────────── delete / search / global ticker ───────────────────────
+
+async function deletePost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string; role: Role }) {
+  const id = Number(req.body?.postId);
+  const post = await prisma.socialPost.findUnique({ where: { id } });
+  if (!post || post.deletedAt) return res.status(404).json({ error: 'post not found' });
+  if (post.authorAddress !== r.walletAddress && r.role !== Role.ADMIN)
+    return res.status(403).json({ error: 'not your post' });
+  if (post.collectCount > 0)
+    return res.status(400).json({
+      error: 'collected posts are permanent — their NFTs point at this post',
+    });
+  await prisma.$transaction([
+    prisma.socialPost.update({ where: { id }, data: { deletedAt: new Date() } }),
+    ...(post.replyToId
+      ? [
+          prisma.socialPost.update({
+            where: { id: post.replyToId },
+            data: { replyCount: { decrement: 1 } },
+          }),
+        ]
+      : []),
+  ]);
+  res.json({ ok: true });
+}
+
+async function search(q: string, req: NextApiRequest, res: NextApiResponse) {
+  const query = q.trim();
+  if (query.length < 2) return res.json({ users: [], posts: [] });
+  const viewer = canon((await getRequester(req))?.walletAddress);
+  const [users, posts] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        OR: [
+          { username: { contains: query, mode: 'insensitive' } },
+          { walletAddress: { startsWith: query, mode: 'insensitive' } },
+        ],
+      },
+      select: { walletAddress: true, username: true, profilePicture: true, verifiedAt: true },
+      take: 10,
+    }),
+    prisma.socialPost.findMany({
+      where: { text: { contains: query, mode: 'insensitive' }, deletedAt: null },
+      include: postInclude(viewer),
+      orderBy: { id: 'desc' },
+      take: 20,
+    }),
+  ]);
+  const verified = await pfpVerifiedMap(posts);
+  res.json({
+    users: users.map((u) => ({
+      address: u.walletAddress,
+      username: u.username,
+      profilePicture: u.profilePicture,
+      verified: !!u.verifiedAt,
+    })),
+    posts: posts.map((p) => serializePost(p, viewer, verified)),
+  });
+}
+
+/** The right-rail ticker: everything the network just did, money first. */
+async function getGlobalActivity(res: NextApiResponse) {
+  const [tips, collects, boosts, follows, posts] = await Promise.all([
+    prisma.socialTip.findMany({ orderBy: { id: 'desc' }, take: 10 }),
+    prisma.socialCollect.findMany({
+      orderBy: { id: 'desc' },
+      take: 10,
+      include: { Post: { select: { authorAddress: true } } },
+    }),
+    prisma.socialBoost.findMany({ orderBy: { id: 'desc' }, take: 10 }),
+    prisma.socialFollow.findMany({ orderBy: { createdAt: 'desc' }, take: 10 }),
+    prisma.socialPost.findMany({
+      where: { deletedAt: null, replyToId: null },
+      orderBy: { id: 'desc' },
+      take: 10,
+      select: { id: true, authorAddress: true, createdAt: true },
+    }),
+  ]);
+  type Ev = {
+    type: string;
+    actor: string;
+    target?: string;
+    postId?: number;
+    amount?: number;
+    currency?: string;
+    createdAt: Date;
+  };
+  const events: Ev[] = [
+    ...tips.map((t) => ({ type: 'tip', actor: t.fromAddress, target: t.toAddress, postId: t.postId, amount: t.amount, currency: t.currency, createdAt: t.createdAt })),
+    ...collects.map((c) => ({ type: 'collect', actor: c.collectorAddress, target: c.Post.authorAddress, postId: c.postId, amount: c.amount, currency: c.currency, createdAt: c.createdAt })),
+    ...boosts.map((b) => ({ type: 'boost', actor: b.fromAddress, postId: b.postId, amount: b.amount, currency: 'SAGE', createdAt: b.createdAt })),
+    ...follows.map((f) => ({ type: 'follow', actor: f.followerAddress, target: f.followingAddress, createdAt: f.createdAt })),
+    ...posts.map((p) => ({ type: 'post', actor: p.authorAddress, postId: p.id, createdAt: p.createdAt })),
+  ]
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, 20);
+  const cards = await userCards([
+    ...events.map((e) => e.actor),
+    ...events.map((e) => e.target).filter(Boolean),
+  ] as string[]);
+  res.setHeader('Cache-Control', 'public, s-maxage=20, stale-while-revalidate=60');
+  res.json({
+    events: events.map((e) => ({
+      ...e,
+      actor: cards[e.actor] || { address: e.actor, username: null, verified: false },
+      target: e.target
+        ? cards[e.target] || { address: e.target, username: null, verified: false }
+        : null,
+    })),
+  });
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import LoaderDots from '@/components/LoaderDots';
-import SocialNav from '@/components/Social/SocialNav';
+import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import { PfpImage } from '@/components/Media/BaseMedia';
@@ -85,12 +85,12 @@ export default function MessagesPage() {
   const active = (router.query.to as string) || '';
 
   return (
+    <SocialShell>
     <div className='social'>
       <header className='social__header'>
         <h1 className='social__title'>MESSAGES</h1>
         <p className='social__subtitle'>wallet-to-wallet · sending needs the checkmark</p>
       </header>
-      <SocialNav />
       {!isSignedIn ? (
         <div className='social__empty'>Connect your wallet to see your messages.</div>
       ) : (
@@ -131,5 +131,6 @@ export default function MessagesPage() {
         </div>
       )}
     </div>
+    </SocialShell>
   );
 }

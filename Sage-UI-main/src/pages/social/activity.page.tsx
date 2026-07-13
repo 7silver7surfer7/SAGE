@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import LoaderDots from '@/components/LoaderDots';
-import SocialNav from '@/components/Social/SocialNav';
+import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
@@ -37,12 +37,12 @@ export default function ActivityPage() {
   const { data, isFetching } = useGetActivityQuery(undefined, { skip: !isSignedIn });
 
   return (
+    <SocialShell>
     <div className='social'>
       <header className='social__header'>
         <h1 className='social__title'>ACTIVITY</h1>
         <p className='social__subtitle'>what the network did with your posts</p>
       </header>
-      <SocialNav />
       {!isSignedIn ? (
         <div className='social__empty'>Connect your wallet to see your activity.</div>
       ) : isFetching && !data ? (
@@ -85,5 +85,6 @@ export default function ActivityPage() {
         <div className='social__empty'>Nothing yet — post something worth tipping.</div>
       )}
     </div>
+    </SocialShell>
   );
 }

@@ -376,6 +376,10 @@ model SocialPost {
   text         String         @db.VarChar(500)
   imageUrl     String?        // optional media (arweave/S3 URL)
   createdAt    DateTime       @default(now())
+  // soft delete: history (tips/leaderboards) stays intact, feeds filter it
+  // out, GetPost 404s. Posts with collects can NEVER be deleted — the minted
+  // NFTs' tokenURI metadata lives at this row.
+  deletedAt    DateTime?
   // reply threading (self-relation); null = top-level post
   replyToId    Int?
   ReplyTo      SocialPost?    @relation("SocialReplies", fields: [replyToId], references: [id], onDelete: Cascade)

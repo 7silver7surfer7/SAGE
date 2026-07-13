@@ -3,6 +3,7 @@ import { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import prisma from '@/prisma/client';
+import SageFullLogoSVG from '@/public/branding/sage-full-logo.svg';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
@@ -63,12 +64,9 @@ export default function InvitePage(props: Props) {
       <div className='social social--invite'>
         <div className='social-invite'>
           <div className='social-invite__mark'>
-            <svg viewBox='0 0 120 120' width='72' height='72'>
-              <circle cx='60' cy='60' r='46' fill='none' stroke='currentColor' strokeWidth='6' />
-              <path d='M60 28 L88 84 L32 84 Z' fill='none' stroke='currentColor' strokeWidth='6' strokeLinejoin='round' />
-            </svg>
+            <SageFullLogoSVG />
           </div>
-          <h1 className='social-invite__title'>SAGE SOCIAL</h1>
+          <h1 className='social-invite__title'>SOCIAL</h1>
           <p className='social-invite__sub'>your wallet is your handle · tip in SAGE</p>
           <div className='social-invite__from'>
             <div className='social-invite__pfp'>

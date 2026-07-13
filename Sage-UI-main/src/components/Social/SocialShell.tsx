@@ -1,0 +1,199 @@
+import { ReactNode } from 'react';
+import { useRouter } from 'next/router';
+import SageFullLogoSVG from '@/public/branding/sage-full-logo.svg';
+import { PfpImage } from '@/components/Media/BaseMedia';
+import shortenAddress from '@/utilities/shortenAddress';
+import { transformTitle } from '@/utilities/strings';
+import VerifiedBadge from './VerifiedBadge';
+import ReferCard from './ReferCard';
+import {
+  useGetSocialProfileQuery,
+  useGetLeaderboardQuery,
+  useGetGlobalActivityQuery,
+  GlobalEvent,
+} from '@/store/socialReducer';
+import useSAGEAccount from '@/hooks/useSAGEAccount';
+
+const Icon = ({ d, filled }: { d: string; filled?: boolean }) => (
+  <svg width='20' height='20' viewBox='0 0 24 24' fill={filled ? 'currentColor' : 'none'} stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
+    <path d={d} />
+  </svg>
+);
+const ICONS = {
+  home: 'M3 9.5L12 3l9 6.5V21a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1V9.5z',
+  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35',
+  bell: 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
+  chat: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10z',
+  trophy: 'M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4zM7 4H4v2a3 3 0 0 0 3 3M17 4h3v2a3 3 0 0 1-3 3',
+  hex: 'M12 2l8.5 5v10L12 22l-8.5-5V7L12 2z',
+};
+
+function displayNameOf(u: { username?: string | null; address: string }) {
+  return u.username ? transformTitle(u.username) : shortenAddress(u.address);
+}
+
+const EVENT_VERB: Record<GlobalEvent['type'], string> = {
+  tip: 'tipped',
+  collect: 'collected a post by',
+  boost: 'boosted a post',
+  follow: 'followed',
+  post: 'posted',
+};
+
+function ActivityTicker() {
+  const router = useRouter();
+  const { data } = useGetGlobalActivityQuery(undefined, { pollingInterval: 30_000 });
+  return (
+    <div className='social-widget'>
+      <div className='social-widget__head'>
+        <h4>ACTIVITY</h4>
+        <button onClick={() => router.push('/social/activity')}>See all</button>
+      </div>
+      {data?.events.length ? (
+        data.events.slice(0, 12).map((e, i) => (
+          <div
+            key={i}
+            className='social-widget__event'
+            onClick={() =>
+              e.postId ? router.push(`/social/post/${e.postId}`) : router.push(`/social/${e.actor.address}`)
+            }
+          >
+            <span>
+              <b>{displayNameOf(e.actor)}</b> {EVENT_VERB[e.type]}{' '}
+              {e.target ? <b>{displayNameOf(e.target)}</b> : ''}
+              {e.amount ? (
+                <span className='social-widget__amount'>
+                  {' '}
+                  · {e.amount} {e.currency || 'SAGE'}
+                </span>
+              ) : null}
+            </span>
+          </div>
+        ))
+      ) : (
+        <p className='social-widget__empty'>Quiet in here — for now.</p>
+      )}
+    </div>
+  );
+}
+
+function LeaderboardWidget() {
+  const router = useRouter();
+  const { data } = useGetLeaderboardQuery();
+  const rows = data?.topEarners.length ? data.topEarners : data?.mostFollowed || [];
+  return (
+    <div className='social-widget'>
+      <div className='social-widget__head'>
+        <h4>LEADERBOARD</h4>
+        <button onClick={() => router.push('/social/leaderboard')}>See all</button>
+      </div>
+      {rows.slice(0, 5).map((row, i) => (
+        <div
+          key={row.user?.address || i}
+          className='social-widget__row'
+          onClick={() => row.user && router.push(`/social/${row.user.address}`)}
+        >
+          <span className='social-widget__rank'>{i + 1}</span>
+          <div className='social-widget__avatar'>
+            <PfpImage src={row.user?.profilePicture} />
+          </div>
+          <span className='social-widget__name'>
+            {row.user ? displayNameOf(row.user) : '—'}
+            {row.user?.verified && <VerifiedBadge size={11} />}
+          </span>
+          <span className='social-widget__value'>
+            {row.sage !== undefined ? `${row.sage}` : row.count}
+          </span>
+        </div>
+      ))}
+      {!rows.length && <p className='social-widget__empty'>First tip takes the crown.</p>}
+    </div>
+  );
+}
+
+/**
+ * The full-page SAGE Social app shell: left sidebar (logo, nav, refer card,
+ * you), center content, right rail (leaderboard + live network activity).
+ * Mobile: sidebar and rail fold away, a fixed bottom tab bar takes over.
+ */
+export default function SocialShell({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const { walletAddress, isSignedIn, userData } = useSAGEAccount();
+  const { data: me } = useGetSocialProfileQuery(walletAddress || '', {
+    skip: !isSignedIn || !walletAddress,
+  });
+
+  const nav: { name: string; url: string; icon: keyof typeof ICONS; badge?: number }[] = [
+    { name: 'Home', url: '/social', icon: 'home' },
+    { name: 'Search', url: '/social/search', icon: 'search' },
+    { name: 'Activity', url: '/social/activity', icon: 'bell' },
+    { name: 'Messages', url: '/social/messages', icon: 'chat', badge: me?.unreadMessages || 0 },
+    { name: 'Leaderboard', url: '/social/leaderboard', icon: 'trophy' },
+    ...(walletAddress
+      ? [{ name: 'My mints', url: `/social/${walletAddress}`, icon: 'hex' as const }]
+      : []),
+  ];
+  const isCurrent = (url: string) =>
+    url === '/social' ? router.pathname === '/social' : router.asPath.startsWith(url);
+
+  return (
+    <div className='social-shell'>
+      <aside className='social-shell__sidebar'>
+        <div className='social-shell__logo' onClick={() => router.push('/social')}>
+          <SageFullLogoSVG />
+          <span>SOCIAL</span>
+        </div>
+        <nav className='social-shell__nav'>
+          {nav.map((item) => (
+            <button
+              key={item.url}
+              className='social-shell__nav-item'
+              data-current={isCurrent(item.url)}
+              onClick={() => router.push(item.url)}
+            >
+              <Icon d={ICONS[item.icon]} />
+              <span>{item.name}</span>
+              {!!item.badge && <span className='social-nav__badge'>{item.badge}</span>}
+            </button>
+          ))}
+        </nav>
+        {isSignedIn && <ReferCard />}
+        {isSignedIn && walletAddress && (
+          <button
+            className='social-shell__me'
+            onClick={() => router.push(`/social/${walletAddress}`)}
+          >
+            <div className='social-shell__me-avatar' data-verified={me?.pfpVerified}>
+              <PfpImage src={userData?.profilePicture} />
+            </div>
+            <span className='social-shell__me-name'>
+              {me?.username ? transformTitle(me.username) : shortenAddress(walletAddress)}
+              {me?.verified && <VerifiedBadge size={12} />}
+            </span>
+          </button>
+        )}
+      </aside>
+
+      <main className='social-shell__main'>{children}</main>
+
+      <aside className='social-shell__rail'>
+        <LeaderboardWidget />
+        <ActivityTicker />
+      </aside>
+
+      <nav className='social-shell__tabbar'>
+        {nav.slice(0, 5).map((item) => (
+          <button
+            key={item.url}
+            data-current={isCurrent(item.url)}
+            onClick={() => router.push(item.url)}
+            aria-label={item.name}
+          >
+            <Icon d={ICONS[item.icon]} />
+            {!!item.badge && <span className='social-nav__badge'>{item.badge}</span>}
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
