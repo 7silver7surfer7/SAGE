@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { useSigner, useProvider } from 'wagmi';
-import { createEdition, mintEdition, editionMinted } from '@/utilities/socialToken';
+import { createEdition, createCollection, mintEdition, editionMinted } from '@/utilities/socialToken';
 import { baseApi } from '@/store/baseReducer';
+import { useCreatePostMutation } from '@/store/socialReducer';
 import VerificationModal from './VerificationModal';
 
 interface EditionRow {
@@ -41,22 +42,53 @@ const editionApi = baseApi.injectEndpoints({
 });
 const { useGetProfileEditionsQuery, useRecordEditionLaunchMutation } = editionApi;
 
-/** Launch modal: name/symbol/supply/price + artwork upload (compressed server-side). */
+/** Post-launch share sheet — Twitter intent + copy link. */
+function ShareLaunch({ symbol, name, edition, onClose }: { symbol: string; name: string; edition: string; onClose: () => void }) {
+  const [createPost] = useCreatePostMutation();
+  const url = typeof window !== 'undefined' ? `${window.location.origin}/social/${edition}` : '';
+  const line = `I just launched ${name} ($${symbol}) on SAGE Social 🎨 mint it:`;
+  const toFeed = async () => {
+    try { await createPost({ text: `${line}\n${url}` }).unwrap(); toast.success('Shared to your feed 🎉'); onClose(); }
+    catch (e: any) { toast.error(e?.data?.error || 'Could not share'); }
+  };
+  const toX = () => window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(line + '\n' + url)}`, '_blank');
+  return (
+    <div className='social-verify__overlay' onClick={onClose}>
+      <div className='social-verify social-verify--launch' onClick={(e) => e.stopPropagation()}>
+        <div className='social-verify__head'>
+          <h3>🎉 ${symbol} is live</h3>
+          <button className='social-verify__close' onClick={onClose}>✕</button>
+        </div>
+        <p className='social-verify__blurb'>Share it so your followers can mint.</p>
+        <button className='social-verify__buy' onClick={toFeed}>Post to my feed</button>
+        <button className='social-verify__buy social-verify__buy--eth' onClick={toX}>Share on 𝕏</button>
+        <button className='social-refer__btn' style={{ marginTop: 8, width: '100%' }}
+          onClick={() => { navigator.clipboard.writeText(url); toast.success('Link copied'); }}>Copy mint link</button>
+      </div>
+    </div>
+  );
+}
+
+/** Launch modal: single edition (one artwork) OR a ZIP collection (per-token art). */
 function LaunchEditionModal({ onClose }: { onClose: () => void }) {
   const { data: signer } = useSigner();
   const [record] = useRecordEditionLaunchMutation();
+  const [mode, setMode] = useState<'edition' | 'collection'>('edition');
   const [name, setName] = useState('');
   const [symbol, setSymbol] = useState('');
   const [supply, setSupply] = useState('100');
   const [price, setPrice] = useState('0.01');
   const [imageUrl, setImageUrl] = useState('');
+  const [zip, setZip] = useState<{ baseUri: string; count: number; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [needVerify, setNeedVerify] = useState(false);
+  const [live, setLive] = useState<{ symbol: string; name: string; edition: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const zipRef = useRef<HTMLInputElement>(null);
 
   const onFile = async (file?: File) => {
     if (!file) return;
-    const t = toast.loading('Uploading edition art…');
+    const t = toast.loading('Uploading art…');
     try {
       const form = new FormData();
       form.append('file', file);
@@ -70,25 +102,46 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const onZip = async (file?: File) => {
+    if (!file) return;
+    const t = toast.loading('Processing ZIP — compressing + pinning to Filebase…');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(`/api/social-collection/?name=${encodeURIComponent(name || 'Collection')}`, { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'zip failed');
+      setZip({ baseUri: data.baseUri, count: data.count, name: data.name });
+      setSupply(String(data.count));
+      toast.update(t, { render: `${data.count} pieces pinned ✓`, type: 'success', isLoading: false, autoClose: 3000 });
+    } catch (e: any) {
+      toast.update(t, { render: e?.message?.slice(0, 100) || 'ZIP failed', type: 'error', isLoading: false, autoClose: 6000 });
+    }
+  };
+
   const go = async () => {
     if (!signer) { toast.info('Connect your wallet'); return; }
-    if (!name.trim() || !symbol.trim() || !imageUrl) { toast.error('Name, ticker and artwork required'); return; }
-    const max = Number(supply);
+    if (!name.trim() || !symbol.trim()) { toast.error('Name and ticker required'); return; }
     const p = Number(price);
-    if (!max || max < 1 || isNaN(p) || p < 0) { toast.error('Check supply and price'); return; }
+    if (isNaN(p) || p < 0) { toast.error('Check the price'); return; }
     setBusy(true);
-    const t = toast.loading('Deploying your edition… (free — gas only)');
+    const t = toast.loading('Deploying… (free — gas only)');
     try {
-      // metadata URI is assigned post-registration; use a placeholder bound later
-      const { edition, txHash } = await createEdition(
-        name.trim(), symbol.trim().toUpperCase(), imageUrl, max, p, signer as any
-      );
-      await record({
-        editionAddress: edition, name: name.trim(), symbol: symbol.trim().toUpperCase(),
-        imageUrl, priceEth: p, maxSupply: max, launchTxHash: txHash,
-      }).unwrap();
-      toast.update(t, { render: `${name} is live — ${max} mints at ${p} ETH 🎨`, type: 'success', isLoading: false, autoClose: 5000 });
-      onClose();
+      let edition: string, txHash: string, max: number;
+      if (mode === 'collection') {
+        if (!zip) { toast.update(t, { render: 'Upload a ZIP first', type: 'error', isLoading: false, autoClose: 4000 }); setBusy(false); return; }
+        max = zip.count;
+        ({ edition, txHash } = await createCollection(name.trim(), symbol.trim().toUpperCase(), zip.baseUri, max, p, signer as any));
+        await record({ editionAddress: edition, name: name.trim(), symbol: symbol.trim().toUpperCase(), imageUrl: zip.baseUri, priceEth: p, maxSupply: max, launchTxHash: txHash }).unwrap();
+      } else {
+        if (!imageUrl) { toast.update(t, { render: 'Upload artwork first', type: 'error', isLoading: false, autoClose: 4000 }); setBusy(false); return; }
+        max = Number(supply);
+        if (!max || max < 1) { toast.update(t, { render: 'Check supply', type: 'error', isLoading: false, autoClose: 4000 }); setBusy(false); return; }
+        ({ edition, txHash } = await createEdition(name.trim(), symbol.trim().toUpperCase(), imageUrl, max, p, signer as any));
+        await record({ editionAddress: edition, name: name.trim(), symbol: symbol.trim().toUpperCase(), imageUrl, priceEth: p, maxSupply: max, launchTxHash: txHash }).unwrap();
+      }
+      toast.update(t, { render: `${name} is live 🎨`, type: 'success', isLoading: false, autoClose: 3000 });
+      setLive({ symbol: symbol.trim().toUpperCase(), name: name.trim(), edition });
     } catch (err: any) {
       if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
       else toast.update(t, { render: err?.data?.error || err?.message?.slice(0, 90) || 'Launch failed', type: 'error', isLoading: false, autoClose: 6000 });
@@ -98,29 +151,49 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
   };
 
   if (needVerify) return <VerificationModal onClose={onClose} />;
+  if (live) return <ShareLaunch {...live} onClose={onClose} />;
+  const artReady = mode === 'collection' ? !!zip : !!imageUrl;
   return (
     <div className='social-verify__overlay' onClick={onClose}>
-      <div className='social-verify' onClick={(e) => e.stopPropagation()}>
+      <div className='social-verify social-verify--launch' onClick={(e) => e.stopPropagation()}>
         <div className='social-verify__head'>
-          <h3>🎨 Launch an NFT edition</h3>
+          <h3>🎨 Launch NFTs</h3>
           <button className='social-verify__close' onClick={onClose}>✕</button>
         </div>
-        <p className='social-verify__blurb'>
-          A self-serve mint for your art or project. Creating is FREE (gas only) — every mint
-          pays 1% to the platform, 99% straight to you. Minters pay their own gas.
-        </p>
-        <input className='social-search__input' placeholder='Edition name (e.g. Chartreuse Studies)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
-        <input className='social-search__input' placeholder='Ticker (e.g. CHST)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 10 }} />
-        <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-          <input className='social-search__input' placeholder='Supply' value={supply} onChange={(e) => setSupply(e.target.value)} />
-          <input className='social-search__input' placeholder='Price (ETH)' value={price} onChange={(e) => setPrice(e.target.value)} />
+        <div className='social__tabs' style={{ marginBottom: 12 }}>
+          <button className={`social__tab ${mode === 'edition' ? 'social__tab--active' : ''}`} onClick={() => setMode('edition')}>Single edition</button>
+          <button className={`social__tab ${mode === 'collection' ? 'social__tab--active' : ''}`} onClick={() => setMode('collection')}>ZIP collection</button>
         </div>
-        <input ref={fileRef} type='file' accept='image/jpeg,image/png,image/webp,image/gif' style={{ display: 'none' }} onChange={(e) => onFile(e.target.files?.[0])} />
-        <button className='social-refer__btn' style={{ marginBottom: 14 }} onClick={() => fileRef.current?.click()}>
-          {imageUrl ? '✓ Artwork uploaded — replace' : 'Upload artwork'}
-        </button>
-        <button className='social-verify__buy' disabled={busy} onClick={go}>
-          {busy ? 'Deploying…' : 'Launch edition — free (gas only)'}
+        <p className='social-verify__blurb'>
+          {mode === 'edition'
+            ? 'One artwork, many mints. Free to create; each mint pays 1% to the platform, 99% to you; minters pay gas.'
+            : 'A ZIP of images → a generative collection (each token unique). Compressed + pinned to Filebase. Same 1%/99% split.'}
+        </p>
+        <input className='social-search__input' placeholder='Name (e.g. Chartreuse Studies)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 8 }} />
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <input className='social-search__input' placeholder='Ticker' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
+          <input className='social-search__input' placeholder='Price (ETH)' value={price} onChange={(e) => setPrice(e.target.value)} />
+          {mode === 'edition' && (
+            <input className='social-search__input' placeholder='Supply' value={supply} onChange={(e) => setSupply(e.target.value)} />
+          )}
+        </div>
+        {mode === 'edition' ? (
+          <>
+            <input ref={fileRef} type='file' accept='image/jpeg,image/png,image/webp,image/gif' style={{ display: 'none' }} onChange={(e) => onFile(e.target.files?.[0])} />
+            <button className='social-refer__btn' style={{ width: '100%', marginBottom: 12 }} onClick={() => fileRef.current?.click()}>
+              {imageUrl ? '✓ Artwork uploaded — replace' : 'Upload artwork'}
+            </button>
+          </>
+        ) : (
+          <>
+            <input ref={zipRef} type='file' accept='.zip,application/zip' style={{ display: 'none' }} onChange={(e) => onZip(e.target.files?.[0])} />
+            <button className='social-refer__btn' style={{ width: '100%', marginBottom: 12 }} onClick={() => zipRef.current?.click()}>
+              {zip ? `✓ ${zip.count} pieces pinned — replace ZIP` : 'Upload ZIP of images'}
+            </button>
+          </>
+        )}
+        <button className='social-verify__buy' disabled={busy || !artReady} onClick={go}>
+          {busy ? 'Deploying…' : `Launch ${mode === 'collection' ? 'collection' : 'edition'} — free (gas only)`}
         </button>
       </div>
     </div>

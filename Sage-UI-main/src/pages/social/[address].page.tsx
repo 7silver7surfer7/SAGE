@@ -240,7 +240,7 @@ export default function SocialProfilePage() {
                 (profile.groupChat.enabled ? (
                   <button
                     className='social-profile__follow'
-                    onClick={() => router.push(`/social/chat/${profile.address}`)}
+                    onClick={() => router.push(`/social/messages/?group=${profile.address}`)}
                   >
                     ⚡ Alpha chat
                   </button>
@@ -278,7 +278,7 @@ export default function SocialProfilePage() {
                       toast.info('Follow first — the alpha chat is followers-only');
                       return;
                     }
-                    router.push(`/social/chat/${profile.address}`);
+                    router.push(`/social/messages/?group=${profile.address}`);
                   }}
                 >
                   ⚡ Alpha chat

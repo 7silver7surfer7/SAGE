@@ -47,7 +47,7 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
   if (needVerify) return <VerificationModal onClose={onClose} />;
   return (
     <div className='social-verify__overlay' onClick={onClose}>
-      <div className='social-verify' onClick={(e) => e.stopPropagation()}>
+      <div className='social-verify social-verify--launch' onClick={(e) => e.stopPropagation()}>
         <div className='social-verify__head'>
           <h3>🚀 Launch your coin</h3>
           <button className='social-verify__close' onClick={onClose}>✕</button>

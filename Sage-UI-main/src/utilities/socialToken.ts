@@ -151,6 +151,31 @@ export async function createEdition(
   return { edition: ev?.args?.edition, txHash: tx.hash };
 }
 
+/**
+ * Create a generative COLLECTION — each token gets unique metadata at
+ * baseUri/{id}.json (built from the artist's ZIP by /api/social-collection).
+ */
+export async function createCollection(
+  name: string,
+  symbol: string,
+  baseUri: string,
+  maxSupply: number,
+  priceEth: number,
+  signer: Signer
+): Promise<{ edition: string; txHash: string }> {
+  const launcher = launcherContract(signer);
+  const tx = await launcher.createCollection(
+    name,
+    symbol,
+    baseUri,
+    maxSupply,
+    ethers.utils.parseEther(String(priceEth))
+  );
+  const receipt = await tx.wait(1);
+  const ev = receipt.events?.find((e: any) => e.event === 'EditionCreated');
+  return { edition: ev?.args?.edition, txHash: tx.hash };
+}
+
 /** Mint one from an edition — the minter pays price + gas; 1% to the platform. */
 export async function mintEdition(
   editionAddress: string,

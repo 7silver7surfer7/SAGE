@@ -23,7 +23,7 @@ export interface SocialPost {
   boostBurned: number;
   isBoosted: boolean;
   collectPrice: number | null;
-  collectCurrency: 'SAGE' | 'ETH';
+  collectCurrency: 'SAGE' | 'ETH' | 'POINTS';
   collectCount: number;
   author: SocialAuthor;
   likedByViewer: boolean;
@@ -94,12 +94,9 @@ export interface InvitePreview {
   owner: { address: string; username: string | null; profilePicture: string | null };
 }
 
-export interface Conversation {
-  partner: SocialUserCard;
-  lastMessage: string;
-  lastAt: string;
-  unread: number;
-}
+export type Conversation =
+  | { isGroup: false; partner: SocialUserCard; lastMessage: string; lastAt: string; unread: number }
+  | { isGroup: true; owner: string; partner: SocialUserCard; lastMessage: string; lastAt: string; unread: number; isOwner: boolean };
 
 export interface SocialUserCard {
   address: string;
@@ -294,7 +291,7 @@ const socialApi = baseApi.injectEndpoints({
       providesTags: ['SocialFeed'],
     }),
     getGroupChat: builder.query<
-      { enabled: boolean; isOwner: boolean; messages: GroupMessage[] },
+      { enabled: boolean; isOwner: boolean; members: SocialUserCard[]; messages: GroupMessage[] },
       string
     >({
       query: (owner) => ({ url: `social?action=GetGroupChat&owner=${owner}` }),
@@ -385,7 +382,7 @@ const socialApi = baseApi.injectEndpoints({
     }),
     setCollectible: builder.mutation<
       { ok: boolean; collectPrice: number | null; collectCurrency: string },
-      { postId: number; price: number | null; currency?: 'SAGE' | 'ETH' }
+      { postId: number; price: number | null }
     >({
       query: (body) => ({ url: 'social?action=SetCollectible', method: 'POST', body }),
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
@@ -477,6 +474,10 @@ const socialApi = baseApi.injectEndpoints({
       query: (body) => ({ url: 'social?action=ToggleGroupChat', method: 'POST', body }),
       invalidatesTags: ['SocialProfile'],
     }),
+    kickFromGroupChat: builder.mutation<{ ok: boolean }, { address: string }>({
+      query: (body) => ({ url: 'social?action=KickFromGroupChat', method: 'POST', body }),
+      invalidatesTags: ['SocialMessages'],
+    }),
     setProfileImage: builder.mutation<
       { ok: boolean; url: string; kind: string },
       { url: string; kind: 'avatar' | 'banner' }
@@ -515,6 +516,7 @@ export const {
   useGetGroupChatQuery,
   useSendGroupMessageMutation,
   useToggleGroupChatMutation,
+  useKickFromGroupChatMutation,
   useSetProfileImageMutation,
   useGetTokenDetailQuery,
   useRecordTokenLaunchMutation,

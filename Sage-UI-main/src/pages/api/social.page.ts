@@ -100,6 +100,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => sendGroupMessage(request, response, r));
       case 'ToggleGroupChat':
         return await withAuth(request, response, (r) => toggleGroupChat(request, response, r));
+      case 'KickFromGroupChat':
+        return await withAuth(request, response, (r) => kickFromGroupChat(request, response, r));
       case 'SetProfileImage':
         return await withAuth(request, response, (r) => setProfileImage(request, response, r));
       case 'GetGlobalActivity':
@@ -783,15 +785,15 @@ async function setCollectible(
     return res.status(403).json({ error: 'only the author can do that' });
   // price null/undefined = stop new collects; 0 = free collect; >0 = SAGE price
   const p = price === null || price === undefined || price === '' ? null : Number(price);
-  const currency = req.body?.currency === 'ETH' ? 'ETH' : 'SAGE';
   if (p !== null && (isNaN(p) || p < 0)) return res.status(400).json({ error: 'bad price' });
   if (p !== null && !parameters.SOCIAL_COLLECTS_ADDRESS)
     return res.status(400).json({ error: 'collecting is not enabled on this network yet' });
+  // collects are POINTS-only now: collectPrice holds the pixel price directly
   await prisma.socialPost.update({
     where: { id },
-    data: { collectPrice: p, collectCurrency: currency },
+    data: { collectPrice: p, collectCurrency: 'POINTS' },
   });
-  res.json({ ok: true, collectPrice: p, collectCurrency: currency });
+  res.json({ ok: true, collectPrice: p, collectCurrency: 'POINTS' });
 }
 
 async function collectPost(
@@ -814,15 +816,12 @@ async function collectPost(
   if (already) return res.status(400).json({ error: 'already collected' });
 
   // pay in the post's currency straight to the author, or (points) burn pixels
-  const currency = (post.collectCurrency === 'ETH' ? 'ETH' : 'SAGE') as 'SAGE' | 'ETH';
-  let amount = 0;
+  // collects are POINTS-only: hold SAGE (skin in the game), spend pixels, and
+  // the seller earns them. collectPrice holds the pixel price directly.
+  const currency = 'POINTS' as const;
+  const amount = 0;
   let pointsSpent: bigint | null = null;
-  if (payWith === 'POINTS' && currency === 'ETH')
-    return res.status(400).json({ error: 'points can only collect SAGE-priced posts' });
-  if (payWith === 'POINTS' && post.collectPrice > 0) {
-    // buying with points requires SKIN IN THE GAME: the buyer must hold SAGE
-    // (points accrue from holding it — this closes the freeloader loop).
-    // The threshold only bites on production; testnet wallets rarely hold any.
+  if (post.collectPrice > 0) {
     try {
       const { ethers: e } = await import('ethers');
       const token = new e.Contract(
@@ -833,14 +832,11 @@ async function collectPost(
       const bal = Number(e.utils.formatEther(await token.balanceOf(r.walletAddress)));
       const minHold = process.env.NEXT_PUBLIC_APP_MODE === 'production' ? 1 : 0;
       if (bal < minHold)
-        return res.status(400).json({
-          error: `hold at least ${minHold} SAGE to collect with pixels`,
-        });
+        return res.status(400).json({ error: `hold at least ${minHold} SAGE to collect` });
     } catch (e) {
       console.error('collect hold-check RPC failed', e);
-      // an RPC blip should not block collecting — the pixels check below still gates
     }
-    const pointsPrice = BigInt(Math.ceil(post.collectPrice * POINTS_PER_SAGE));
+    const pointsPrice = BigInt(Math.ceil(post.collectPrice));
     const [earned, spent] = await Promise.all([
       prisma.earnedPoints.findUnique({ where: { address: r.walletAddress } }),
       prisma.socialPointsSpend.aggregate({
@@ -850,26 +846,8 @@ async function collectPost(
     ]);
     const available = (earned?.totalPointsEarned ?? BigInt(0)) - (spent._sum.amount ?? BigInt(0));
     if (available < pointsPrice)
-      return res.status(400).json({
-        error: `not enough pixels (need ${pointsPrice}, have ${available})`,
-      });
+      return res.status(400).json({ error: `not enough pixels (need ${pointsPrice}, have ${available})` });
     pointsSpent = pointsPrice;
-  } else if (post.collectPrice > 0) {
-    // the payment to the author must be mined + sufficient, in the post's currency
-    if (!txHash) return res.status(400).json({ error: 'payment tx required' });
-    const spent = await prisma.socialCollect.findUnique({ where: { payTxHash: txHash } });
-    if (spent) return res.status(400).json({ error: 'this payment was already used' });
-    try {
-      amount = await verifyPayment(
-        txHash,
-        r.walletAddress,
-        post.authorAddress,
-        post.collectPrice,
-        currency
-      );
-    } catch (e: any) {
-      return res.status(400).json({ error: `payment not verified: ${e.message}` });
-    }
   }
 
   // server-mints the post NFT to the collector (platform holds role.minter)
@@ -884,7 +862,7 @@ async function collectPost(
         amount,
         currency,
         pointsSpent,
-        payTxHash: amount > 0 ? txHash : null,
+        payTxHash: null,
         mintTxHash: mint.txHash,
         contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
         tokenId: mint.tokenId,
@@ -1420,6 +1398,38 @@ async function getActivity(res: NextApiResponse, r: { walletAddress: string }) {
 
 async function getConversations(res: NextApiResponse, r: { walletAddress: string }) {
   const me = r.walletAddress;
+  // alpha group chats surface as pinned conversations: the user's own room,
+  // plus the rooms of everyone they follow (followers-only membership).
+  const [ownChat, following] = await Promise.all([
+    prisma.socialGroupChat.findUnique({ where: { ownerAddress: me } }),
+    prisma.socialFollow.findMany({ where: { followerAddress: me }, select: { followingAddress: true } }),
+  ]);
+  const followedChats = await prisma.socialGroupChat.findMany({
+    where: { ownerAddress: { in: following.map((f) => f.followingAddress) }, enabled: true },
+  });
+  const groupOwners = [
+    ...(ownChat && ownChat.enabled ? [me] : []),
+    ...followedChats.map((c) => c.ownerAddress),
+  ];
+  const groupCards = await userCards(groupOwners);
+  const groups = await Promise.all(
+    groupOwners.map(async (owner) => {
+      const last = await prisma.socialGroupMessage.findFirst({
+        where: { ownerAddress: owner },
+        orderBy: { id: 'desc' },
+      });
+      return {
+        isGroup: true as const,
+        owner,
+        partner: groupCards[owner] || { address: owner, username: null, verified: false },
+        lastMessage: last ? last.text.slice(0, 80) : 'Alpha chat — say gm',
+        lastAt: last?.createdAt || new Date(),
+        unread: 0,
+        isOwner: owner === me,
+      };
+    })
+  );
+
   const recent = await prisma.socialMessage.findMany({
     where: { OR: [{ fromAddress: me }, { toAddress: me }] },
     orderBy: { id: 'desc' },
@@ -1434,14 +1444,14 @@ async function getConversations(res: NextApiResponse, r: { walletAddress: string
   }
   const partners = Array.from(byPartner.keys());
   const cards = await userCards(partners);
-  res.json({
-    conversations: partners.map((p) => ({
-      partner: cards[p] || { address: p, username: null, verified: false },
-      lastMessage: byPartner.get(p)!.last.text.slice(0, 80),
-      lastAt: byPartner.get(p)!.last.createdAt,
-      unread: byPartner.get(p)!.unread,
-    })),
-  });
+  const dms = partners.map((p) => ({
+    isGroup: false as const,
+    partner: cards[p] || { address: p, username: null, verified: false },
+    lastMessage: byPartner.get(p)!.last.text.slice(0, 80),
+    lastAt: byPartner.get(p)!.last.createdAt,
+    unread: byPartner.get(p)!.unread,
+  }));
+  res.json({ conversations: [...groups, ...dms] });
 }
 
 async function getMessages(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
@@ -1744,13 +1754,12 @@ async function requestCollectVoucher(
   });
   if (already) return res.status(400).json({ error: 'already collected' });
 
-  const currency = (post.collectCurrency === 'ETH' ? 'ETH' : 'SAGE') as 'SAGE' | 'ETH';
-  let amount = 0;
+  // points-only: collectPrice holds the pixel price directly
+  const currency = 'POINTS' as const;
+  const amount = 0;
   let pointsSpent: bigint | null = null;
-  if (payWith === 'POINTS' && post.collectPrice > 0) {
-    if (currency === 'ETH')
-      return res.status(400).json({ error: 'points can only collect SAGE-priced posts' });
-    const pointsPrice = BigInt(Math.ceil(post.collectPrice * POINTS_PER_SAGE));
+  if (post.collectPrice > 0) {
+    const pointsPrice = BigInt(Math.ceil(post.collectPrice));
     const [earned, spent] = await Promise.all([
       prisma.earnedPoints.findUnique({ where: { address: r.walletAddress } }),
       prisma.socialPointsSpend.aggregate({ where: { address: r.walletAddress }, _sum: { amount: true } }),
@@ -1759,15 +1768,6 @@ async function requestCollectVoucher(
     if (available < pointsPrice)
       return res.status(400).json({ error: `not enough pixels (need ${pointsPrice}, have ${available})` });
     pointsSpent = pointsPrice;
-  } else if (post.collectPrice > 0) {
-    if (!txHash) return res.status(400).json({ error: 'payment tx required' });
-    const spent = await prisma.socialCollect.findUnique({ where: { payTxHash: txHash } });
-    if (spent) return res.status(400).json({ error: 'this payment was already used' });
-    try {
-      amount = await verifyPayment(txHash, r.walletAddress, post.authorAddress, post.collectPrice, currency);
-    } catch (e: any) {
-      return res.status(400).json({ error: `payment not verified: ${e.message}` });
-    }
   }
 
   // freeze metadata (Filebase/IPFS if configured, else the on-site tokenURI)
@@ -1850,10 +1850,19 @@ async function getGroupChat(req: NextApiRequest, res: NextApiResponse, r: { wall
     orderBy: { id: 'desc' },
     take: 100,
   });
-  const cards = await userCards(messages.map((m) => m.fromAddress));
+  // the owner sees who's posted (their kick targets)
+  const posterAddrs = Array.from(new Set(messages.map((m) => m.fromAddress)));
+  const cards = await userCards([...posterAddrs, owner]);
+  const members =
+    owner === r.walletAddress
+      ? posterAddrs
+          .filter((a) => a !== owner)
+          .map((a) => cards[a] || { address: a, username: null, verified: false })
+      : [];
   res.json({
     enabled: chat.enabled,
     isOwner: owner === r.walletAddress,
+    members,
     messages: messages.reverse().map((m) => ({
       id: m.id,
       from: cards[m.fromAddress] || { address: m.fromAddress, username: null, verified: false },
@@ -2133,4 +2142,28 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
       balance: bal,
     })),
   });
+}
+
+
+/**
+ * The owner kicks a member from their alpha chat: their follow is removed
+ * (membership is follow-based) and their messages are cleared from the room.
+ */
+async function kickFromGroupChat(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const target = canon(req.body?.address as string);
+  if (!target) return res.status(400).json({ error: 'bad address' });
+  const chat = await prisma.socialGroupChat.findUnique({ where: { ownerAddress: r.walletAddress } });
+  if (!chat) return res.status(404).json({ error: 'you have no alpha chat' });
+  if (target === r.walletAddress) return res.status(400).json({ error: 'you cannot kick yourself' });
+  await prisma.$transaction([
+    // drop their membership (they followed to get in)
+    prisma.socialFollow.deleteMany({
+      where: { followerAddress: target, followingAddress: r.walletAddress },
+    }),
+    // scrub their posts from the room
+    prisma.socialGroupMessage.deleteMany({
+      where: { ownerAddress: r.walletAddress, fromAddress: target },
+    }),
+  ]);
+  res.json({ ok: true });
 }

@@ -222,4 +222,17 @@ describe('SocialNFTLauncher', () => {
     const nft = await ethers.getContractAt('SocialEditionNFT', edition);
     await expect(nft.connect(minter).mintTo(minter.address)).to.be.revertedWith('launcher only');
   });
+
+  it('collection mints give each token unique per-id metadata', async () => {
+    const price = ethers.utils.parseEther('0.01');
+    const tx = await launcher.connect(artist).createCollection('Gen', 'GEN', 'ipfs://cid/', 10000, price);
+    const rc = await tx.wait();
+    const col = rc.events.find((e) => e.event === 'EditionCreated').args.edition;
+    await launcher.connect(minter).mint(col, { value: price });
+    await launcher.connect(minter).mint(col, { value: price });
+    const nft = await ethers.getContractAt('SocialCollectionNFT', col);
+    expect(await nft.tokenURI(1)).to.equal('ipfs://cid/1.json');
+    expect(await nft.tokenURI(2)).to.equal('ipfs://cid/2.json');
+    expect(await nft.maxSupply()).to.equal(10000);
+  });
 });

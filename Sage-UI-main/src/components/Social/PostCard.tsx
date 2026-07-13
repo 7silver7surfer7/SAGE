@@ -218,52 +218,40 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     e.stopPropagation();
     const raw = window.prompt(
       post.collectPrice === null
-        ? 'Sell this post as an NFT: set a price in SAGE (e.g. "10"), or in native ETH with a suffix (e.g. "0.01 ETH"). 0 = free. Leave empty to cancel.'
-        : `Collect price is ${post.collectPrice} ${post.collectCurrency}. Enter a new price ("10" = SAGE, "0.01 ETH" = ETH), or leave empty to stop new collects.`,
-      post.collectPrice === null ? '10' : String(post.collectPrice)
+        ? 'Sell this post as an NFT — set a price in pixels (e.g. "500"). Collectors spend pixels, you earn them. 0 = free. Leave empty to cancel.'
+        : `Collect price is ${post.collectPrice} pixels. Enter a new pixel price, or leave empty to stop new collects.`,
+      post.collectPrice === null ? '500' : String(post.collectPrice)
     );
     if (raw === null) return;
-    const isEth = /eth?\s*$/i.test(raw.trim());
-    const currency: 'SAGE' | 'ETH' = isEth ? 'ETH' : 'SAGE';
-    const price = raw.trim() === '' ? null : Number(raw.trim().replace(/eth?\s*$/i, '').trim());
+    const price = raw.trim() === '' ? null : Number(raw.trim());
     if (price !== null && (isNaN(price) || price < 0)) {
       toast.error('Enter a valid price');
       return;
     }
     try {
-      await setCollectible({ postId: post.id, price, currency }).unwrap();
-      toast.success(price === null ? 'Collecting closed' : `Collectible at ${price} ${currency}`);
+      await setCollectible({ postId: post.id, price }).unwrap();
+      toast.success(price === null ? 'Collecting closed' : `Collectible at ${price} pixels`);
     } catch (err: any) {
       handleGateError(err, 'Could not update');
     }
   };
 
-  const onCollect = async (e: React.MouseEvent, payWith: 'SAGE' | 'POINTS' = 'SAGE') => {
+  const onCollect = async (e: React.MouseEvent, _payWith?: string) => {
     e.stopPropagation();
-    if (payWith === 'SAGE' && !requireSigner()) return;
-    if (payWith === 'POINTS' && !requireAuth()) return;
+    if (!requireAuth()) return;
     if (post.collectedByViewer) return;
     const price = post.collectPrice || 0;
-    const cur = post.collectCurrency;
+    const payWith = 'POINTS' as const;
     const confirmed = window.confirm(
-      payWith === 'POINTS'
-        ? `Collect this post for ${Math.ceil(price * 100)} pixels? The post is minted to your wallet as an NFT.`
-        : price > 0
-        ? `Collect this post for ${price} ${cur}? You pay @${displayName} directly and the post is minted to your wallet as an NFT.`
+      price > 0
+        ? `Collect this post for ${Math.ceil(price)} pixels? It mints to your wallet as an NFT and @${displayName} earns the pixels.`
         : 'Collect this post for free? It will be minted to your wallet as an NFT.'
     );
     if (!confirmed) return;
     setBusy(true);
-    const t = toast.loading(
-      payWith === 'POINTS' ? 'Spending pixels…' : price > 0 ? `Paying ${price} ${cur}…` : 'Minting…'
-    );
+    const t = toast.loading(price > 0 ? 'Spending pixels…' : 'Minting…');
     try {
-      let txHash: string | undefined;
-      if (payWith === 'SAGE' && price > 0)
-        txHash =
-          cur === 'ETH'
-            ? await sendEth(post.author.address, price, signer as any)
-            : await tipSage(post.author.address, price, signer as any);
+      const txHash: string | undefined = undefined;
       // buyer-pays-gas: if the voucher minter is live, the collector submits
       // the mint themselves (paying its gas) with a server-signed voucher
       if (parameters.SOCIAL_COLLECT_MINTER_ADDRESS && signer) {
@@ -337,35 +325,21 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
         )}
         {post.collectPrice !== null && !isOwnPost && (
           <div className='social-post__collect-row'>
-            {post.collectPrice > 0 && post.collectCurrency === 'SAGE' && !post.collectedByViewer && (
-              <button
-                className='social-post__collect'
-                onClick={(e) => onCollect(e, 'POINTS')}
-                disabled={busy}
-                title='Hold SAGE, spend the pixels it earns — the seller receives them'
-              >
-                <HexIcon />
-                {`Collect · ${Math.ceil(post.collectPrice * 100)} pixels`}
-                {post.collectCount > 0 && (
-                  <span className='social-post__collect-count'>{post.collectCount} minted</span>
-                )}
-              </button>
-            )}
             <button
-              className={`social-post__collect ${post.collectPrice > 0 && post.collectCurrency === 'SAGE' && !post.collectedByViewer ? 'social-post__collect--points' : ''}`}
-              onClick={(e) => onCollect(e, 'SAGE')}
+              className='social-post__collect'
+              onClick={(e) => onCollect(e, 'POINTS')}
               disabled={busy || post.collectedByViewer}
+              title='Hold SAGE, spend the pixels it earns — the seller receives them'
             >
-              {post.collectedByViewer ? <HexIcon filled /> : null}
+              <HexIcon filled={post.collectedByViewer} />
               {post.collectedByViewer
                 ? 'Collected'
                 : post.collectPrice > 0
-                ? `${post.collectPrice} ${post.collectCurrency}`
+                ? `Collect · ${Math.ceil(post.collectPrice)} pixels`
                 : 'Collect · free'}
-              {(post.collectPrice === 0 || post.collectCurrency === 'ETH' || post.collectedByViewer) &&
-                post.collectCount > 0 && (
-                  <span className='social-post__collect-count'>{post.collectCount} minted</span>
-                )}
+              {post.collectCount > 0 && (
+                <span className='social-post__collect-count'>{post.collectCount} minted</span>
+              )}
             </button>
           </div>
         )}
@@ -414,7 +388,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
               <span>
                 {post.collectPrice === null
                   ? 'Sell as NFT'
-                  : `${post.collectPrice} ${post.collectCurrency} · ${post.collectCount} minted`}
+                  : `${post.collectPrice} pixels · ${post.collectCount} minted`}
               </span>
             </button>
           ) : (

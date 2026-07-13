@@ -46,6 +46,43 @@ export async function uploadJsonToFilebase(
   return cid ? `ipfs://${cid}` : null;
 }
 
+/** Filebase S3 client, or null when unconfigured. */
+async function filebaseClient() {
+  const bucket = process.env.FILEBASE_BUCKET;
+  const accessKey = process.env.FILEBASE_KEY;
+  const secretKey = process.env.FILEBASE_SECRET;
+  if (!bucket || !accessKey || !secretKey) return null;
+  const aws = (await import('aws-sdk')).default;
+  return {
+    bucket,
+    s3: new aws.S3({
+      endpoint: 'https://s3.filebase.com',
+      accessKeyId: accessKey,
+      secretAccessKey: secretKey,
+      region: 'us-east-1',
+      s3ForcePathStyle: true,
+      signatureVersion: 'v4',
+    }),
+  };
+}
+
+/** Pins an arbitrary buffer (e.g. a compressed image) to Filebase; returns ipfs://CID. */
+export async function uploadBufferToFilebase(
+  key: string,
+  contentType: string,
+  body: Buffer
+): Promise<string | null> {
+  const fb = await filebaseClient();
+  if (!fb) return null;
+  const put = await fb.s3
+    .putObject({ Bucket: fb.bucket, Key: key, Body: body, ContentType: contentType })
+    .promise();
+  const cid =
+    (put as any)?.['x-amz-meta-cid'] ||
+    (await fb.s3.headObject({ Bucket: fb.bucket, Key: key }).promise()).Metadata?.cid;
+  return cid ? `ipfs://${cid}` : null;
+}
+
 /**
  * EIP-712 voucher so a collector can mint their post-NFT THEMSELVES (paying
  * their own gas) via SocialCollectMinter. The server signs only after it has
