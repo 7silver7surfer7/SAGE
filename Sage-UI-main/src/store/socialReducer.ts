@@ -44,6 +44,7 @@ export interface SocialProfile {
   pfpVerified: boolean;
   verified: boolean; // paid checkmark
   bio: string | null;
+  webpage: string | null;
   bannerImageS3Path: string | null;
   followers: number;
   following: number;
