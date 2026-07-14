@@ -427,6 +427,17 @@ strong {
 
 .drop-page__grid-item-media-overlay {
   position: absolute;
+  // top/left:0 (not left implicit via width:100% alone) — without an
+  // explicit offset, position:absolute falls back to its own "static
+  // position" (wherever it would have landed in normal flow). That
+  // silently worked only as long as its preceding sibling (BaseMedia's own
+  // wrapper div) collapsed to zero height; once that wrapper gained a real
+  // height (position:relative;height:100%, added for an unrelated fix on
+  // BaseMedia's other render path), this overlay's fallback position moved
+  // to right BELOW the media box instead of over it — the hover tint
+  // "overhang" bleeding past the tile into whatever sits underneath it.
+  top: 0;
+  left: 0;
   width: 100%;
   opacity: 0;
   height: 100%;
