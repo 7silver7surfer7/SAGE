@@ -23,6 +23,19 @@
 .collection-panel__tabs-tab {
 }
 
+.collection-panel__social {
+  margin-top: 40px;
+  padding-top: 30px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.collection-panel__social-label {
+  @include m.text-p5;
+  color: #696969;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+
 .collection-panel__grid {
   display: flex;
   flex-wrap: wrap;

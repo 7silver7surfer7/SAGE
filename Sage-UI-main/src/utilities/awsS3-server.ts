@@ -20,7 +20,14 @@ export function createS3SignedUrl(folder: string, filename: string) {
   var params = {
     Bucket: `${process.env.S3_BUCKET}/${folder}`,
     Key: filename,
-    Expires: 60,
+    // 60s was too tight for a large collection ZIP (up to 1GB) — a PUT that
+    // outlives the signed URL fails partway through with no clear error
+    // (the client didn't check the PUT response either — see uploadFileToS3),
+    // surfacing later as a baffling "staged zip not readable (403)" once
+    // processing tries to read an object that was never fully written. A
+    // longer window doesn't weaken anything: it's still signed for this one
+    // bucket/key/method, just gives a slow upload room to finish.
+    Expires: 900,
     // No ACL: the bucket (sageart-media-mirror) runs with ACLs disabled
     // (BucketOwnerEnforced — the modern S3 default); public READ comes from
     // its bucket policy instead. Signing an x-amz-acl header here would make

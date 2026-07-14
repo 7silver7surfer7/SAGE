@@ -6,6 +6,7 @@ import ProfilePanel from '@/components/Pages/Profile/ProfilePanel';
 import CollectionPanel from '@/components/Pages/Profile/CollectionPanel';
 import NotificationsPanel from '@/components/Pages/Profile/NotificationsPanel';
 import Balances from '@/components/Pages/Profile/Balances';
+import TokenHoldingsPanel from '@/components/Pages/Profile/TokenHoldingsPanel';
 import CreationsPanel from '@/components/Pages/Profile/CreationsPanel';
 import SageFullLogoSVG from '@/public/branding/sage-full-logo.svg';
 import { useGetUserQuery, useSignOutMutation } from '@/store/usersReducer';
@@ -112,6 +113,7 @@ function profile() {
           />
         </div> */}
         <Balances />
+        <TokenHoldingsPanel />
       </section>
       <h1 className='profile-page__header'>{header}</h1>
       <section className='profile-page__main'>

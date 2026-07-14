@@ -8,6 +8,7 @@ import { useGetListingNftsByOwnerQuery } from '@/store/nftsReducer';
 import { Tabs, Tab, TabList, TabPanel } from 'react-tabs';
 import { useRouter } from 'next/router';
 import Gallery from './Gallery';
+import SocialCollectiblesPanel from './SocialCollectiblesPanel';
 
 interface Props {
   collectionTabIndex: number;
@@ -95,6 +96,7 @@ export default function CollectionPanel({ collectionTabIndex, setCollectionTabIn
           </TabPanel>
         </div>
       </Tabs>
+      <SocialCollectiblesPanel />
     </div>
   );
 }

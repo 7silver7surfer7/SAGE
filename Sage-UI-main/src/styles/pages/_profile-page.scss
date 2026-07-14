@@ -300,6 +300,90 @@
   @include balance-label;
 }
 
+.profile-page__holdings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 240px;
+  max-width: 320px;
+}
+
+.profile-page__holdings-label {
+  @include m.text-p5;
+  color: #696969;
+}
+
+.profile-page__holdings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.profile-page__holdings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 10px;
+  padding: 6px 4px;
+  cursor: pointer;
+  text-align: left;
+  &:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+}
+
+.profile-page__holdings-art {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  border-radius: 8px;
+  object-fit: cover;
+  &--ph {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #eee;
+    font-size: 0.6rem;
+    font-weight: 700;
+  }
+}
+
+.profile-page__holdings-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  b {
+    font-size: 0.85rem;
+  }
+  small {
+    font-size: 0.7rem;
+    color: #888;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.profile-page__holdings-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex: none;
+  small {
+    font-size: 0.68rem;
+    font-weight: 400;
+    color: #888;
+  }
+}
+
 // .profile-page__tabs-panels {
 //   display: flex;
 //   max-width: 80vw;

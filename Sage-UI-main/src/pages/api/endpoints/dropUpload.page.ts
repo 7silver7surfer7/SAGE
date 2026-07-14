@@ -30,10 +30,13 @@ import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SA
 // writing anything, so a plain USER role here isn't a trust concession.
 const ACTION_ROLES: Record<string, Role[]> = {
   GetArtistNftContractAddress: [Role.ARTIST, Role.ADMIN],
-  // also used by uploadLargeFileToArweave's browser-direct S3 mirror step —
-  // the server never sees bytes for >25MB uploads, so the signed-PUT dance
-  // this action provides is how the browser mirrors those bytes to S3 too
-  CreateS3SignedUrl: [Role.ADMIN],
+  // also used by uploadLargeFileToArweave's browser-direct S3 mirror step
+  // AND by the self-serve ZIP-collection staging upload — the server never
+  // sees bytes for a large upload, so the signed-PUT dance this action
+  // provides is how the browser mirrors those bytes to S3 directly. Was
+  // ADMIN-only, which silently blocked every non-admin artist's ZIP drop
+  // at the very first upload step (the signed-URL fetch itself 403'd).
+  CreateS3SignedUrl: [Role.USER, Role.ARTIST, Role.ADMIN],
   CopyFromS3toArweave: [Role.ADMIN], // legacy S3 path, unused by current UI
   // deploy-time backstop: pushes a display-only S3 mirror for a txid whose
   // upload-time mirror write failed (see src/utilities/s3Mirror.ts)

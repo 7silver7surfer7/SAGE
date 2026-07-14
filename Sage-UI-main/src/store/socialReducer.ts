@@ -121,6 +121,17 @@ export interface TokenListItem {
   creator: SocialUserCard;
 }
 
+export interface TokenHolding {
+  tokenAddress: string;
+  name: string;
+  symbol: string;
+  imageUrl: string | null;
+  balance: number;
+  pctOfSupply: number;
+  valueUsd: number;
+  mcapUsd: number;
+}
+
 export type Conversation = {
   partner: SocialUserCard;
   lastMessage: string;
@@ -418,6 +429,12 @@ const socialApi = baseApi.injectEndpoints({
     getProfileToken: builder.query<ProfileTokenResponse, string>({
       query: (address) => ({ url: `social?action=GetProfileToken&address=${address}` }),
       providesTags: (_r, _e, address) => [{ type: 'SocialProfile', id: address }],
+    }),
+    // every creator coin this wallet holds a positive balance of — powers the
+    // settings-page "your tokens" wallet view, next to the SAGE/pixel balances
+    getMyTokenHoldings: builder.query<{ holdings: TokenHolding[] }, string>({
+      query: (address) => ({ url: `social?action=GetMyTokenHoldings&address=${address}` }),
+      providesTags: (_r, _e, address) => [{ type: 'SocialProfile', id: `holdings-${address}` }],
     }),
     // mcap-sorted board with infinite scroll: one cache entry, pages merge in
     getTokens: builder.query<
@@ -782,10 +799,12 @@ const socialApi = baseApi.injectEndpoints({
           patch?.undo();
         }
       },
-      // also refresh the board — a trade moves this token's mcap/rank
+      // also refresh the board (mcap/rank moved) and the trader's own wallet
+      // holdings view, if we know who they are
       invalidatesTags: (_r, _e, arg) => [
         { type: 'SocialProfile', id: `tok-${arg.tokenAddress}` },
         'SocialTokenBoard',
+        ...(arg.trader ? [{ type: 'SocialProfile' as const, id: `holdings-${arg.trader}` }] : []),
       ],
     }),
     sendGroupMessage: builder.mutation<{ ok: boolean; id: number }, { owner: string; text: string }>({
@@ -860,6 +879,7 @@ export const {
   useGetUserMintsQuery,
   useGetGlobalActivityQuery,
   useGetProfileTokenQuery,
+  useGetMyTokenHoldingsQuery,
   useSearchSocialQuery,
   useDeletePostMutation,
   useEditPostMutation,

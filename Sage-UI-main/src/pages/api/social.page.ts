@@ -117,6 +117,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getTokenDetail(String(request.query.address || ''), response);
       case 'GetTokens':
         return await getTokens(request, response);
+      case 'GetMyTokenHoldings':
+        return await getMyTokenHoldings(String(request.query.address || ''), response);
       case 'HaltEdition':
         return await withAuth(request, response, (r) => haltEdition(request, response, r));
       case 'GetProfileEditions':
@@ -2917,6 +2919,64 @@ async function getTokenTradesPage(req: NextApiRequest, res: NextApiResponse) {
     })),
     nextOffset: rows.length === limit ? offset + limit : null,
   });
+}
+
+/** Every creator coin this wallet currently holds a positive balance of —
+ * the "wallet" view for the settings page, next to the SAGE/pixel balances. */
+async function getMyTokenHoldings(address: string, res: NextApiResponse) {
+  const addr = canon(address);
+  if (!addr) return res.status(400).json({ error: 'bad address' });
+  const trades = await prisma.socialTokenTrade.findMany({
+    where: { trader: addr },
+    select: { tokenAddress: true, side: true, tokenAmount: true },
+  });
+  if (!trades.length) return res.json({ holdings: [] });
+  const balances = new Map<string, number>();
+  for (const t of trades) {
+    const key = t.tokenAddress.toLowerCase();
+    const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
+    balances.set(key, (balances.get(key) || 0) + d);
+  }
+  const held = Array.from(balances.entries()).filter(([, b]) => b > 0.000001);
+  if (!held.length) return res.json({ holdings: [] });
+  const launches = await prisma.socialTokenLaunch.findMany({
+    where: { tokenAddress: { in: held.map(([a]) => a) } },
+  });
+  const launchMap = new Map(launches.map((l) => [l.tokenAddress.toLowerCase(), l]));
+  const maxIds = await prisma.socialTokenTrade.groupBy({
+    by: ['tokenAddress'],
+    where: { tokenAddress: { in: held.map(([a]) => a) } },
+    _max: { id: true },
+  });
+  const lastTrades = maxIds.length
+    ? await prisma.socialTokenTrade.findMany({
+        where: { id: { in: maxIds.map((m) => m._max.id!).filter(Boolean) } },
+        select: { tokenAddress: true, priceEth: true },
+      })
+    : [];
+  const priceMap = new Map(lastTrades.map((t) => [t.tokenAddress.toLowerCase(), t.priceEth]));
+  const ethUsd = await boostEthUsd().catch(() => 3500);
+  const INITIAL_PRICE_ETH_PER_M = (2 * 1e6) / 1.073e9;
+  const holdings = held
+    .map(([addrLower, balance]) => {
+      const launch = launchMap.get(addrLower);
+      if (!launch) return null;
+      const priceEthPerM = priceMap.get(addrLower) ?? INITIAL_PRICE_ETH_PER_M;
+      const mcapUsd = priceEthPerM * 1000 * ethUsd;
+      return {
+        tokenAddress: launch.tokenAddress,
+        name: launch.name,
+        symbol: launch.symbol,
+        imageUrl: launch.imageUrl,
+        balance,
+        pctOfSupply: (balance / 1e9) * 100,
+        valueUsd: (balance / 1e6) * priceEthPerM * ethUsd,
+        mcapUsd,
+      };
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => b.valueUsd - a.valueUsd);
+  res.json({ holdings });
 }
 
 /** Paginated holders (trade-derived balances) — the holders column. */
