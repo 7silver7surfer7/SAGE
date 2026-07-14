@@ -13,6 +13,8 @@ import {
   buyToken,
   airdropToken,
   tokenSpotPriceEthPerMillion,
+  creatorFeesOf,
+  claimCreatorFees,
 } from '@/utilities/socialToken';
 import VerificationModal from './VerificationModal';
 import { useRecordTradeMutation } from '@/store/socialReducer';
@@ -294,16 +296,27 @@ export default function TokenPanel({ address, isSelf }: Props) {
   const [launchOpen, setLaunchOpen] = useState(false);
   const [price, setPrice] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  // post-graduation creator revenue share accrued in the router — claimable
+  // right from the profile (mirrors the token page's claim chip)
+  const [fees, setFees] = useState<{ claimable: number; lifetime: number } | null>(null);
 
   const token = data?.token;
   useEffect(() => {
     if (token?.tokenAddress && provider) {
       tokenSpotPriceEthPerMillion(token.tokenAddress, provider as any).then(setPrice).catch(() => {});
+      // not-graduated tokens have no router accrual — the call reverts/zeroes
+      if (isSelf)
+        creatorFeesOf(token.tokenAddress, provider as any).then(setFees).catch(() => {});
     }
-  }, [token?.tokenAddress, provider]);
+  }, [token?.tokenAddress, provider, isSelf]);
 
+  // while the profile-token query is in flight, hold the space with a quiet
+  // placeholder — returning null here left the page as a bare Layout gradient
+  if (!data) {
+    return <div className='social-token social-token--loading' aria-hidden />;
+  }
   // launchpad disabled on this network (no factory) → render nothing
-  if (!data?.factory) return null;
+  if (!data.factory) return null;
 
   if (!token) {
     // no coin yet: only the profile owner sees the launch CTA
@@ -368,6 +381,10 @@ export default function TokenPanel({ address, isSelf }: Props) {
         className='social-token__head social-token__head--link'
         onClick={() => router.push(`/social/token/${token.tokenAddress}`)}
       >
+        {token.imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className='social-token__badge' src={token.imageUrl} alt={token.symbol} />
+        )}
         <span className='social-token__ticker'>${token.symbol}</span>
         <span className='social-token__name'>{token.name}</span>
         {price !== null && (
@@ -408,6 +425,34 @@ export default function TokenPanel({ address, isSelf }: Props) {
       </div>
       {token.airdropCount > 0 && (
         <p className='social-token__stat'>{token.airdropCount} followers airdropped</p>
+      )}
+      {isSelf && fees && (fees.claimable > 0 || fees.lifetime > 0) && (
+        <div className='social-token__fees'>
+          <span>
+            Creator fees: <b>{fees.claimable.toFixed(6)} ETH</b> claimable
+            <small> · {fees.lifetime.toFixed(6)} lifetime</small>
+          </span>
+          <button
+            className='social-token__airdrop'
+            disabled={busy || fees.claimable <= 0}
+            onClick={async () => {
+              if (!signer) { toast.info('Connect your wallet'); return; }
+              setBusy(true);
+              const t = toast.loading('Claiming your creator fees…');
+              try {
+                await claimCreatorFees(token.tokenAddress, signer as any);
+                toast.update(t, { render: `Claimed ${fees.claimable.toFixed(6)} ETH 💸`, type: 'success', isLoading: false, autoClose: 5000 });
+                if (provider) creatorFeesOf(token.tokenAddress, provider as any).then(setFees).catch(() => {});
+              } catch (err: any) {
+                toast.update(t, { render: `Claim failed — ${humanWalletError(err)}`, type: 'error', isLoading: false, autoClose: 6000 });
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            💸 Claim
+          </button>
+        </div>
       )}
     </div>
   );

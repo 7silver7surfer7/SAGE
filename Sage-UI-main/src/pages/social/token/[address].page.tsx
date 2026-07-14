@@ -507,8 +507,11 @@ export default function TokenDetailPage() {
                     {h.user.username ? transformTitle(h.user.username) : shortenAddress(h.user.address)}
                     {h.user.verified && <VerifiedBadge size={11} />}
                   </span>
-                  <span className='token-page__bal' title={`${fmt(h.balance)} tokens`}>
-                    {((h.balance / 1e9) * 100).toFixed(2)}%
+                  <span className='token-page__bal'>
+                    {fmt(h.balance)}
+                    <small className='token-page__bal-pct'>
+                      {((h.balance / 1e9) * 100).toFixed(2)}%
+                    </small>
                   </span>
                 </div>
               ))

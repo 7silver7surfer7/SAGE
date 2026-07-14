@@ -8,6 +8,10 @@ strong {
 }
 
 .drop-page {
+  // sits ABOVE the full-bleed banner layer (see banner-base: z-index 0) so
+  // the hero text paints over the darkened artwork in BOTH themes
+  position: relative;
+  z-index: 1;
 }
 
 .drop-page__artist {
@@ -59,16 +63,18 @@ strong {
 }
 
 .drop-page__banner-base {
-  z-index: -1;
-  position: relative;
+  // z-index 0 (NOT -1): a negative z drops this layer BEHIND the layout's
+  // background, which is white in light theme — the darkened banner became
+  // invisible and left white hero text on a white page. At 0 it paints over
+  // the layout background, and .drop-page (z-index 1) carries the text above.
+  z-index: 0;
   height: 100vh;
   width: 100%;
   position: absolute;
   filter: brightness(30%);
   // solid dark backdrop so the WHITE hero text stays readable even when the
   // banner is missing or hasn't loaded (social ZIP drops have no banner until
-  // processing patches one in; a light artwork at 30% is dark, but NO image
-  // used to leave white-on-white)
+  // processing patches one in)
   background: #161616;
 }
 
