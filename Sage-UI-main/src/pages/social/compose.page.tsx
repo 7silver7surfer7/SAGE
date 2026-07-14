@@ -12,7 +12,12 @@ export default function ComposePage() {
           <h1 className='social__title'>NEW POST</h1>
           <p className='social__subtitle'>text, images or video — 500 characters</p>
         </header>
-        <Composer autoFocus onPosted={() => router.push('/social')} />
+        <Composer
+          key={String(router.query.draft || '')}
+          autoFocus
+          initialText={typeof router.query.draft === 'string' ? router.query.draft : ''}
+          onPosted={() => router.push('/social')}
+        />
       </div>
     </SocialShell>
   );

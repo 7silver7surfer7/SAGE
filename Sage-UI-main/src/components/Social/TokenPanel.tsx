@@ -16,6 +16,7 @@ import {
 } from '@/utilities/socialToken';
 import VerificationModal from './VerificationModal';
 import { useRecordTradeMutation } from '@/store/socialReducer';
+import { humanWalletError } from '@/utilities/walletError';
 
 /** Launch modal — a verified creator mints their coin (pays the launch fee). */
 function LaunchModal({ onClose }: { onClose: () => void }) {
@@ -51,7 +52,7 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
       onClose();
     } catch (err: any) {
       if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
-      else toast.update(t, { render: err?.data?.error || err?.message?.slice(0, 90) || 'Launch failed', type: 'error', isLoading: false, autoClose: 6000 });
+      else toast.update(t, { render: err?.data?.error || `Launch failed — ${humanWalletError(err)}`, type: 'error', isLoading: false, autoClose: 7000 });
     } finally {
       setBusy(false);
     }
@@ -157,7 +158,7 @@ export default function TokenPanel({ address, isSelf }: Props) {
       toast.update(t, { render: `Bought $${token.symbol} 🎉`, type: 'success', isLoading: false, autoClose: 4000 });
       if (provider) tokenSpotPriceEthPerMillion(token.tokenAddress, provider as any).then(setPrice).catch(() => {});
     } catch (err: any) {
-      toast.update(t, { render: err?.message?.slice(0, 80) || 'Buy failed', type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(t, { render: `Buy failed — ${humanWalletError(err)}`, type: 'error', isLoading: false, autoClose: 7000 });
     } finally {
       setBusy(false);
     }

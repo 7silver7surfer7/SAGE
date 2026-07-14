@@ -163,7 +163,13 @@ export default function CandleChart({
     candlesRef.current.setData(candles);
     volumeRef.current?.setData(volume);
     lastCandleRef.current = candles[candles.length - 1] || null;
-    chartRef.current?.timeScale().fitContent();
+    // pump.fun-style viewport: the tape lives in a ~60-bar window anchored at
+    // the right — fitContent would stretch a lone candle across the whole
+    // plot (comically huge). Bars keep a normal width regardless of count.
+    chartRef.current?.timeScale().setVisibleLogicalRange({
+      from: candles.length - 60,
+      to: candles.length + 3,
+    });
   }, [candles, volume, theme]);
 
   // LIVE tape: chain events → paint the candle the moment the block lands

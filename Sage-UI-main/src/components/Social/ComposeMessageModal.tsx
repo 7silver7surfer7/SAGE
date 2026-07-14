@@ -8,6 +8,7 @@ import { transformTitle } from '@/utilities/strings';
 import {
   useSearchSocialQuery,
   useSendMessageMutation,
+  useGetMyFollowingQuery,
   SocialUserCard,
 } from '@/store/socialReducer';
 
@@ -29,6 +30,8 @@ export default function ComposeMessageModal({
   const [busy, setBusy] = useState(false);
   const [showVerify, setShowVerify] = useState(false);
   const { data, isFetching } = useSearchSocialQuery(q, { skip: q.trim().length < 2 });
+  // no query yet → suggest the people you follow (who you'd actually DM)
+  const { data: followingData } = useGetMyFollowingQuery();
   const [sendMessage] = useSendMessageMutation();
 
   const pickedSet = useMemo(
@@ -120,6 +123,25 @@ export default function ComposeMessageModal({
             ) : (
               <p className='social-newdm__hint'>No one found.</p>
             )
+          ) : followingData?.users?.filter((u) => !pickedSet.has(u.address.toLowerCase())).length ? (
+            <>
+              <p className='social-newdm__section'>People you follow</p>
+              {followingData.users
+                .filter((u) => !pickedSet.has(u.address.toLowerCase()))
+                .slice(0, 8)
+                .map((u) => (
+                  <button key={u.address} className='social-newdm__result' onClick={() => add(u)}>
+                    <span className='social-newdm__result-avatar'>
+                      <PfpImage src={u.profilePicture} />
+                    </span>
+                    <span className='social-newdm__result-name'>
+                      {nameOf(u)}
+                      {u.verified && <VerifiedBadge size={12} />}
+                    </span>
+                    <span className='social-newdm__result-addr'>{shortenAddress(u.address)}</span>
+                  </button>
+                ))}
+            </>
           ) : (
             <p className='social-newdm__hint'>
               {picked.length ? 'Add more people, or write your message below.' : 'Type a name or handle to find people.'}

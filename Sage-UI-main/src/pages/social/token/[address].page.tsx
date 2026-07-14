@@ -10,6 +10,8 @@ import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
 import { buyToken, sellToken, tokenBalanceOf } from '@/utilities/socialToken';
+import { humanWalletError } from '@/utilities/walletError';
+import { utils } from 'ethers';
 import {
   useGetTokenDetailQuery,
   useRecordTradeMutation,
@@ -81,6 +83,12 @@ export default function TokenDetailPage() {
     if (!raw) return;
     const amt = Number(raw);
     if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    // pre-flight: raw wallet reverts read as 'Internal JSON-RPC error'
+    const bal = await (signer as any).getBalance();
+    if (bal.lt(utils.parseEther(String(amt)))) {
+      toast.error(`Not enough ETH — you need ${amt}, you have ${(+utils.formatEther(bal)).toFixed(5)}`);
+      return;
+    }
     setBusy(true);
     const toastId = toast.loading(`Buying $${t.symbol}…`);
     try {
@@ -90,7 +98,7 @@ export default function TokenDetailPage() {
       toast.update(toastId, { render: `Bought $${t.symbol} 🎉`, type: 'success', isLoading: false, autoClose: 4000 });
       refreshBalance();
     } catch (e: any) {
-      toast.update(toastId, { render: e?.message?.slice(0, 80) || 'Buy failed', type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(toastId, { render: `Buy failed — ${humanWalletError(e, amt)}`, type: 'error', isLoading: false, autoClose: 7000 });
     } finally {
       setBusy(false);
     }
@@ -112,24 +120,20 @@ export default function TokenDetailPage() {
       toast.update(toastId, { render: `Sold $${t.symbol}`, type: 'success', isLoading: false, autoClose: 4000 });
       refreshBalance();
     } catch (e: any) {
-      toast.update(toastId, { render: e?.message?.slice(0, 80) || 'Sell failed', type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(toastId, { render: `Sell failed — ${humanWalletError(e)}`, type: 'error', isLoading: false, autoClose: 7000 });
     } finally {
       setBusy(false);
     }
   };
 
-  const share = async () => {
+  const share = () => {
     if (!isSignedIn) { toast.info('Connect your wallet to post'); return; }
     const url = `${window.location.origin}/social/token/${t.tokenAddress}`;
     const text = isCreator
       ? `I launched $${t.symbol} — ${t.name} 🚀 buy it on the SAGE Social curve:\n${url}`
       : `Aping $${t.symbol} on SAGE Social 🚀\n${url}`;
-    try {
-      await createPost({ text }).unwrap();
-      toast.success('Shared to your feed 🎉');
-    } catch (e: any) {
-      toast.error(e?.data?.error || 'Could not share');
-    }
+    // open a DRAFT in the composer — the user edits, then posts
+    router.push(`/social/compose?draft=${encodeURIComponent(text)}`);
   };
 
   return (

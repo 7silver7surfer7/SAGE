@@ -172,7 +172,7 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
         <p className='social-verify__blurb'>
           {mode === 'edition'
             ? 'One artwork, many mints. Free to create; each mint pays 1% to the platform, 99% to you; minters pay gas.'
-            : 'A ZIP of images → a generative collection (each token unique). Compressed + pinned to Filebase. Same 1%/99% split.'}
+            : 'A ZIP of images → one token per image, each named after its file. Compressed + pinned to Filebase. 1% platform / 99% you.'}
         </p>
         <input className='social-search__input' placeholder='Name (e.g. Chartreuse Studies)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 8 }} />
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>

@@ -9,6 +9,8 @@ import {
 } from '@/store/socialReducer';
 
 interface Props {
+  /** pre-filled text (e.g. share-to-feed drafts) — user edits before posting */
+  initialText?: string;
   replyToId?: number;
   placeholder?: string;
   autoFocus?: boolean;
@@ -61,13 +63,13 @@ function InviteGate() {
   );
 }
 
-export default function Composer({ replyToId, placeholder, autoFocus, onPosted }: Props) {
+export default function Composer({ replyToId, placeholder, autoFocus, onPosted, initialText }: Props) {
   const { isSignedIn, userData, walletAddress } = useSAGEAccount();
   const { data: me } = useGetSocialProfileQuery(walletAddress || '', {
     skip: !isSignedIn || !walletAddress,
   });
   const [createPost, { isLoading }] = useCreatePostMutation();
-  const [text, setText] = useState('');
+  const [text, setText] = useState(initialText || '');
   const [media, setMedia] = useState<{ url: string; mediaType: 'image' | 'video' } | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);

@@ -295,6 +295,10 @@ const socialApi = baseApi.injectEndpoints({
     getInvitePreview: builder.query<InvitePreview, string>({
       query: (code) => ({ url: `social?action=GetInvite&code=${code}` }),
     }),
+    getMyFollowing: builder.query<{ users: SocialUserCard[] }, void>({
+      query: () => ({ url: 'social?action=GetMyFollowing' }),
+      providesTags: ['SocialProfile'],
+    }),
     getConversations: builder.query<{ conversations: Conversation[] }, void>({
       query: () => ({ url: 'social?action=GetConversations' }),
       providesTags: ['SocialMessages'],
@@ -682,6 +686,7 @@ export const {
   useGetBoostInfoQuery,
   useGetMyInvitesQuery,
   useGetInvitePreviewQuery,
+  useGetMyFollowingQuery,
   useGetConversationsQuery,
   useGetMessagesQuery,
   useLazyGetOlderMessagesQuery,

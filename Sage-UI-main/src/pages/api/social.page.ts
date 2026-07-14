@@ -157,6 +157,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => getMyInvites(response, r));
       case 'RedeemInvite':
         return await withAuth(request, response, (r) => redeemInvite(request, response, r));
+      case 'GetMyFollowing':
+        return await withAuth(request, response, (r) => getMyFollowing(response, r));
       case 'GetConversations':
         return await withAuth(request, response, (r) => getConversations(response, r));
       case 'GetMessages':
@@ -1698,6 +1700,22 @@ async function getActivity(res: NextApiResponse, r: { walletAddress: string }) {
 }
 
 // ───────────────────────────── messaging (premium DMs) ─────────────────────────────
+
+/** People the signed-in user follows — powers the DM compose suggestions. */
+async function getMyFollowing(res: NextApiResponse, r: { walletAddress: string }) {
+  const follows = await prisma.socialFollow.findMany({
+    where: { followerAddress: r.walletAddress },
+    orderBy: { createdAt: 'desc' },
+    take: 24,
+    select: { followingAddress: true },
+  });
+  const cards = await userCards(follows.map((f) => f.followingAddress));
+  res.json({
+    users: follows.map(
+      (f) => cards[f.followingAddress] || { address: f.followingAddress, username: null, verified: false }
+    ),
+  });
+}
 
 async function getConversations(res: NextApiResponse, r: { walletAddress: string }) {
   const me = r.walletAddress;
