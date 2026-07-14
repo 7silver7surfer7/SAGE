@@ -2937,7 +2937,11 @@ async function getMyTokenHoldings(address: string, res: NextApiResponse) {
     const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
     balances.set(key, (balances.get(key) || 0) + d);
   }
-  const held = Array.from(balances.entries()).filter(([, b]) => b > 0.000001);
+  // >= 1 whole token, not just "not exactly zero" — a buy immediately
+  // followed by selling almost all of it leaves a fractional-token remainder
+  // (e.g. 0.29 out of a 1B supply) that reads as "$0.00 · 0.00%" and isn't
+  // meaningfully "held," just float residue from the trade math.
+  const held = Array.from(balances.entries()).filter(([, b]) => b >= 1);
   if (!held.length) return res.json({ holdings: [] });
   // Keep the CHECKSUMMED form (as SocialTokenLaunch/SocialTokenTrade.tokenAddress
   // actually store it) as the key from here on — an `in` filter against the
