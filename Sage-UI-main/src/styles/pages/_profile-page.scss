@@ -325,3 +325,11 @@
 //---------------------------Profile Panel--------------------------------
 
 // ------------------------ notificattions panel ----------------------------------
+
+.profile-panel__social-link {
+  align-self: center;
+  font-size: 0.78rem;
+  text-decoration: underline;
+  opacity: 0.65;
+  &:hover { opacity: 1; }
+}

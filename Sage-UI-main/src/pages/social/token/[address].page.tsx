@@ -166,6 +166,11 @@ export default function TokenDetailPage() {
 
         <CandleChart
           series={(data?.series || []).map((p) => ({ t: p.t, price: p.price }))}
+          trades={(data?.trades || []).map((tr) => ({
+            side: tr.side,
+            ethAmount: tr.ethAmount,
+            createdAt: tr.createdAt,
+          }))}
           tokenAddress={t.tokenAddress}
           onLiveTrade={() => refetch()}
         />

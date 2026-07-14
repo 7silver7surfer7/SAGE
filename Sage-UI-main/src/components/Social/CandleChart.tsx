@@ -16,6 +16,11 @@ interface Point {
   t: string;
   price: number;
 }
+interface TradePoint {
+  side: 'buy' | 'sell';
+  ethAmount: number;
+  createdAt: string;
+}
 interface Candle {
   time: UTCTimestamp;
   open: number;
@@ -23,6 +28,11 @@ interface Candle {
   low: number;
   close: number;
 }
+
+// The curve's spot price before any trade (initialVirtualEth 2 / 1.073B
+// virtual tokens, per 1M). Anchors the FIRST candle's open so the very first
+// buy draws a real body instead of an invisible flat doji.
+const INITIAL_PRICE_ETH_PER_M = (2 * 1_000_000) / 1_073_000_000;
 
 const BUCKET_S = 60; // 1-minute candles, pump.fun's default granularity
 
@@ -38,12 +48,30 @@ function toCandles(series: Point[]): Candle[] {
       last.low = Math.min(last.low, p.price);
       last.close = p.price;
     } else {
-      // open each candle at the previous close so the tape is gapless
-      const open = last ? last.close : p.price;
+      // gapless tape: open at the previous close; the FIRST candle opens at
+      // the curve's initial price so trade #1 has a visible body
+      const open = last ? last.close : INITIAL_PRICE_ETH_PER_M;
       out.push({ time: bucket, open, high: Math.max(open, p.price), low: Math.min(open, p.price), close: p.price });
     }
   }
   return out;
+}
+
+/** Volume histogram buckets (Σ ETH per minute, colored by net side). */
+function toVolume(trades: TradePoint[], dark: boolean) {
+  const sorted = [...trades].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt));
+  const map = new Map<number, { buy: number; sell: number }>();
+  for (const t of sorted) {
+    const bucket = Math.floor(+new Date(t.createdAt) / 1000 / BUCKET_S) * BUCKET_S;
+    const e = map.get(bucket) || { buy: 0, sell: 0 };
+    e[t.side] += t.ethAmount;
+    map.set(bucket, e);
+  }
+  return Array.from(map.entries()).map(([time, v]) => ({
+    time: time as UTCTimestamp,
+    value: v.buy + v.sell,
+    color: v.buy >= v.sell ? (dark ? 'rgba(212,252,82,0.5)' : 'rgba(79,117,0,0.5)') : 'rgba(246,96,138,0.5)',
+  }));
 }
 
 const FACTORY_EVENTS_ABI = [
@@ -60,10 +88,12 @@ const FACTORY_EVENTS_ABI = [
  */
 export default function CandleChart({
   series,
+  trades = [],
   tokenAddress,
   onLiveTrade,
 }: {
   series: Point[];
+  trades?: TradePoint[];
   tokenAddress: string;
   onLiveTrade?: () => void;
 }) {
@@ -72,9 +102,11 @@ export default function CandleChart({
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const lastCandleRef = useRef<Candle | null>(null);
 
   const candles = useMemo(() => toCandles(series), [series]);
+  const volume = useMemo(() => toVolume(trades, theme === 'dark'), [trades, theme]);
 
   // build / theme the chart
   useEffect(() => {
@@ -105,12 +137,23 @@ export default function CandleChart({
       borderVisible: false,
       priceFormat: { type: 'price', precision: 6, minMove: 0.000001 },
     });
+    // pump.fun-style volume strip along the bottom — visible even when the
+    // price tape is a flat hairline
+    const vol = chart.addHistogramSeries({
+      priceScaleId: 'vol',
+      priceFormat: { type: 'volume' },
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
     chartRef.current = chart;
     candlesRef.current = s;
+    volumeRef.current = vol;
     return () => {
       chart.remove();
       chartRef.current = null;
       candlesRef.current = null;
+      volumeRef.current = null;
     };
   }, [theme]);
 
@@ -118,9 +161,10 @@ export default function CandleChart({
   useEffect(() => {
     if (!candlesRef.current) return;
     candlesRef.current.setData(candles);
+    volumeRef.current?.setData(volume);
     lastCandleRef.current = candles[candles.length - 1] || null;
     chartRef.current?.timeScale().fitContent();
-  }, [candles, theme]);
+  }, [candles, volume, theme]);
 
   // LIVE tape: chain events → paint the candle the moment the block lands
   useEffect(() => {

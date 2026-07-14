@@ -299,10 +299,10 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     const raw = window.prompt(
       post.collectPrice === null
         ? isImageSale
-          ? 'Sell this artwork as an NFT — set a price in ETH (e.g. "0.05"). The buyer pays you directly. 0 = free. Leave empty to cancel.'
+          ? 'Sell this artwork as an NFT — set a price in ETH (e.g. "0.001"). The buyer pays you directly. 0 = free. Leave empty to cancel.'
           : 'Sell this post as an NFT — set a price in pixels (e.g. "500"). Collectors spend pixels, you earn them. 0 = free. Leave empty to cancel.'
         : `Collect price is ${post.collectPrice} ${unit}. Enter a new ${unit} price, or leave empty to stop new collects.`,
-      post.collectPrice === null ? (isImageSale ? '0.05' : '500') : String(post.collectPrice)
+      post.collectPrice === null ? (isImageSale ? '0.001' : '500') : String(post.collectPrice)
     );
     if (raw === null) return;
     const price = raw.trim() === '' ? null : Number(raw.trim());

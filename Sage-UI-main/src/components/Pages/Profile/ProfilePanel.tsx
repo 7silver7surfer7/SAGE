@@ -1,6 +1,6 @@
 import { PfpImage } from '@/components/Media/BaseMedia';
 import { getCountries, getFilteredCountries, getStates } from 'country-state-picker';
-import { useGetUserQuery, useUpdateArtistMutation } from '@/store/usersReducer';
+import { useGetUserQuery } from '@/store/usersReducer';
 import { useState, useEffect } from 'react';
 import { useUpdateUserMutation } from '@/store/usersReducer';
 import type { SafeUserUpdate } from '@/prisma/types';
@@ -15,7 +15,6 @@ import {
   validateWebpage,
 } from './ProfileValidation';
 import { toast } from 'react-toastify';
-import FileInputWithPreview from '@/components/FileInputWithPreview';
 
 interface State extends SafeUserUpdate {}
 
@@ -41,9 +40,7 @@ const countries = getCountries();
 export default function ProfilePanel({ isArtist }: Props) {
   const { data: sessionData } = useSession();
   const [state, setState] = useState<State>(INITIAL_STATE);
-  const [artistBannerFile, setArtistBannerFile] = useState<File | null>(null);
   const [updateUser, { isLoading: isUpdatingUser }] = useUpdateUserMutation();
-  const [updateArtist, { isLoading: isUpdatingArtist }] = useUpdateArtistMutation();
   const { data } = useGetUserQuery(undefined, { skip: !sessionData });
   const {
     isOpen: isProfilePicModalOpen,
@@ -72,15 +69,7 @@ export default function ProfilePanel({ isArtist }: Props) {
       toast.warn('Please keep bio to 1000 chars (max)');
       return;
     }
-    if (isArtist && artistBannerFile) {
-      await updateArtist({ user: state, bannerFile: artistBannerFile });
-    } else {
-      await updateUser(state);
-    }
-  }
-
-  function handleFileInputChange(file: File | null) {
-    setArtistBannerFile(file);
+    await updateUser(state);
   }
 
   function handleBioInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
@@ -130,21 +119,12 @@ export default function ProfilePanel({ isArtist }: Props) {
             </p>
           </div>
 
-          {isArtist && (
-            <div className='profile-panel__banner-group'>
-              <div className='profile-panel__banner-container'>
-                <FileInputWithPreview
-                  initialPreview={data.bannerImageS3Path}
-                  acceptedTypes={['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml']}
-                  onFileChange={handleFileInputChange}
-                />
-              </div>
-
-              <p className='profile-panel__pfp-label'>
-                ADD OR CHANGE <br /> BANNER PICTURE
-              </p>
-            </div>
-          )}
+          {/* banner editing lives on the SOCIAL profile now (/social/you →
+              Edit banner) — /profile carries just the avatar, same picture
+              as SAGE Social */}
+          <a className='profile-panel__social-link' href='/social/'>
+            avatar &amp; banner sync with your SAGE Social profile →
+          </a>
         </div>
         <div className='profile-panel__username-group'>
           <input
@@ -224,7 +204,7 @@ export default function ProfilePanel({ isArtist }: Props) {
         </div>
 
         <button
-          disabled={isUpdatingUser || isUpdatingArtist}
+          disabled={isUpdatingUser}
           type='submit'
           className='profile-panel__save-button'
         >
