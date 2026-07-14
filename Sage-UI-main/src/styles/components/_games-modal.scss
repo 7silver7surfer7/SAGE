@@ -23,13 +23,14 @@
   overflow-y: auto;
   height: 100%;
   align-items: center;
-  // content shorter than the viewport (the common case on mobile, where
-  // image + text rarely fill a full-height screen) otherwise sits anchored
-  // to the top with all the leftover space collecting as dead space below
-  // it — centering distributes it evenly instead. min-height:100% (not a
-  // fixed height) on the content lets it still scroll normally if it's
-  // ever taller than the viewport.
-  justify-content: center;
+  // NOT justify-content: center — tried that to balance a ~9px top/bottom
+  // asymmetry, but on mobile (this box is height: 100% of the viewport;
+  // desktop below overrides to height: auto/content-sized, so centering
+  // only ever affected mobile) centering short content in a full-height
+  // container reads as a wall of dead space above and below it. Content
+  // sits at its natural top-anchored position instead — .modal__panel's
+  // own background already fills the screen regardless of content height,
+  // so nothing shows through below a short modal either way.
   // & > :first-child {
   //   // margin-top: 20px;
   // }
