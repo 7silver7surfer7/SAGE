@@ -49,6 +49,23 @@ async function registerRefund(wallet: string, body: any, response: NextApiRespon
 
 async function registerSale(body: any, response: NextApiResponse) {
   var { eventType, eventId, amountTokens, amountPoints, buyer, txHash, blockTimestamp } = body;
+  // No on-chain verification here (unlike social.page.ts's verifyPayment-
+  // gated actions) — the amount/buyer/txHash are still self-reported by
+  // whoever calls this, so this is a partial mitigation, not a full fix.
+  // buyer is NOT required to match the caller — claimAuction's settleAuction
+  // call is deliberately permissionless (anyone can finalize someone else's
+  // won auction), so the caller registering the sale is often not the buyer.
+  // What this DOES close: a caller can no longer spam-repeat the same fake
+  // sale (each txHash counts once) or submit one with no txHash at all.
+  if (!txHash) {
+    response.status(400).json({ error: 'txHash required' });
+    return;
+  }
+  const dupe = await prisma.saleEvent.findFirst({ where: { txHash } });
+  if (dupe) {
+    response.status(200).json({ ok: true }); // already recorded — not an error, just a no-op
+    return;
+  }
   const artistAddress = await findArtistAddress(eventType, Number(eventId));
   const tokenUSDValue = await getTokenUSDValue();
   const amountUSD = tokenUSDValue > 0 ? amountTokens * tokenUSDValue : null;

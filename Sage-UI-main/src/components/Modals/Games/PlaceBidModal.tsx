@@ -253,7 +253,16 @@ function PlaceBidModal({ isOpen, closeModal, auction, artist, dropName, currency
                     value={state.desiredBidValue}
                   />
                   <button
-                    disabled={isPlaceBidLoading || errorState.isError || isAllowlistBlocked}
+                    disabled={
+                      isPlaceBidLoading ||
+                      errorState.isError ||
+                      isAllowlistBlocked ||
+                      // the input's min={nextMinBid} is cosmetic — typing a
+                      // negative/zero/below-floor value still enabled this
+                      // button, relying entirely on the chain to reject it
+                      !Number.isFinite(state.desiredBidValue) ||
+                      state.desiredBidValue < nextMinBid
+                    }
                     className='games-modal__place-bid-button'
                     onClick={handlePlaceBidClick}
                   >

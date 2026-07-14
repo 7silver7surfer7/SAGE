@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import prisma from '@/prisma/client';
-import { Nft, OfferState, User } from '@prisma/client';
+import { Nft, OfferState, Role, User } from '@prisma/client';
 import { getNFTContract } from '@/utilities/contracts';
 import { ethers } from 'ethers';
 import { getRequester } from '@/utilities/apiAuth';
@@ -48,7 +48,24 @@ export default async function handler(request: NextApiRequest, response: NextApi
  */
 async function deployContractMetadata(request: NextApiRequest, response: NextApiResponse) {
   console.log(`deployContractMetadata()`);
+  const requester = await getRequester(request);
+  if (!requester?.walletAddress) {
+    response.status(401).end('Not Authenticated');
+    return;
+  }
   const { artistAddress, contractAddress, displayName } = request.body;
+  // this step follows a real on-chain NFT-contract deploy, which only the
+  // artist themselves or an admin can trigger — without this check, ANYONE
+  // (logged out included) could spend real Arweave AR on demand and stamp
+  // an attacker-chosen fee_recipient into metadata carrying a real artist's
+  // name/bio/image
+  if (
+    requester.role !== Role.ADMIN &&
+    requester.walletAddress.toLowerCase() !== String(artistAddress || '').toLowerCase()
+  ) {
+    response.status(403).json({ error: 'you can only deploy metadata for your own contract' });
+    return;
+  }
   const artist = await prisma.user.findUnique({ where: { walletAddress: artistAddress } });
   if (!artist) {
     response.status(500).end();

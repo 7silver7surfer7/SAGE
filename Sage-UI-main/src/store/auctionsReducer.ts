@@ -77,8 +77,21 @@ const auctionsApi = baseApi.injectEndpoints({
     placeBid: builder.mutation<null, BidArgs>({
       queryFn: async ({ auctionId, amount, signer }, {}, _, fetchWithBQ) => {
         console.log(`placeBid(${auctionId}, ${amount})`);
-        if (!amount) new Error('Unspecified bid amount');
-        const weiValue = ethers.utils.parseEther(amount.toString());
+        // the missing `throw` here used to make this a no-op guard: a
+        // 0/negative/NaN amount fell straight through to parseEther, which
+        // — called outside any try/catch — threw an uncaught exception
+        // instead of a clean toast error
+        if (!amount || !Number.isFinite(amount) || amount <= 0) {
+          toast.error('Enter a valid bid amount', { toastId: `bid${auctionId}` });
+          return { data: null };
+        }
+        let weiValue: ethers.BigNumber;
+        try {
+          weiValue = ethers.utils.parseEther(amount.toString());
+        } catch {
+          toast.error('Enter a valid bid amount', { toastId: `bid${auctionId}` });
+          return { data: null };
+        }
         let isEthAuction = false;
         try {
           if (!signer) throw new Error('Please check wallet connection');
