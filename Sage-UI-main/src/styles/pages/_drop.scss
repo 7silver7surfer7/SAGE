@@ -86,6 +86,19 @@ strong {
   left: 50%;
   width: 100vw;
   transform: translateX(-50%);
+  // Nav is in normal document flow (not fixed), so it pushes .drop-page__header
+  // — and this banner, sized to match it — down below its own 94px box
+  // (margin-top: 50px + height: 44px, see _nav.scss). That left a plain gap
+  // above the banner instead of the intended full-bleed hero with the
+  // (transparent-background) nav floating over the artwork. Pulling the
+  // banner's top up by that same 94px (and growing its height to match)
+  // extends it behind the nav without moving its bottom edge — so the
+  // no-longer-overlapping-the-grid fix above still holds. Nav is hidden
+  // below the 'medium' breakpoint, so no offset is needed there.
+  @include b.min-width('medium') {
+    top: -94px;
+    height: calc(100% + 94px);
+  }
   filter: brightness(30%);
   // solid dark backdrop so the WHITE hero text stays readable even when the
   // banner is missing or hasn't loaded (social ZIP drops have no banner until

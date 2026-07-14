@@ -30,6 +30,16 @@ export default function useTheme() {
   }, []);
 
   useEffect(() => {
+    // classList.add alone never removed the OTHER theme's class — the very
+    // first render adds the default ('dark'), then the media-query effect
+    // above often flips state to 'light' a tick later, adding THAT too on
+    // top instead of replacing it. Both classes stuck on <body>
+    // simultaneously means every themed rule exists twice with identical
+    // specificity (.dark X and .light X), so whichever one happens to
+    // compile later in the stylesheet silently wins per-property — the
+    // actual cause of scattered wrong-theme-color bugs (this one: modal
+    // description text rendering near-white on a light background).
+    document.body.classList.remove(DARK_THEME, LIGHT_THEME);
     document.body.classList.add(theme);
   }, [theme]);
 
