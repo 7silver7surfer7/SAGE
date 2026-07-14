@@ -26,6 +26,7 @@ import { humanWalletError } from '@/utilities/walletError';
  * the module, and an optional wide banner for the coin page.
  */
 export function LaunchModal({ onClose }: { onClose: () => void }) {
+  const router = useRouter();
   const { data: signer } = useSigner();
   const [record] = useRecordTokenLaunchMutation();
   const [recordTrade] = useRecordTradeMutation();
@@ -101,6 +102,10 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
       }
       toast.update(t, { render: `$${symbol.toUpperCase()} is live 🚀${devBuy ? ' — you are holder #1' : ''}`, type: 'success', isLoading: false, autoClose: 5000 });
       onClose();
+      // straight to the new token's own page — it fetches by address, so it
+      // has the data immediately instead of waiting on the board's list
+      // query to pick up the freshly-launched token
+      router.push(`/social/token/${token}`);
     } catch (err: any) {
       if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
       else toast.update(t, { render: err?.data?.error || `Launch failed — ${humanWalletError(err)}`, type: 'error', isLoading: false, autoClose: 7000 });
