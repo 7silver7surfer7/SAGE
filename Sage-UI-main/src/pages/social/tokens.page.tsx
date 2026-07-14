@@ -52,6 +52,9 @@ export default function TokensPage() {
                   <b>
                     {t.name} <span className='social-tokens__sym'>${t.symbol}</span>
                   </b>
+                  {t.description && (
+                    <span className='social-tokens__desc'>{t.description}</span>
+                  )}
                   <span className='social-tokens__creator'>
                     by{' '}
                     {t.creator.username

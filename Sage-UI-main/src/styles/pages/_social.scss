@@ -3914,3 +3914,15 @@ body:has([class*='__overlay']) .layout {
   display: inline-block;
   margin-top: 6px;
 }
+
+.social-tokens__desc {
+  font-size: 0.78rem;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.55);
+  }
+}

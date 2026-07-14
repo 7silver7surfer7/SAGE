@@ -48,6 +48,20 @@ contract SocialToken is ERC20 {
  * the creator for follower airdrops. OFF → the creator holds ZERO tokens at
  * launch, so the token cannot be dumped on recipients or by the creator.
  */
+interface IUniswapV2FactoryMin {
+    function getPair(address, address) external view returns (address);
+    function createPair(address, address) external returns (address);
+}
+
+interface IUniswapV2PairMin {
+    function mint(address to) external returns (uint256);
+}
+
+interface IWETHMin {
+    function deposit() external payable;
+    function transfer(address, uint256) external returns (bool);
+}
+
 contract SocialTokenFactory is ReentrancyGuard {
     uint256 public constant TOKEN_TOTAL_SUPPLY = 1_000_000_000 ether;
     uint256 public constant INITIAL_VIRTUAL_TOKEN_RESERVES = 1_073_000_000 ether;
@@ -58,6 +72,11 @@ contract SocialTokenFactory is ReentrancyGuard {
 
     address public immutable treasury;
     uint256 public immutable initialVirtualEth;
+    // graduation target: when a curve sells out, its ETH + the reserve tokens
+    // seed a REAL Uniswap v2 pool — trading continues on the open market
+    address public immutable uniswapFactory;
+    address public immutable weth;
+    mapping(address => address) public pairOf; // token → its Uniswap pool (post-graduation)
 
     struct Curve {
         uint256 virtualTokenReserves;
@@ -86,16 +105,46 @@ contract SocialTokenFactory is ReentrancyGuard {
     event Bought(address indexed token, address indexed buyer, uint256 ethIn, uint256 tokensOut, uint256 fee, uint256 creatorFee);
     event Sold(address indexed token, address indexed seller, uint256 tokensIn, uint256 ethOut, uint256 fee, uint256 creatorFee);
     event CurveComplete(address indexed token);
+    event TokenGraduated(address indexed token, address indexed pair, uint256 ethIn, uint256 tokensIn);
     event Airdropped(address indexed token, address indexed from, uint256 recipients, uint256 amountEach);
 
-    constructor(address _treasury, uint256 _initialVirtualEth) {
+    constructor(address _treasury, uint256 _initialVirtualEth, address _uniswapFactory, address _weth) {
         require(_treasury != address(0) && _initialVirtualEth > 0, 'bad params');
+        require(_uniswapFactory != address(0) && _weth != address(0), 'bad uniswap params');
         treasury = _treasury;
         initialVirtualEth = _initialVirtualEth;
+        uniswapFactory = _uniswapFactory;
+        weth = _weth;
     }
 
     function allTokensLength() external view returns (uint256) {
         return allTokens.length;
+    }
+
+    /**
+     * pump.fun-style graduation: once the curve sells out, ANYONE can migrate
+     * the market to Uniswap — the curve's collected ETH is wrapped and paired
+     * with the factory's remaining reserve tokens; LP goes to the treasury.
+     */
+    function graduate(address token) external nonReentrant returns (address pair) {
+        Curve storage c = curves[token];
+        require(c.creator != address(0), 'unknown token');
+        require(c.complete, 'curve not complete');
+        require(pairOf[token] == address(0), 'already graduated');
+        uint256 ethAmt = c.realEthReserves;
+        uint256 tokenAmt = IERC20(token).balanceOf(address(this));
+        require(ethAmt > 0 && tokenAmt > 0, 'nothing to migrate');
+        c.realEthReserves = 0;
+        pair = IUniswapV2FactoryMin(uniswapFactory).getPair(token, weth);
+        if (pair == address(0)) {
+            pair = IUniswapV2FactoryMin(uniswapFactory).createPair(token, weth);
+        }
+        pairOf[token] = pair;
+        IWETHMin(weth).deposit{ value: ethAmt }();
+        require(IWETHMin(weth).transfer(pair, ethAmt), 'weth transfer failed');
+        require(IERC20(token).transfer(pair, tokenAmt), 'token transfer failed');
+        IUniswapV2PairMin(pair).mint(treasury); // LP owned by the treasury
+        emit TokenGraduated(token, pair, ethAmt, tokenAmt);
     }
 
     /**
@@ -179,8 +228,8 @@ contract SocialTokenFactory is ReentrancyGuard {
     function sell(address token, uint256 amount, uint256 minEthOut) external nonReentrant {
         Curve storage c = curves[token];
         require(c.creator != address(0), 'unknown token');
+        require(!c.complete, 'graduated - trade on uniswap');
         require(amount > 0, 'no tokens');
-        // sells stay open after completion (exit hatch — no AMM to migrate to)
         uint256 ethOut = (amount * c.virtualEthReserves) / (c.virtualTokenReserves + amount);
         // flooring dust can nudge past real holdings on a full round-trip
         if (ethOut > c.realEthReserves) ethOut = c.realEthReserves;

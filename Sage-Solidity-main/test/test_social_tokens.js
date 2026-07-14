@@ -3,13 +3,19 @@ const { ethers } = require('hardhat');
 
 // SAGE Social token launchpad + voucher minter — the money paths.
 describe('SocialTokenFactory', () => {
-  let factory, treasury, creator, buyer, other;
+  let factory, treasury, creator, buyer, other, weth, uniFactory;
   const V_ETH = ethers.utils.parseEther('1');
 
   beforeEach(async () => {
     [, treasury, creator, buyer, other] = await ethers.getSigners();
+    const wethArt = require('@uniswap/v2-periphery/build/WETH9.json');
+    const uniArt = require('@uniswap/v2-core/build/UniswapV2Factory.json');
+    const WETH = new ethers.ContractFactory(wethArt.abi, wethArt.bytecode, (await ethers.getSigners())[0]);
+    weth = await WETH.deploy();
+    const UniF = new ethers.ContractFactory(uniArt.abi, uniArt.bytecode, (await ethers.getSigners())[0]);
+    uniFactory = await UniF.deploy((await ethers.getSigners())[0].address);
     const F = await ethers.getContractFactory('SocialTokenFactory');
-    factory = await F.deploy(treasury.address, V_ETH);
+    factory = await F.deploy(treasury.address, V_ETH, uniFactory.address, weth.address);
   });
 
   const launch = async (enableAirdrop = true) => {
@@ -83,10 +89,34 @@ describe('SocialTokenFactory', () => {
     await expect(
       factory.connect(buyer).buy(token.address, 0, { value: ethers.utils.parseEther('0.1') })
     ).to.be.revertedWith('curve complete - sold out');
-    // exit hatch: sells still work after completion
+    // curve trading is CLOSED after completion — the market moves to Uniswap
     const bal = await token.balanceOf(buyer.address);
     await token.connect(buyer).approve(factory.address, bal);
-    await factory.connect(buyer).sell(token.address, bal, 0);
+    await expect(
+      factory.connect(buyer).sell(token.address, bal, 0)
+    ).to.be.revertedWith('graduated - trade on uniswap');
+  });
+
+  it('graduation migrates the market to a REAL Uniswap v2 pool', async () => {
+    const token = await launch(false); // no-dump: all supply on curve/factory
+    // sell the curve out
+    await factory.connect(other).buy(token.address, 0, { value: ethers.utils.parseEther('4000') });
+    expect((await factory.curves(token.address)).complete).to.equal(true);
+    const curveEth = (await factory.curves(token.address)).realEthReserves;
+    const reserveTokens = await token.balanceOf(factory.address);
+    expect(reserveTokens).to.be.gt(0);
+    // anyone can trigger graduation
+    await factory.connect(buyer).graduate(token.address);
+    const pair = await factory.pairOf(token.address);
+    expect(pair).to.not.equal(ethers.constants.AddressZero);
+    // the pool holds the curve's ETH (as WETH) and the reserve tokens
+    expect(await weth.balanceOf(pair)).to.equal(curveEth);
+    expect(await token.balanceOf(pair)).to.equal(reserveTokens);
+    // LP belongs to the treasury
+    const pairC = new ethers.Contract(pair, ['function balanceOf(address) view returns (uint256)'], ethers.provider);
+    expect(await pairC.balanceOf(treasury.address)).to.be.gt(0);
+    // double-graduation is blocked
+    await expect(factory.graduate(token.address)).to.be.revertedWith('already graduated');
   });
 
   it('buys pay 1% total: 0.95% treasury + 0.05% creator (pump.fun split)', async () => {

@@ -36,6 +36,14 @@ export async function launchToken(
   return { token: ev?.args?.token, txHash: tx.hash, devBuy: !!bought };
 }
 
+/** Migrate a sold-out curve to its Uniswap pool — anyone can trigger. */
+export async function graduateToken(tokenAddress: string, signer: Signer): Promise<string> {
+  const factory = factoryContract(signer);
+  const tx = await factory.graduate(tokenAddress);
+  await tx.wait(1);
+  return tx.hash;
+}
+
 /** Buy a creator coin off the bonding curve with ETH (1% fee to the treasury). */
 export async function buyToken(
   tokenAddress: string,

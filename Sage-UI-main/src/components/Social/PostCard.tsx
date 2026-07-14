@@ -564,8 +564,12 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             <>
               <button
                 className='social-post__action social-post__action--tip'
-                onClick={onSetCollectible}
-                title={post.collectPrice === null ? 'Sell this post as an NFT' : 'Change the price'}
+                onClick={post.collectPrice === null ? onSetCollectible : (e) => onCollect(e)}
+                title={
+                  post.collectPrice === null
+                    ? 'Sell this post as an NFT'
+                    : 'Mint one for yourself'
+                }
               >
                 <HexIcon />
                 <span>
@@ -575,22 +579,32 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
                 </span>
               </button>
               {post.collectPrice !== null && (
-                <button
-                  className='social-post__action social-post__stop-sell'
-                  title='Stop new collects — already-minted NFTs are unaffected'
-                  disabled={busy}
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    try {
-                      await setCollectible({ postId: post.id, price: null }).unwrap();
-                      toast.success('Selling stopped');
-                    } catch (err: any) {
-                      handleGateError(err, 'Could not stop selling');
-                    }
-                  }}
-                >
-                  Stop selling
-                </button>
+                <>
+                  <button
+                    className='social-post__action social-post__stop-sell'
+                    title='Change the price'
+                    disabled={busy}
+                    onClick={onSetCollectible}
+                  >
+                    Reprice
+                  </button>
+                  <button
+                    className='social-post__action social-post__stop-sell'
+                    title='Stop new collects — already-minted NFTs are unaffected'
+                    disabled={busy}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await setCollectible({ postId: post.id, price: null }).unwrap();
+                        toast.success('Selling stopped');
+                      } catch (err: any) {
+                        handleGateError(err, 'Could not stop selling');
+                      }
+                    }}
+                  >
+                    Stop selling
+                  </button>
+                </>
               )}
             </>
           ) : (

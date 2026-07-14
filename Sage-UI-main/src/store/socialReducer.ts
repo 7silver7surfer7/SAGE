@@ -104,6 +104,7 @@ export interface TokenListItem {
   name: string;
   symbol: string;
   imageUrl: string | null;
+  description: string | null;
   creator: SocialUserCard;
 }
 
@@ -234,6 +235,7 @@ export interface TokenDetail {
   athPriceEth: number;
   price24hAgoEth: number;
   complete: boolean;
+  uniswapPair: string | null;
   bondingProgressPct: number;
   holderCount: number;
   tradeCount: number;
@@ -405,6 +407,40 @@ const socialApi = baseApi.injectEndpoints({
     getTokens: builder.query<{ tokens: TokenListItem[] }, void>({
       query: () => ({ url: 'social?action=GetTokens' }),
       providesTags: ['SocialFeed'],
+    }),
+    getTokenTradesPage: builder.query<
+      { trades: TokenTrade[]; nextOffset: number | null },
+      { address: string; offset?: number }
+    >({
+      query: ({ address, offset }) => ({
+        url: `social?action=GetTokenTradesPage&address=${address}${offset ? `&offset=${offset}` : ''}`,
+      }),
+      serializeQueryArgs: ({ queryArgs }) => `tok-trades-${queryArgs.address}`,
+      merge: (current, incoming, { arg }) => {
+        if (!arg.offset) return incoming;
+        current.trades.push(...incoming.trades);
+        current.nextOffset = incoming.nextOffset;
+        return current;
+      },
+      forceRefetch: ({ currentArg, previousArg }) => currentArg?.offset !== previousArg?.offset,
+      providesTags: (_r, _e, arg) => [{ type: 'SocialProfile', id: `tok-${arg.address}` }],
+    }),
+    getTokenHoldersPage: builder.query<
+      { holders: TokenHolder[]; nextOffset: number | null },
+      { address: string; offset?: number }
+    >({
+      query: ({ address, offset }) => ({
+        url: `social?action=GetTokenHoldersPage&address=${address}${offset ? `&offset=${offset}` : ''}`,
+      }),
+      serializeQueryArgs: ({ queryArgs }) => `tok-holders-${queryArgs.address}`,
+      merge: (current, incoming, { arg }) => {
+        if (!arg.offset) return incoming;
+        current.holders.push(...incoming.holders);
+        current.nextOffset = incoming.nextOffset;
+        return current;
+      },
+      forceRefetch: ({ currentArg, previousArg }) => currentArg?.offset !== previousArg?.offset,
+      providesTags: (_r, _e, arg) => [{ type: 'SocialProfile', id: `tok-${arg.address}` }],
     }),
     getTokenDetail: builder.query<TokenDetail, string>({
       query: (address) => ({ url: `social?action=GetTokenDetail&address=${address}` }),
@@ -744,6 +780,8 @@ export const {
   useSetProfileImageMutation,
   useGetTokensQuery,
   useGetTokenDetailQuery,
+  useGetTokenTradesPageQuery,
+  useGetTokenHoldersPageQuery,
   useRecordTokenLaunchMutation,
   useRecordAirdropMutation,
   useRecordTradeMutation,

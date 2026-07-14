@@ -1,12 +1,12 @@
 /**
- * Redeploy SocialTokenFactory (v5: payable launch = pump.fun dev buy seeds the curve). Reuses the live factory's
+ * Redeploy SocialTokenFactory (v6: graduation → REAL Uniswap v2 pool). Reuses the live factory's
  * constructor params so the curve economics stay identical.
  *
  *   npx hardhat run scripts/deploy_social_token_factory.js --network robinhoodTestnet
  */
 const hre = require('hardhat');
 
-const OLD_FACTORY = '0x86203521Cfa9fF2d1C918c40F08aAc0c8c196E2a'; // v4
+const OLD_FACTORY = '0xfC39582D5b4c1c43CCAa126d11237078f1f4F123'; // v5
 
 async function main() {
   const [deployer] = await hre.ethers.getSigners();
@@ -22,10 +22,12 @@ async function main() {
   const initialVirtualEth = await old.initialVirtualEth();
   console.log('reusing params — treasury:', treasury, 'initialVirtualEth:', initialVirtualEth.toString());
 
+  const UNISWAP_FACTORY = '0xDfB9F8A7eF56C39C1eaE28f502b754321A82a625';
+  const WETH = '0xC433C2fb24456290625217e297D9C5db1762a82f';
   const F = await hre.ethers.getContractFactory('SocialTokenFactory');
-  const factory = await F.deploy(treasury, initialVirtualEth, overrides);
+  const factory = await F.deploy(treasury, initialVirtualEth, UNISWAP_FACTORY, WETH, overrides);
   await factory.deployed();
-  console.log('SocialTokenFactory v5:', factory.address);
+  console.log('SocialTokenFactory v6:', factory.address);
   console.log('→ update SOCIAL_TOKEN_FACTORY_ADDRESS in Sage-UI-main/src/constants/config.ts');
 }
 

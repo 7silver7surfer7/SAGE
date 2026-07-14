@@ -109,6 +109,10 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getUserMints(String(request.query.address || ''), response);
       case 'GetProfileToken':
         return await getProfileToken(String(request.query.address || ''), response);
+      case 'GetTokenTradesPage':
+        return await getTokenTradesPage(request, response);
+      case 'GetTokenHoldersPage':
+        return await getTokenHoldersPage(request, response);
       case 'GetTokenDetail':
         return await getTokenDetail(String(request.query.address || ''), response);
       case 'GetTokens':
@@ -2126,6 +2130,7 @@ async function getTokens(res: NextApiResponse) {
       name: l.name,
       symbol: l.symbol,
       imageUrl: l.imageUrl,
+      description: l.description || null,
       creator: {
         address: l.creatorAddress,
         username: l.Creator?.username || null,
@@ -2433,6 +2438,7 @@ async function getEditionMetadata(id: number, res: NextApiResponse) {
 const FACTORY_ABI = [
   'function curves(address) view returns (uint256 virtualTokenReserves, uint256 virtualEthReserves, uint256 realTokenReserves, uint256 realEthReserves, address creator, bool complete, bool airdropEnabled)',
   'function spotPriceWei(address) view returns (uint256)',
+  'function pairOf(address) view returns (address)',
 ];
 
 /** Records a mined buy/sell so the chart, trades feed and holders stay live. */
@@ -2496,6 +2502,61 @@ async function recordTrade(req: NextApiRequest, res: NextApiResponse, r: { walle
   }
 }
 
+/** Paginated trades for a token — the trades column's infinite scroll. */
+async function getTokenTradesPage(req: NextApiRequest, res: NextApiResponse) {
+  const token = canon(String(req.query.address || ''));
+  if (!token) return res.status(400).json({ error: 'bad address' });
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit = Math.min(50, Number(req.query.limit) || 25);
+  const rows = await prisma.socialTokenTrade.findMany({
+    where: { tokenAddress: token },
+    orderBy: { id: 'desc' },
+    skip: offset,
+    take: limit,
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    trades: rows.map((t) => ({
+      side: t.side,
+      trader: t.trader,
+      ethAmount: t.ethAmount,
+      tokenAmount: t.tokenAmount,
+      createdAt: t.createdAt,
+    })),
+    nextOffset: rows.length === limit ? offset + limit : null,
+  });
+}
+
+/** Paginated holders (trade-derived balances) — the holders column. */
+async function getTokenHoldersPage(req: NextApiRequest, res: NextApiResponse) {
+  const token = canon(String(req.query.address || ''));
+  if (!token) return res.status(400).json({ error: 'bad address' });
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit = Math.min(50, Number(req.query.limit) || 25);
+  const trades = await prisma.socialTokenTrade.findMany({
+    where: { tokenAddress: token },
+    select: { trader: true, side: true, tokenAmount: true },
+  });
+  const balances = new Map<string, number>();
+  for (const t of trades) {
+    const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
+    balances.set(t.trader, (balances.get(t.trader) || 0) + d);
+  }
+  const all = Array.from(balances.entries())
+    .filter(([, b]) => b > 0.000001)
+    .sort((a, b) => b[1] - a[1]);
+  const page = all.slice(offset, offset + limit);
+  const cards = await userCards(page.map(([a]) => a));
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    holders: page.map(([addr, bal]) => ({
+      user: cards[addr] || { address: addr, username: null, verified: false },
+      balance: bal,
+    })),
+    nextOffset: offset + limit < all.length ? offset + limit : null,
+  });
+}
+
 /** Everything the pump.fun-style token page needs. */
 async function getTokenDetail(address: string, res: NextApiResponse) {
   const token = canon(address);
@@ -2526,16 +2587,21 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
   const holderCards = await userCards(holders.map(([a]) => a));
 
   // live curve state for the bonding-curve progress bar + price
-  let curve: { realTokenReserves: number; complete: boolean; priceEth: number } | null = null;
+  let curve: { realTokenReserves: number; complete: boolean; priceEth: number; pair: string | null } | null = null;
   try {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
     const f = new ethers.Contract(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, FACTORY_ABI, provider);
-    const [c, spot] = await Promise.all([f.curves(token), f.spotPriceWei(token)]);
+    const [c, spot, pool] = await Promise.all([
+      f.curves(token),
+      f.spotPriceWei(token),
+      f.pairOf(token).catch(() => ethers.constants.AddressZero),
+    ]);
     curve = {
       realTokenReserves: Number(ethers.utils.formatEther(c.realTokenReserves)),
       complete: c.complete,
       priceEth: Number(ethers.utils.formatEther(spot.mul(1_000_000))),
+      pair: pool && pool !== ethers.constants.AddressZero ? pool : null,
     };
   } catch (e) {
     console.error('curve read failed', e);
@@ -2577,6 +2643,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
     athPriceEth,
     price24hAgoEth,
     complete: curve?.complete ?? false,
+    uniswapPair: curve?.pair ?? null,
     bondingProgressPct: Math.round(soldPct * 10) / 10,
     holderCount: holders.length,
     tradeCount: trades.length,

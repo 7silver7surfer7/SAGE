@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import { useSigner, useProvider } from 'wagmi';
@@ -9,11 +9,13 @@ import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
-import { buyToken, sellToken, tokenBalanceOf } from '@/utilities/socialToken';
+import { buyToken, sellToken, tokenBalanceOf, graduateToken } from '@/utilities/socialToken';
 import { humanWalletError } from '@/utilities/walletError';
 import { utils } from 'ethers';
 import {
   useGetTokenDetailQuery,
+  useGetTokenTradesPageQuery,
+  useGetTokenHoldersPageQuery,
   useRecordTradeMutation,
   useCreatePostMutation,
 } from '@/store/socialReducer';
@@ -40,6 +42,32 @@ export default function TokenDetailPage() {
     pollingInterval: 10_000, // reconcile only — the candle tape streams from chain events
   });
   const [recordTrade] = useRecordTradeMutation();
+  // holders/trades columns scroll forever (paginated + merged per token)
+  const [holdersOffset, setHoldersOffset] = useState(0);
+  const [tradesOffset, setTradesOffset] = useState(0);
+  const { data: holdersPage, isFetching: loadingHolders } = useGetTokenHoldersPageQuery(
+    { address, offset: holdersOffset },
+    { skip: !address }
+  );
+  const { data: tradesPage, isFetching: loadingTrades } = useGetTokenTradesPageQuery(
+    { address, offset: tradesOffset },
+    { skip: !address }
+  );
+  const holdersEndRef = useRef<HTMLDivElement>(null);
+  const tradesEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const watch = (el: HTMLDivElement | null, next: number | null | undefined, bump: (n: number) => void, busyNow: boolean) => {
+      if (!el) return () => {};
+      const io = new IntersectionObserver((es) => {
+        if (es[0].isIntersecting && next && !busyNow) bump(next);
+      }, { rootMargin: '400px' });
+      io.observe(el);
+      return () => io.disconnect();
+    };
+    const a = watch(holdersEndRef.current, holdersPage?.nextOffset, setHoldersOffset, loadingHolders);
+    const b = watch(tradesEndRef.current, tradesPage?.nextOffset, setTradesOffset, loadingTrades);
+    return () => { a(); b(); };
+  }, [holdersPage?.nextOffset, tradesPage?.nextOffset, loadingHolders, loadingTrades]);
   const [bucketS, setBucketS] = useState(60); // 1m default, pump.fun-style
   // pump.fun-style trade widget
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -178,6 +206,18 @@ export default function TokenDetailPage() {
               {!t.airdropEnabled && <span className='token-page__badge'>🔒 no-dump</span>}
             </div>
             {t.description && <p className='token-page__desc'>{t.description}</p>}
+            {data?.uniswapPair && (
+              <button
+                className='token-page__ca'
+                title='The Uniswap v2 pool — copy address'
+                onClick={() => {
+                  navigator.clipboard.writeText(data.uniswapPair!);
+                  toast.success('Pool address copied');
+                }}
+              >
+                🎓 pool {data.uniswapPair.slice(0, 6)}…{data.uniswapPair.slice(-4)} ⧉
+              </button>
+            )}
             {t.website && (
               <a
                 className='token-page__ca token-page__website'
@@ -232,7 +272,16 @@ export default function TokenDetailPage() {
           <div><span>Price</span><b>{data?.priceEth ? data.priceEth.toPrecision(3) : '0'} <em>ETH/1M</em></b></div>
           <div><span>Holders</span><b>{data?.holderCount ?? 0}</b></div>
           <div><span>Trades</span><b>{data?.tradeCount ?? 0}</b></div>
-          <div><span>Status</span><b>{data?.complete ? 'Graduated' : 'On curve'}</b></div>
+          <div
+            title={
+              data?.complete
+                ? 'Graduated: the curve sold out. Its ETH + reserve tokens seed a Uniswap pool — trading continues there.'
+                : `On curve: ${data?.bondingProgressPct ?? 0}% of 793.1M sold. When it sells out the token GRADUATES — the collected ETH and reserve tokens are deposited into a Uniswap pool, and trading moves to the open market.`
+            }
+          >
+            <span>Status</span>
+            <b>{data?.complete ? 'Graduated' : 'On curve'}</b>
+          </div>
         </div>
 
         {/* timeframe switcher */}
@@ -278,9 +327,34 @@ export default function TokenDetailPage() {
           </div>
           <p className='token-page__curve-note'>
             {data?.complete
-              ? 'Sold out — the curve has graduated.'
-              : 'When the curve sells out the token graduates. Early buyers are further down the curve.'}
+              ? data?.uniswapPair
+                ? 'Graduated — liquidity lives in the Uniswap pool above. Trade there.'
+                : 'Sold out! Anyone can trigger graduation — the curve\'s ETH + reserve tokens seed a Uniswap pool.'
+              : 'When the curve sells out the token graduates to a Uniswap pool. Early buyers are further down the curve.'}
           </p>
+          {data?.complete && !data?.uniswapPair && (
+            <button
+              className='token-trade__cta'
+              data-side='buy'
+              disabled={busy}
+              onClick={async () => {
+                if (!signer) { toast.info('Connect your wallet'); return; }
+                setBusy(true);
+                const gt = toast.loading('Migrating liquidity to Uniswap…');
+                try {
+                  await graduateToken(t.tokenAddress, signer as any);
+                  toast.update(gt, { render: '🎓 Graduated — the Uniswap pool is live', type: 'success', isLoading: false, autoClose: 6000 });
+                  refetch();
+                } catch (e: any) {
+                  toast.update(gt, { render: `Graduation failed — ${humanWalletError(e)}`, type: 'error', isLoading: false, autoClose: 7000 });
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              🎓 Graduate to Uniswap
+            </button>
+          )}
         </div>
 
         {/* pump.fun-style trade widget */}
@@ -352,8 +426,8 @@ export default function TokenDetailPage() {
         <div className='token-page__cols'>
           <div className='token-page__col'>
             <h4>Holders</h4>
-            {data?.holders.length ? (
-              data.holders.map((h, i) => (
+            {(holdersPage?.holders || data?.holders || []).length ? (
+              (holdersPage?.holders || data?.holders || []).map((h, i) => (
                 <div key={h.user.address} className='token-page__row' onClick={() => router.push(`/social/${h.user.address}`)}>
                   <span className='token-page__rank'>{i + 1}</span>
                   <span className='token-page__holder'>
@@ -366,11 +440,13 @@ export default function TokenDetailPage() {
             ) : (
               <p className='social__empty'>No holders yet.</p>
             )}
+            <div ref={holdersEndRef} />
+            {loadingHolders && holdersOffset > 0 && <LoaderDots />}
           </div>
           <div className='token-page__col'>
             <h4>Trades</h4>
-            {data?.trades.length ? (
-              data.trades.map((tr, i) => (
+            {(tradesPage?.trades || data?.trades || []).length ? (
+              (tradesPage?.trades || data?.trades || []).map((tr, i) => (
                 <div key={i} className='token-page__row'>
                   <span className={`token-page__side token-page__side--${tr.side}`}>{tr.side}</span>
                   <span className='token-page__holder'>{shortenAddress(tr.trader)}</span>
@@ -381,6 +457,8 @@ export default function TokenDetailPage() {
             ) : (
               <p className='social__empty'>No trades yet.</p>
             )}
+            <div ref={tradesEndRef} />
+            {loadingTrades && tradesOffset > 0 && <LoaderDots />}
           </div>
         </div>
       </div>
