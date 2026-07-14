@@ -8,6 +8,7 @@ import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import ReferCard from '@/components/Social/ReferCard';
 import EditProfileModal from '@/components/Social/EditProfileModal';
+import { InviteGate } from '@/components/Social/Composer';
 import MediaCropModal from '@/components/Social/MediaCropModal';
 import TokenPanel from '@/components/Social/TokenPanel';
 import EditionPanel from '@/components/Social/EditionPanel';
@@ -283,31 +284,40 @@ export default function SocialProfilePage() {
         </div>
         <div className='social-profile__cta'>
           {profile.isSelf ? (
-            <>
-              <button
-                className='social-profile__follow social-profile__follow--on'
-                onClick={() => setEditOpen(true)}
-              >
-                Edit profile
-              </button>
-              {!profile.verified && (
+            (profile as any).needsInvite ? (
+              <div className='social-profile__gate-stack'>
+                <InviteGate action='customizing your profile' />
                 <button className='social-profile__follow' onClick={() => setVerifyOpen(true)}>
-                  Get verified
+                  Or get verified
                 </button>
-              )}
-              <button
-                className='social-profile__follow social-profile__follow--on'
-                onClick={() => avatarFileRef.current?.click()}
-              >
-                Upload avatar
-              </button>
-              <button
-                className='social-profile__follow social-profile__follow--on'
-                onClick={() => setPickerOpen(true)}
-              >
-                {profile.pfpVerified ? 'Change NFT avatar' : 'Use an NFT as avatar'}
-              </button>
-            </>
+              </div>
+            ) : (
+              <>
+                <button
+                  className='social-profile__follow social-profile__follow--on'
+                  onClick={() => setEditOpen(true)}
+                >
+                  Edit profile
+                </button>
+                {!profile.verified && (
+                  <button className='social-profile__follow' onClick={() => setVerifyOpen(true)}>
+                    Get verified
+                  </button>
+                )}
+                <button
+                  className='social-profile__follow social-profile__follow--on'
+                  onClick={() => avatarFileRef.current?.click()}
+                >
+                  Upload avatar
+                </button>
+                <button
+                  className='social-profile__follow social-profile__follow--on'
+                  onClick={() => setPickerOpen(true)}
+                >
+                  {profile.pfpVerified ? 'Change NFT avatar' : 'Use an NFT as avatar'}
+                </button>
+              </>
+            )
           ) : (
             <>
               <button

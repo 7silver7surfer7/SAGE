@@ -532,6 +532,17 @@ $col-width: 620px;
     // keep the buttons clear of the banner even when they wrap to two rows
     padding-bottom: 2px;
   }
+  &__gate-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    width: 100%;
+    .social-composer--locked {
+      width: 100%;
+      max-width: 420px;
+    }
+  }
   &__avatar {
     position: relative;
     // only the avatar overlaps up into the banner (Twitter-style); the buttons

@@ -134,6 +134,22 @@ export default function CandleChart({
     const dark = theme === 'dark';
     const chart = createChart(el, {
       autoSize: true,
+      // lightweight-charts defaults capture the mouse wheel AND vertical
+      // touch-drag for chart pan/zoom — on a page where the chart isn't the
+      // whole viewport, that steals the scroll gesture entirely (the bug
+      // report: "hard to scroll down"). Keep click-drag pan and pinch-zoom
+      // (real chart interactions), drop the two that fight page scrolling.
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: false,
+        pinch: true,
+      },
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: dark ? '#cfdad2' : '#3c4a42',

@@ -1469,6 +1469,8 @@ async function getOwnedNfts(res: NextApiResponse, r: { walletAddress: string }) 
 }
 
 async function setNftPfp(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  if (!(await canParticipate(r.walletAddress)))
+    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
   const nftId = Number(req.body?.nftId);
   const nft = await prisma.nft.findUnique({
     where: { id: nftId },
@@ -2698,6 +2700,8 @@ async function toggleGroupChat(req: NextApiRequest, res: NextApiResponse, r: { w
 // ───────────── avatar / banner set (image already compressed by social-upload) ─────────────
 
 async function setProfileImage(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  if (!(await canParticipate(r.walletAddress)))
+    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
   const { url, kind } = req.body || {};
   if (!url || !isOwnSocialMediaUrl(url))
     return res.status(400).json({ error: 'image must be uploaded through SAGE Social' });

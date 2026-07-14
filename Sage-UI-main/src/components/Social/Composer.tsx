@@ -21,8 +21,9 @@ const MAX = 500;
 const MAX_IMAGE_MB = 12;
 const MAX_VIDEO_MB = 25;
 
-/** Invite-gate state of the composer: SAGE Social sign-ups run on referrals. */
-function InviteGate() {
+/** Invite-gate state: SAGE Social sign-ups run on referrals. Reused anywhere
+ * an action requires participation (posting, profile customization, …). */
+export function InviteGate({ action = 'posting' }: { action?: string }) {
   const [code, setCode] = useState('');
   const [redeemInvite, { isLoading }] = useRedeemInviteMutation();
   const redeem = async () => {
@@ -37,7 +38,7 @@ function InviteGate() {
     <div className='social-composer social-composer--locked'>
       <div className='social-composer__gate'>
         <p>
-          SAGE Social is <b>invite-only</b>. Redeem an invite code to start posting — ask a
+          SAGE Social is <b>invite-only</b>. Redeem an invite code to start {action} — ask a
           member for theirs.
         </p>
         <div className='social-composer__gate-row'>

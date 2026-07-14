@@ -67,8 +67,12 @@ export default function Nav() {
     <div className='nav__wrapper'>
       <div className='nav' data-color={dataColor} data-cy='nav'>
         <div className='nav__content'>
-          {shouldShowSearch && (
-            <div className='nav__search'>
+          {/* always rendered — an equal-flex spacer column that mirrors
+              .nav__personal so the menu stays centered. Omitting this box
+              entirely on /social (where the search itself is redundant)
+              collapsed the row to two columns and shoved the menu left. */}
+          <div className='nav__search'>
+            {shouldShowSearch && (
               <div className='nav__search-wrapper'>
                 <div className='searchform'>
                   <SearchInput
@@ -79,8 +83,8 @@ export default function Nav() {
                   />
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
           <div className='nav__menu'>
             {navLinks.map(({ name, routeFunction }: NavLink) => {
               function onClick() {
