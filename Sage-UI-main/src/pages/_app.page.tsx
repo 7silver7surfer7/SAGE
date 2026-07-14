@@ -1,7 +1,5 @@
 import '@/styles/index.scss';
-import { Analytics } from '@vercel/analytics/react';
 import Head from 'next/head';
-import Script from 'next/script';
 import useTheme from '@/hooks/useTheme';
 import { Provider as ReduxProvider } from 'react-redux';
 import { SessionProvider } from 'next-auth/react';
@@ -147,22 +145,8 @@ function App({ Component, pageProps, router }: AppProps) {
                 content='SAGE is a portal into Web3, curating the space of the future.'
               />
             </Head>
-            <Script
-              strategy='lazyOnload'
-              src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS}`}
-            />
-
-            <Script strategy='lazyOnload'>
-              {`
-                window.dataLayer = window.dataLayer || [];
-                function gtag(){dataLayer.push(arguments);}
-                gtag('js', new Date());
-                gtag('config', '${process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS}', {
-                page_path: window.location.pathname,
-                });
-              `}
-            </Script>
-            <Analytics />
+            {/* third-party analytics (GA + Vercel) removed — replaced by the
+                self-hosted first-party beacon (utilities/analyticsBeacon) */}
             {isMaintenanceOn ? (
               <LandingPage />
             ) : (
