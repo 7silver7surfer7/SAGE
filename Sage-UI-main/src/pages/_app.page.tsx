@@ -66,6 +66,32 @@ const wagmiClient = createClient({
   provider,
 });
 
+/**
+ * Deploy seam self-heal: a tab opened before a deploy holds HTML that
+ * references old hashed chunks the new revision no longer serves. When that
+ * bites (ChunkLoadError / failed dynamic import), reload once to pick up the
+ * new build — guarded per-path in sessionStorage so a genuinely broken chunk
+ * can't reload-loop. Registered at MODULE scope (not inside React) so it
+ * keeps working even while the component tree is crashing or remounting.
+ */
+function recoverFromChunkError(err: any) {
+  const msg = String((err as any)?.message || (err as any)?.reason?.message || err || '');
+  if (
+    !/ChunkLoadError|Loading chunk .* failed|Failed to fetch dynamically imported module|Importing a module script failed/i.test(
+      msg
+    )
+  )
+    return;
+  const key = `chunk-reload:${window.location.pathname}`;
+  if (sessionStorage.getItem(key)) return; // already tried once here
+  sessionStorage.setItem(key, '1');
+  window.location.reload();
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e) => recoverFromChunkError(e.error || e.message));
+  window.addEventListener('unhandledrejection', (e) => recoverFromChunkError(e.reason));
+}
+
 function App({ Component, pageProps, router }: AppProps) {
   const { theme } = useTheme();
   const [query, setQuery] = useState<string | null>(null);
@@ -73,6 +99,16 @@ function App({ Component, pageProps, router }: AppProps) {
 
   useEffect(() => {
     wagmiClient.autoConnect();
+  }, []);
+
+  // Deploy seam self-heal: register the routeChangeError leg here (needs the
+  // router); the window-level legs live at module scope below so they survive
+  // React tree crashes/remounts.
+  useEffect(() => {
+    const onRouteError = (err: any) => recoverFromChunkError(err);
+    router.events.on('routeChangeError', onRouteError);
+    return () => router.events.off('routeChangeError', onRouteError);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const themeContent: string = theme === 'dark' ? '#101010' : 'white';
