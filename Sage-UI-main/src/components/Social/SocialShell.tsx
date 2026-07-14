@@ -84,7 +84,7 @@ function ActivityTicker() {
 function LeaderboardWidget() {
   const router = useRouter();
   const { data } = useGetLeaderboardQuery();
-  const rows = data?.topEarners.length ? data.topEarners : data?.mostFollowed || [];
+  const rows = data?.mostFollowed.length ? data.mostFollowed : data?.topEarners || [];
   return (
     <div className='social-widget'>
       <div className='social-widget__head'>
