@@ -686,10 +686,11 @@ $col-width: 620px;
   margin-top: 10px;
   padding: 12px 14px;
   border-radius: 12px;
-  // On short viewports the refer card is the first thing to give — the nav,
-  // Post button and profile chip always win the space.
+  // Referrals are the growth loop — the card is ALWAYS visible. On short
+  // viewports it compacts instead of hiding.
   @media (max-height: 740px) {
-    display: none;
+    padding: 8px 12px;
+    font-size: 0.85rem;
   }
   @include m.theme() {
     border: 1px solid rgba(m.t(contrast), 0.14);
@@ -1577,9 +1578,11 @@ body:has([class*='__overlay']) .layout {
     flex-direction: column;
     gap: 4px;
     max-height: calc(100vh - 24px);
-    // The sidebar is sized to FIT the viewport (compact paddings + height
-    // media queries below) — never to scroll.
-    overflow: hidden;
+    // Sized to FIT the viewport via compact paddings + height media queries;
+    // overflow-y auto is the safety net so nothing (e.g. the refer card) can
+    // ever be silently clipped on very short screens.
+    overflow-y: auto;
+    @include m.no-scrollbar;
   }
   &__logo {
     display: flex;

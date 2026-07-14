@@ -55,11 +55,23 @@ export default function InvitePage(props: Props) {
           property='og:description'
           content='The wallet-native art network — tips, collects and boosts in SAGE.'
         />
+        <meta property='og:site_name' content='SAGE Social' />
+        <meta property='og:type' content='website' />
         <meta property='og:image' content={imageUrl} />
+        <meta property='og:image:width' content='1600' />
+        <meta property='og:image:height' content='840' />
         <meta property='og:url' content={pageUrl} />
         <meta name='twitter:card' content='summary_large_image' />
         <meta name='twitter:image' content={imageUrl} />
+        <meta
+          name='twitter:image:alt'
+          content={`SAGE Social invite card — code ${props.code} from ${props.ownerName}`}
+        />
         <meta name='twitter:title' content={`${props.ownerName} invited you to SAGE Social`} />
+        <meta
+          name='twitter:description'
+          content='The wallet-native art network — tips, collects and boosts in SAGE.'
+        />
       </Head>
       <div className='social social--invite'>
         <div className='social-invite'>
