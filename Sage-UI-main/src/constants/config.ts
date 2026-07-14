@@ -47,7 +47,7 @@ const configuration: Configuration = {
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
     OPENEDITION_ADDRESS: '0x7BaBf8b8043527D7a5dfB50F32dEe97898Db5091', // security fix: spoofable-artist-check redeploy, 2026-07-15
-    COLLECTION_ADDRESS: '0x18B4BBc6c1C1E786e2d6a7a4E1591765F3D0e714', // security fix: spoofable-artist-check redeploy, 2026-07-15
+    COLLECTION_ADDRESS: '0xd592dB71A8f8DBae57d6D6eC5a209E674B36eEc6', // one-tx collection-drop deploy (createCollectionWithNewNft + DedicatedNftDeployer), 2026-07-14
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x3297f9CEe3e0858325e826CbFF8FDE04Ee36DC49', // v9: dynamic mcap-tiered fees
@@ -70,7 +70,7 @@ const configuration: Configuration = {
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
     OPENEDITION_ADDRESS: '0x7BaBf8b8043527D7a5dfB50F32dEe97898Db5091', // security fix: spoofable-artist-check redeploy, 2026-07-15
-    COLLECTION_ADDRESS: '0x18B4BBc6c1C1E786e2d6a7a4E1591765F3D0e714', // security fix: spoofable-artist-check redeploy, 2026-07-15
+    COLLECTION_ADDRESS: '0xd592dB71A8f8DBae57d6D6eC5a209E674B36eEc6', // one-tx collection-drop deploy (createCollectionWithNewNft + DedicatedNftDeployer), 2026-07-14
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x3297f9CEe3e0858325e826CbFF8FDE04Ee36DC49', // v9: dynamic mcap-tiered fees
@@ -93,7 +93,7 @@ const configuration: Configuration = {
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
     OPENEDITION_ADDRESS: '0x7BaBf8b8043527D7a5dfB50F32dEe97898Db5091', // security fix: spoofable-artist-check redeploy, 2026-07-15
-    COLLECTION_ADDRESS: '0x18B4BBc6c1C1E786e2d6a7a4E1591765F3D0e714', // security fix: spoofable-artist-check redeploy, 2026-07-15
+    COLLECTION_ADDRESS: '0xd592dB71A8f8DBae57d6D6eC5a209E674B36eEc6', // one-tx collection-drop deploy (createCollectionWithNewNft + DedicatedNftDeployer), 2026-07-14
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x3297f9CEe3e0858325e826CbFF8FDE04Ee36DC49', // v9: dynamic mcap-tiered fees
