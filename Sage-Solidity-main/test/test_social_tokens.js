@@ -336,3 +336,68 @@ describe('SagePoints', () => {
     expect(await points.pointsOf(alice.address)).to.equal(777);
   });
 });
+
+describe('SageSwapRouter (post-graduation trading + creator revenue share)', () => {
+  let factory, router, weth, token, treasury, creator, buyer;
+  beforeEach(async () => {
+    [, treasury, creator, buyer] = await ethers.getSigners();
+    const wethArt = require('@uniswap/v2-periphery/build/WETH9.json');
+    const uniArt = require('@uniswap/v2-core/build/UniswapV2Factory.json');
+    const signer0 = (await ethers.getSigners())[0];
+    const WETH = await new ethers.ContractFactory(wethArt.abi, wethArt.bytecode, signer0).deploy();
+    const uniF = await new ethers.ContractFactory(uniArt.abi, uniArt.bytecode, signer0).deploy(treasury.address);
+    const F = await ethers.getContractFactory('SocialTokenFactory');
+    factory = await F.deploy(treasury.address, ethers.utils.parseEther('2'), uniF.address, WETH.address);
+    weth = WETH;
+    const R = await ethers.getContractFactory('SageSwapRouter');
+    router = await R.deploy(factory.address, WETH.address, treasury.address);
+    // launch + buy out the curve → auto-graduates
+    const tx = await factory.connect(creator).launch('Grad', 'GRAD', false);
+    const rc = await tx.wait();
+    const addr = rc.events.find((e) => e.event === 'TokenLaunched').args.token;
+    token = await ethers.getContractAt('SocialToken', addr);
+    // selling out 793.1M of the curve takes ~5.7 ETH (vEth 2) + 1% fee
+    await factory.connect(buyer).buy(addr, 0, { value: ethers.utils.parseEther('7') });
+    expect(await factory.pairOf(addr)).to.not.equal(ethers.constants.AddressZero);
+  });
+
+  it('router buys work on the pool; 0.20% treasury instant + 0.05% creator accrues', async () => {
+    const spend = ethers.utils.parseEther('1');
+    const tBefore = await treasury.getBalance();
+    const balBefore = await token.balanceOf(buyer.address);
+    await router.connect(buyer).buy(token.address, 0, { value: spend });
+    expect(await token.balanceOf(buyer.address)).to.be.gt(balBefore);
+    expect(await router.creatorFees(token.address)).to.equal(spend.mul(5).div(10000));
+    expect((await treasury.getBalance()).sub(tBefore)).to.equal(spend.mul(20).div(10000));
+  });
+
+  it('router sells return ETH minus fees; creator accrues on both sides', async () => {
+    await router.connect(buyer).buy(token.address, 0, { value: ethers.utils.parseEther('1') });
+    const bal = await token.balanceOf(buyer.address);
+    await token.connect(buyer).approve(router.address, bal);
+    const ethBefore = await buyer.getBalance();
+    await router.connect(buyer).sell(token.address, bal, 0);
+    expect(await buyer.getBalance()).to.be.gt(ethBefore); // got ETH back (minus gas)
+    expect(await router.creatorFees(token.address)).to.be.gt(ethers.utils.parseEther('1').mul(5).div(10000));
+  });
+
+  it('only the creator can claim; claim zeroes the accrual', async () => {
+    await router.connect(buyer).buy(token.address, 0, { value: ethers.utils.parseEther('2') });
+    const owed = await router.creatorFees(token.address);
+    expect(owed).to.be.gt(0);
+    await expect(router.connect(buyer).claimCreatorFees(token.address)).to.be.revertedWith('not the creator');
+    const before = await creator.getBalance();
+    await router.connect(creator).claimCreatorFees(token.address);
+    expect(await router.creatorFees(token.address)).to.equal(0);
+    expect(await creator.getBalance()).to.be.gt(before);
+    expect(await router.creatorFeesLifetime(token.address)).to.equal(owed);
+  });
+
+  it('router refuses tokens still on the curve', async () => {
+    const tx = await factory.connect(creator).launch('Fresh', 'FRSH', false);
+    const rc = await tx.wait();
+    const fresh = rc.events.find((e) => e.event === 'TokenLaunched').args.token;
+    await expect(router.connect(buyer).buy(fresh, 0, { value: 1000 })).to.be.revertedWith('not graduated');
+  });
+});
+

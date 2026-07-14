@@ -9,7 +9,16 @@ import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
-import { buyToken, sellToken, tokenBalanceOf, graduateToken } from '@/utilities/socialToken';
+import {
+  buyToken,
+  sellToken,
+  tokenBalanceOf,
+  graduateToken,
+  buyOnPool,
+  sellOnPool,
+  creatorFeesOf,
+  claimCreatorFees,
+} from '@/utilities/socialToken';
 import { humanWalletError } from '@/utilities/walletError';
 import { utils } from 'ethers';
 import {
@@ -44,6 +53,8 @@ export default function TokenDetailPage() {
   const [recordTrade] = useRecordTradeMutation();
   // holders/trades columns scroll forever (paginated + merged per token)
   const [holdersOffset, setHoldersOffset] = useState(0);
+  // creator revenue share (router fees) — claimable any time
+  const [creatorFees, setCreatorFees] = useState<{ claimable: number; lifetime: number } | null>(null);
   const [tradesOffset, setTradesOffset] = useState(0);
   const { data: holdersPage, isFetching: loadingHolders } = useGetTokenHoldersPageQuery(
     { address, offset: holdersOffset },
@@ -106,11 +117,14 @@ export default function TokenDetailPage() {
   const refreshBalance = () => {
     if (t.tokenAddress && walletAddress && provider)
       tokenBalanceOf(t.tokenAddress, walletAddress, provider as any).then(setMyBalance).catch(() => {});
+    if (t.tokenAddress && data?.uniswapPair && provider)
+      creatorFeesOf(t.tokenAddress, provider as any).then(setCreatorFees).catch(() => {});
   };
 
   const buy = async () => {
     if (!signer) { toast.info('Connect your wallet'); return; }
-    if (data?.complete) { toast.info('Curve sold out — this token has graduated'); return; }
+    const onPool = !!data?.uniswapPair;
+    if (data?.complete && !onPool) { toast.info('Sold out — graduation pending, trigger it below'); return; }
     const amt = Number(amount);
     if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
     // pre-flight: raw wallet reverts read as 'Internal JSON-RPC error'
@@ -122,7 +136,9 @@ export default function TokenDetailPage() {
     setBusy(true);
     const toastId = toast.loading(`Buying $${t.symbol}…`);
     try {
-      const txHash = await buyToken(t.tokenAddress, amt, signer as any);
+      const txHash = onPool
+        ? await buyOnPool(t.tokenAddress, amt, signer as any)
+        : await buyToken(t.tokenAddress, amt, signer as any);
       const myAddr = await (signer as any).getAddress().catch(() => '');
       await recordTrade({ tokenAddress: t.tokenAddress, side: 'buy', txHash, ethAmount: amt, trader: myAddr });
       toast.update(toastId, { render: `Bought $${t.symbol} 🎉`, type: 'success', isLoading: false, autoClose: 4000 });
@@ -142,7 +158,9 @@ export default function TokenDetailPage() {
     setBusy(true);
     const toastId = toast.loading(`Selling $${t.symbol}…`);
     try {
-      const txHash = await sellToken(t.tokenAddress, amt, signer as any);
+      const txHash = data?.uniswapPair
+        ? await sellOnPool(t.tokenAddress, amt, signer as any)
+        : await sellToken(t.tokenAddress, amt, signer as any);
       const myAddr = await (signer as any).getAddress().catch(() => '');
       await recordTrade({ tokenAddress: t.tokenAddress, side: 'sell', txHash, tokenAmount: amt, trader: myAddr });
       toast.update(toastId, { render: `Sold $${t.symbol}`, type: 'success', isLoading: false, autoClose: 4000 });
@@ -235,6 +253,35 @@ export default function TokenDetailPage() {
           </div>
         </div>
 
+        {/* creator revenue share — visible to the creator once graduated */}
+        {isCreator && data?.uniswapPair && creatorFees && (
+          <div className='token-page__claim'>
+            <span>
+              Creator fees: <b>{creatorFees.claimable.toFixed(6)} ETH</b>
+              <em> · lifetime {creatorFees.lifetime.toFixed(6)} ETH</em>
+            </span>
+            <button
+              disabled={busy || creatorFees.claimable <= 0}
+              onClick={async () => {
+                if (!signer) { toast.info('Connect your wallet'); return; }
+                setBusy(true);
+                const ct = toast.loading('Claiming your creator fees…');
+                try {
+                  await claimCreatorFees(t.tokenAddress, signer as any);
+                  toast.update(ct, { render: `Claimed ${creatorFees.claimable.toFixed(6)} ETH 💰`, type: 'success', isLoading: false, autoClose: 6000 });
+                  refreshBalance();
+                } catch (e: any) {
+                  toast.update(ct, { render: `Claim failed — ${humanWalletError(e)}`, type: 'error', isLoading: false, autoClose: 7000 });
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {creatorFees.claimable > 0 ? 'Claim' : 'Nothing yet'}
+            </button>
+          </div>
+        )}
+
         {/* pump.fun-style market header: big mcap + 24h change + ATH bar */}
         {(() => {
           const ethUsd = data?.ethUsd || 0;
@@ -315,6 +362,7 @@ export default function TokenDetailPage() {
           // chart in USD MARKET CAP (pump.fun-style); falls back to raw ETH
           // if the price feed is down
           scaleFactor={data?.ethUsd ? 1000 * data.ethUsd : 1}
+          pairAddress={data?.uniswapPair || null}
         />
 
         <div className='token-page__curve'>
@@ -328,7 +376,7 @@ export default function TokenDetailPage() {
           <p className='token-page__curve-note'>
             {data?.complete
               ? data?.uniswapPair
-                ? 'Graduated — liquidity lives in the Uniswap pool above. Trade there.'
+                ? 'Graduated — trading continues right here through the Uniswap pool (0.25% router fee, 0.05% to the creator).'
                 : 'Sold out! Graduation is automatic on the final buy — if this token predates auto-migration, trigger it below.'
               : 'When the curve sells out the token graduates to a Uniswap pool. Early buyers are further down the curve.'}
           </p>
@@ -406,7 +454,7 @@ export default function TokenDetailPage() {
           <button
             className='token-trade__cta'
             data-side={side}
-            disabled={busy || (side === 'buy' && data?.complete)}
+            disabled={busy || (side === 'buy' && data?.complete && !data?.uniswapPair)}
             onClick={() => {
               if (!signer) { toast.info('Connect your wallet to trade'); return; }
               if (side === 'buy') buy();
@@ -416,9 +464,13 @@ export default function TokenDetailPage() {
             {!signer
               ? 'Connect wallet to trade'
               : side === 'buy'
-              ? data?.complete
-                ? 'Graduated — buys closed'
+              ? data?.complete && !data?.uniswapPair
+                ? 'Graduated — migration pending'
+                : data?.uniswapPair
+                ? `Buy $${t.symbol} on the pool`
                 : `Buy $${t.symbol}`
+              : data?.uniswapPair
+              ? `Sell $${t.symbol} on the pool`
               : `Sell $${t.symbol}`}
           </button>
         </div>

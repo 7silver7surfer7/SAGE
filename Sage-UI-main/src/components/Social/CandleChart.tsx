@@ -93,6 +93,7 @@ export default function CandleChart({
   onLiveTrade,
   bucketS = DEFAULT_BUCKET_S,
   scaleFactor = 1,
+  pairAddress = null,
 }: {
   series: Point[];
   trades?: TradePoint[];
@@ -103,6 +104,9 @@ export default function CandleChart({
   /** multiply raw prices (ETH/1M) into the display unit — pass 1000×ethUsd
    *  to chart USD MARKET CAP like pump.fun; 1 charts raw ETH */
   scaleFactor?: number;
+  /** the token's Uniswap pair once graduated — price reads from the pool and
+   *  the live tape also listens to the SageSwapRouter's events */
+  pairAddress?: string | null;
 }) {
   const { theme } = useTheme();
   const provider = useProvider();
@@ -192,9 +196,21 @@ export default function CandleChart({
     if (!factoryAddr || !provider || !tokenAddress) return undefined;
     (provider as any).pollingInterval = 1000; // watch new blocks every second
     const factory = new ethers.Contract(factoryAddr, FACTORY_EVENTS_ABI, provider as any);
+    const routerAddr = parameters.SAGE_SWAP_ROUTER_ADDRESS;
+    const router =
+      routerAddr && pairAddress
+        ? new ethers.Contract(
+            routerAddr,
+            [...FACTORY_EVENTS_ABI, 'function poolPriceWei(address) view returns (uint256)'],
+            provider as any
+          )
+        : null;
     const paint = async () => {
       try {
-        const spotWei = await factory.spotPriceWei(tokenAddress);
+        // graduated → the pool is the market; otherwise the curve
+        const spotWei = router
+          ? await router.poolPriceWei(tokenAddress)
+          : await factory.spotPriceWei(tokenAddress);
         const price = Number(ethers.utils.formatEther(spotWei.mul(1_000_000))) * scaleFactor;
         const now = (Math.floor(Date.now() / 1000 / bucketS) * bucketS) as UTCTimestamp;
         const last = lastCandleRef.current;
@@ -216,12 +232,21 @@ export default function CandleChart({
     const soldFilter = factory.filters.Sold(tokenAddress);
     factory.on(boughtFilter, paint);
     factory.on(soldFilter, paint);
+    // post-graduation trades come from the router (same event shapes)
+    if (router) {
+      router.on(router.filters.Bought(tokenAddress), paint);
+      router.on(router.filters.Sold(tokenAddress), paint);
+    }
     return () => {
       factory.off(boughtFilter, paint);
       factory.off(soldFilter, paint);
+      if (router) {
+        router.off(router.filters.Bought(tokenAddress), paint);
+        router.off(router.filters.Sold(tokenAddress), paint);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, tokenAddress]);
+  }, [provider, tokenAddress, pairAddress]);
 
   if (!series.length)
     return <div className='social-chart social-chart--empty'>No trades yet — the chart starts on the first buy.</div>;

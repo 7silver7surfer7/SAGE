@@ -24,6 +24,7 @@ export interface Parameters {
   // Empty string = feature disabled on this network.
   SOCIAL_TOKEN_FACTORY_ADDRESS: string;
   SAGE_POINTS_ADDRESS: string;
+  SAGE_SWAP_ROUTER_ADDRESS: string;
   SOCIAL_COLLECT_MINTER_ADDRESS: string;
   SOCIAL_NFT_LAUNCHER_ADDRESS: string;
   APP_URL: string;

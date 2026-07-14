@@ -2674,16 +2674,28 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
     const f = new ethers.Contract(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, FACTORY_ABI, provider);
-    const [c, spot, pool] = await Promise.all([
+    const [c, pool] = await Promise.all([
       f.curves(token),
-      f.spotPriceWei(token),
       f.pairOf(token).catch(() => ethers.constants.AddressZero),
     ]);
+    const graduated = pool && pool !== ethers.constants.AddressZero;
+    // graduated → the POOL is the market; the curve's spot is frozen history
+    let spot;
+    if (graduated && c.complete && parameters.SAGE_SWAP_ROUTER_ADDRESS) {
+      const r2 = new ethers.Contract(
+        parameters.SAGE_SWAP_ROUTER_ADDRESS,
+        ['function poolPriceWei(address) view returns (uint256)'],
+        provider
+      );
+      spot = await r2.poolPriceWei(token);
+    } else {
+      spot = await f.spotPriceWei(token);
+    }
     curve = {
       realTokenReserves: Number(ethers.utils.formatEther(c.realTokenReserves)),
       complete: c.complete,
       priceEth: Number(ethers.utils.formatEther(spot.mul(1_000_000))),
-      pair: pool && pool !== ethers.constants.AddressZero ? pool : null,
+      pair: graduated ? pool : null,
     };
   } catch (e) {
     console.error('curve read failed', e);

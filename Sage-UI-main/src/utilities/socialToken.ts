@@ -211,3 +211,62 @@ export async function editionMinted(
   const launcher = launcherContract(provider);
   return (await launcher.mintedOf(editionAddress)).toNumber();
 }
+
+// ───────────── post-graduation trading via SageSwapRouter ─────────────
+
+import routerJson from '@/constants/abis/Social/SageSwapRouter.sol/SageSwapRouter.json';
+
+export function swapRouterContract(signerOrProvider: Signer | ethers.providers.Provider) {
+  return new ethers.Contract(parameters.SAGE_SWAP_ROUTER_ADDRESS, routerJson.abi, signerOrProvider);
+}
+
+/** Buy a GRADUATED token on its Uniswap pool (0.25% router fee: 0.05% creator). */
+export async function buyOnPool(tokenAddress: string, ethAmount: number, signer: Signer): Promise<string> {
+  const router = swapRouterContract(signer);
+  const tx = await router.buy(tokenAddress, 0, { value: ethers.utils.parseEther(String(ethAmount)) });
+  await tx.wait(1);
+  return tx.hash;
+}
+
+/** Sell a GRADUATED token on its pool — approves the router if needed. */
+export async function sellOnPool(tokenAddress: string, tokenAmount: number, signer: Signer): Promise<string> {
+  const router = swapRouterContract(signer);
+  const owner = await signer.getAddress();
+  const token = new ethers.Contract(
+    tokenAddress,
+    ['function allowance(address,address) view returns (uint256)', 'function approve(address,uint256) returns (bool)'],
+    signer
+  );
+  const amount = ethers.utils.parseEther(String(tokenAmount));
+  const allowance = await token.allowance(owner, router.address);
+  if (allowance.lt(amount)) {
+    const a = await token.approve(router.address, ethers.constants.MaxUint256);
+    await a.wait(1);
+  }
+  const tx = await router.sell(tokenAddress, amount, 0);
+  await tx.wait(1);
+  return tx.hash;
+}
+
+/** Creator revenue accrued on the router for this token (claimable + lifetime). */
+export async function creatorFeesOf(
+  tokenAddress: string,
+  provider: ethers.providers.Provider
+): Promise<{ claimable: number; lifetime: number }> {
+  const router = swapRouterContract(provider);
+  const [claimable, lifetime] = await Promise.all([
+    router.creatorFees(tokenAddress),
+    router.creatorFeesLifetime(tokenAddress),
+  ]);
+  return {
+    claimable: Number(ethers.utils.formatEther(claimable)),
+    lifetime: Number(ethers.utils.formatEther(lifetime)),
+  };
+}
+
+export async function claimCreatorFees(tokenAddress: string, signer: Signer): Promise<string> {
+  const router = swapRouterContract(signer);
+  const tx = await router.claimCreatorFees(tokenAddress);
+  await tx.wait(1);
+  return tx.hash;
+}
