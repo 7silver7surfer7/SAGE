@@ -541,6 +541,9 @@ model SocialNftEdition {
   maxSupply       Int
   launchTxHash    String   @db.Char(66)
   createdAt       DateTime @default(now())
+  // creator pressed "Stop mint": the UI hides/disables minting. (UI gate —
+  // the on-chain contract keeps its hard cap regardless.)
+  haltedAt        DateTime?
   @@index([artistAddress])
   @@index([createdAt])
 }

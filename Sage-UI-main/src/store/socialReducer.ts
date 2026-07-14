@@ -155,6 +155,12 @@ export interface LeaderboardRow {
 }
 
 export interface Leaderboard {
+  stats: {
+    totalUsers: number;
+    tokenVolumeEth: number;
+    nftVolumeEth: number;
+    nftVolumePixels: number;
+  };
   topPoints: LeaderboardRow[];
   topEarners: LeaderboardRow[];
   topTippers: LeaderboardRow[];

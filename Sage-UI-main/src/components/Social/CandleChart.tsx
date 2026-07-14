@@ -37,7 +37,7 @@ const INITIAL_PRICE_ETH_PER_M = (2 * 1_000_000) / 1_073_000_000;
 const DEFAULT_BUCKET_S = 60; // 1-minute candles, pump.fun's default granularity
 
 /** Bucket the raw trade-price series into OHLC candles. */
-function toCandles(series: Point[], bucketS: number): Candle[] {
+function toCandles(series: Point[], bucketS: number, scaleFactor = 1): Candle[] {
   const sorted = [...series].sort((a, b) => +new Date(a.t) - +new Date(b.t));
   const out: Candle[] = [];
   for (const p of sorted) {
@@ -50,7 +50,7 @@ function toCandles(series: Point[], bucketS: number): Candle[] {
     } else {
       // gapless tape: open at the previous close; the FIRST candle opens at
       // the curve's initial price so trade #1 has a visible body
-      const open = last ? last.close : INITIAL_PRICE_ETH_PER_M;
+      const open = last ? last.close : INITIAL_PRICE_ETH_PER_M * scaleFactor;
       out.push({ time: bucket, open, high: Math.max(open, p.price), low: Math.min(open, p.price), close: p.price });
     }
   }
@@ -92,6 +92,7 @@ export default function CandleChart({
   tokenAddress,
   onLiveTrade,
   bucketS = DEFAULT_BUCKET_S,
+  scaleFactor = 1,
 }: {
   series: Point[];
   trades?: TradePoint[];
@@ -99,6 +100,9 @@ export default function CandleChart({
   onLiveTrade?: () => void;
   /** candle width in seconds (60 = 1m, 300 = 5m, …) */
   bucketS?: number;
+  /** multiply raw prices (ETH/1M) into the display unit — pass 1000×ethUsd
+   *  to chart USD MARKET CAP like pump.fun; 1 charts raw ETH */
+  scaleFactor?: number;
 }) {
   const { theme } = useTheme();
   const provider = useProvider();
@@ -108,7 +112,11 @@ export default function CandleChart({
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const lastCandleRef = useRef<Candle | null>(null);
 
-  const candles = useMemo(() => toCandles(series, bucketS), [series, bucketS]);
+  const scaled = useMemo(
+    () => series.map((p) => ({ t: p.t, price: p.price * scaleFactor })),
+    [series, scaleFactor]
+  );
+  const candles = useMemo(() => toCandles(scaled, bucketS, scaleFactor), [scaled, bucketS, scaleFactor]);
   const volume = useMemo(() => toVolume(trades, theme === 'dark', bucketS), [trades, theme, bucketS]);
 
   // build / theme the chart
@@ -138,7 +146,10 @@ export default function CandleChart({
       downColor: '#f6608a',
       wickDownColor: '#f6608a',
       borderVisible: false,
-      priceFormat: { type: 'price', precision: 6, minMove: 0.000001 },
+      priceFormat:
+        scaleFactor !== 1
+          ? { type: 'price', precision: 0, minMove: 1 }
+          : { type: 'price', precision: 6, minMove: 0.000001 },
     });
     // pump.fun-style volume strip along the bottom — visible even when the
     // price tape is a flat hairline
@@ -158,7 +169,7 @@ export default function CandleChart({
       candlesRef.current = null;
       volumeRef.current = null;
     };
-  }, [theme]);
+  }, [theme, scaleFactor]);
 
   // (re)load history
   useEffect(() => {
@@ -184,7 +195,7 @@ export default function CandleChart({
     const paint = async () => {
       try {
         const spotWei = await factory.spotPriceWei(tokenAddress);
-        const price = Number(ethers.utils.formatEther(spotWei.mul(1_000_000))); // ETH per 1M
+        const price = Number(ethers.utils.formatEther(spotWei.mul(1_000_000))) * scaleFactor;
         const now = (Math.floor(Date.now() / 1000 / bucketS) * bucketS) as UTCTimestamp;
         const last = lastCandleRef.current;
         let candle: Candle;

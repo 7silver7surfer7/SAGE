@@ -15,6 +15,7 @@ interface EditionRow {
   imageUrl: string;
   priceEth: number;
   maxSupply: number;
+  halted: boolean;
 }
 
 const editionApi = baseApi.injectEndpoints({
@@ -23,6 +24,10 @@ const editionApi = baseApi.injectEndpoints({
     getProfileEditions: builder.query<{ launcher: string | null; editions: EditionRow[] }, string>({
       query: (address) => ({ url: `social?action=GetProfileEditions&address=${address}` }),
       providesTags: (_r, _e, address) => [{ type: 'SocialProfile', id: `ed-${address}` }],
+    }),
+    haltEdition: builder.mutation<{ ok: boolean; halted: boolean }, { editionAddress: string; halt: boolean }>({
+      query: (body) => ({ url: 'social?action=HaltEdition', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile'],
     }),
     recordEditionLaunch: builder.mutation<
       { ok: boolean; id: number },
@@ -41,7 +46,7 @@ const editionApi = baseApi.injectEndpoints({
     }),
   }),
 });
-const { useGetProfileEditionsQuery, useRecordEditionLaunchMutation } = editionApi;
+const { useGetProfileEditionsQuery, useRecordEditionLaunchMutation, useHaltEditionMutation } = editionApi;
 
 /** Post-launch share sheet — Twitter intent + copy link. */
 function ShareLaunch({ symbol, name, artist, onClose }: { symbol: string; name: string; artist: string; onClose: () => void }) {
@@ -210,6 +215,7 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
 
 export default function EditionPanel({ address, isSelf }: { address: string; isSelf: boolean }) {
   const { data } = useGetProfileEditionsQuery(address, { skip: !address });
+  const [haltEdition] = useHaltEditionMutation();
   const { data: signer } = useSigner();
   const provider = useProvider();
   const [open, setOpen] = useState(false);
@@ -270,23 +276,40 @@ export default function EditionPanel({ address, isSelf }: { address: string; isS
           </div>
           <button
             className='social-token__buy'
-            disabled={busy || (counts[e.editionAddress] ?? 0) >= e.maxSupply}
+            disabled={busy || e.halted || (counts[e.editionAddress] ?? 0) >= e.maxSupply}
             onClick={() => mint(e)}
           >
-            {(counts[e.editionAddress] ?? 0) >= e.maxSupply ? 'Sold out' : 'Mint'}
+            {(counts[e.editionAddress] ?? 0) >= e.maxSupply
+              ? 'Sold out'
+              : e.halted
+              ? 'Mint closed'
+              : 'Mint'}
           </button>
           {isSelf && (
-            <button
-              className='social-hide-link'
-              onClick={async () => {
-                try {
-                  await hideItem({ kind: 'edition', ref: e.editionAddress.toLowerCase(), hide: true }).unwrap();
-                  toast.success('Edition hidden');
-                } catch { toast.error('Could not hide'); }
-              }}
-            >
-              hide
-            </button>
+            <>
+              <button
+                className='social-hide-link'
+                onClick={async () => {
+                  try {
+                    const r = await haltEdition({ editionAddress: e.editionAddress, halt: !e.halted }).unwrap();
+                    toast.success(r.halted ? 'Mint stopped' : 'Mint reopened');
+                  } catch (err: any) { toast.error(err?.data?.error || 'Could not update'); }
+                }}
+              >
+                {e.halted ? 'reopen mint' : 'stop mint'}
+              </button>
+              <button
+                className='social-hide-link'
+                onClick={async () => {
+                  try {
+                    await hideItem({ kind: 'edition', ref: e.editionAddress.toLowerCase(), hide: true }).unwrap();
+                    toast.success('Edition hidden');
+                  } catch { toast.error('Could not hide'); }
+                }}
+              >
+                hide
+              </button>
+            </>
           )}
         </div>
       ))}

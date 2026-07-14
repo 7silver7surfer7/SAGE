@@ -3744,3 +3744,37 @@ body:has([class*='__overlay']) .layout {
     }
   }
 }
+
+/* leaderboard economy stats */
+.social-lb-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+  div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    @include m.theme() {
+      border: 1px solid rgba(m.t(contrast), 0.14);
+    }
+  }
+  b {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 1.15rem;
+    font-variant-numeric: tabular-nums;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  span {
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.5);
+    }
+  }
+}

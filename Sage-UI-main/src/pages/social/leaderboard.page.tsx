@@ -30,6 +30,26 @@ export default function LeaderboardPage() {
         <h1 className='social__title'>LEADERBOARD</h1>
         <p className='social__subtitle'>the SAGE Social economy, ranked</p>
       </header>
+      {data?.stats && (
+        <div className='social-lb-stats'>
+          <div>
+            <b>{data.stats.totalUsers.toLocaleString()}</b>
+            <span>users</span>
+          </div>
+          <div>
+            <b>{data.stats.tokenVolumeEth.toFixed(4)} ETH</b>
+            <span>token volume</span>
+          </div>
+          <div>
+            <b>{data.stats.nftVolumeEth.toFixed(4)} ETH</b>
+            <span>NFT volume</span>
+          </div>
+          <div>
+            <b>{data.stats.nftVolumePixels.toLocaleString()}</b>
+            <span>pixels spent on art</span>
+          </div>
+        </div>
+      )}
       <div className='social__tabs'>
         {BOARDS.map(([key, label]) => (
           <button

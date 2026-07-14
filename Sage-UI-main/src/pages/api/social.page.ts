@@ -111,6 +111,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getTokenDetail(String(request.query.address || ''), response);
       case 'GetTokens':
         return await getTokens(response);
+      case 'HaltEdition':
+        return await withAuth(request, response, (r) => haltEdition(request, response, r));
       case 'GetProfileEditions':
         return await getProfileEditions(String(request.query.address || ''), response);
       case 'GetEditionMetadata':
@@ -1532,7 +1534,7 @@ async function pixelsLeaderboard(): Promise<{ address: string; net: bigint }[]> 
 }
 
 async function getLeaderboard(res: NextApiResponse) {
-  const [tipped, tippers, burners, followed, pointsPool] = await Promise.all([
+  const [tipped, tippers, burners, followed, pointsPool, totalUsers, tokenVol, nftVolEth, nftVolPixels] = await Promise.all([
     prisma.socialTip.groupBy({
       by: ['toAddress'],
       _sum: { amount: true },
@@ -1558,6 +1560,10 @@ async function getLeaderboard(res: NextApiResponse) {
       take: 10,
     }),
     pixelsLeaderboard(),
+    prisma.user.count(),
+    prisma.socialTokenTrade.aggregate({ _sum: { ethAmount: true } }),
+    prisma.socialCollect.aggregate({ _sum: { amount: true }, where: { currency: 'ETH' } }),
+    prisma.socialCollect.aggregate({ _sum: { pointsSpent: true } }),
   ]);
   const cards = await userCards([
     ...pointsPool.map((p) => p.address),
@@ -1576,6 +1582,12 @@ async function getLeaderboard(res: NextApiResponse) {
       count: f._count._all,
     })),
     topPoints: pointsPool.map((p) => ({ user: cards[p.address], count: Number(p.net) })),
+    stats: {
+      totalUsers,
+      tokenVolumeEth: tokenVol._sum.ethAmount || 0,
+      nftVolumeEth: nftVolEth._sum.amount || 0,
+      nftVolumePixels: Number(nftVolPixels._sum.pointsSpent || 0),
+    },
   });
 }
 
@@ -2325,8 +2337,26 @@ async function getProfileEditions(address: string, res: NextApiResponse) {
       imageUrl: e.imageUrl,
       priceEth: e.priceEth,
       maxSupply: e.maxSupply,
+      halted: !!e.haltedAt,
     })),
   });
+}
+
+/** Creator stops (or reopens) minting on their edition — a UI gate; the
+ *  on-chain hard cap is unchanged. */
+async function haltEdition(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const edition = canon(req.body?.editionAddress as string);
+  const halt = req.body?.halt !== false;
+  if (!edition) return res.status(400).json({ error: 'bad edition address' });
+  const row = await prisma.socialNftEdition.findUnique({ where: { editionAddress: edition } });
+  if (!row) return res.status(404).json({ error: 'edition not found' });
+  if (row.artistAddress !== r.walletAddress)
+    return res.status(403).json({ error: 'only the artist can do that' });
+  await prisma.socialNftEdition.update({
+    where: { editionAddress: edition },
+    data: { haltedAt: halt ? new Date() : null },
+  });
+  res.json({ ok: true, halted: halt });
 }
 
 /** ERC-721 metadata for an edition (every token shares it). */

@@ -25,13 +25,13 @@ const KINDS: { key: LaunchKind; title: string; blurb: string; icon: string }[] =
   {
     key: 'auction',
     title: 'Auction',
-    blurb: 'Single piece, highest bid wins. Reserve price + duration.',
+    blurb: 'Single piece, highest bid wins. The FIRST BID starts the timer.',
     icon: '🔨',
   },
   {
     key: 'zip',
     title: 'ZIP collection',
-    blurb: 'A ZIP of images → one token per image, named after its file.',
+    blurb: 'A ZIP of images → one token per image. Mint stays open until it sells out.',
     icon: '🗂',
   },
 ];
@@ -112,7 +112,7 @@ export default function LaunchNftPage() {
                 zipFile: file,
                 costTokens: priceNum,
                 limitPerUser: Number(maxPerUser) || 0,
-                durationHours: hours,
+                // no deadline: ZIP collections mint until they SELL OUT
               },
             }
           : {}),
@@ -255,14 +255,16 @@ export default function LaunchNftPage() {
                     />
                     <span>ETH</span>
                   </div>
-                  <div className='social-unit-input'>
-                    <input
-                      placeholder='Duration'
-                      value={durationHours}
-                      onChange={(e) => setDurationHours(e.target.value)}
-                    />
-                    <span>HOURS</span>
-                  </div>
+                  {!isZip && (
+                    <div className='social-unit-input'>
+                      <input
+                        placeholder={kind === 'auction' ? 'Timer (starts on first bid)' : 'Duration'}
+                        value={durationHours}
+                        onChange={(e) => setDurationHours(e.target.value)}
+                      />
+                      <span>HOURS</span>
+                    </div>
+                  )}
                   {kind !== 'auction' && (
                     <div className='social-unit-input'>
                       <input
@@ -302,6 +304,8 @@ export default function LaunchNftPage() {
                 <p className='social-launch__fine'>
                   Ships through the SAGE drop pipeline: curated, then deployed on-chain. Priced in
                   ETH · 12% secondary royalty to you.
+                  {isZip && ' ZIP mints have no deadline — they run until sold out.'}
+                  {kind === 'auction' && ' The auction clock starts at the first bid (anti-snipe extensions built in).'}
                 </p>
               </div>
             )}

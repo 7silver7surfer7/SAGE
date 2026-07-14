@@ -254,6 +254,9 @@ export default function TokenDetailPage() {
           tokenAddress={t.tokenAddress}
           onLiveTrade={() => refetch()}
           bucketS={bucketS}
+          // chart in USD MARKET CAP (pump.fun-style); falls back to raw ETH
+          // if the price feed is down
+          scaleFactor={data?.ethUsd ? 1000 * data.ethUsd : 1}
         />
 
         <div className='token-page__curve'>
