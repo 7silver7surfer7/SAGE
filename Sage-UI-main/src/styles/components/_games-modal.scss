@@ -23,6 +23,13 @@
   overflow-y: auto;
   height: 100%;
   align-items: center;
+  // content shorter than the viewport (the common case on mobile, where
+  // image + text rarely fill a full-height screen) otherwise sits anchored
+  // to the top with all the leftover space collecting as dead space below
+  // it — centering distributes it evenly instead. min-height:100% (not a
+  // fixed height) on the content lets it still scroll normally if it's
+  // ever taller than the viewport.
+  justify-content: center;
   // & > :first-child {
   //   // margin-top: 20px;
   // }
