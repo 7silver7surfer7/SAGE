@@ -279,11 +279,17 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       setShowVerify(true);
       return;
     }
+    // image posts sell for ETH (the artist sells the artwork); text posts
+    // sell for pixels (the points economy)
+    const isImageSale = !!post.imageUrl && post.mediaType !== 'video';
+    const unit = isImageSale ? 'ETH' : 'pixels';
     const raw = window.prompt(
       post.collectPrice === null
-        ? 'Sell this post as an NFT — set a price in pixels (e.g. "500"). Collectors spend pixels, you earn them. 0 = free. Leave empty to cancel.'
-        : `Collect price is ${post.collectPrice} pixels. Enter a new pixel price, or leave empty to stop new collects.`,
-      post.collectPrice === null ? '500' : String(post.collectPrice)
+        ? isImageSale
+          ? 'Sell this artwork as an NFT — set a price in ETH (e.g. "0.05"). The buyer pays you directly. 0 = free. Leave empty to cancel.'
+          : 'Sell this post as an NFT — set a price in pixels (e.g. "500"). Collectors spend pixels, you earn them. 0 = free. Leave empty to cancel.'
+        : `Collect price is ${post.collectPrice} ${unit}. Enter a new ${unit} price, or leave empty to stop new collects.`,
+      post.collectPrice === null ? (isImageSale ? '0.05' : '500') : String(post.collectPrice)
     );
     if (raw === null) return;
     const price = raw.trim() === '' ? null : Number(raw.trim());
@@ -293,7 +299,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     }
     try {
       await setCollectible({ postId: post.id, price }).unwrap();
-      toast.success(price === null ? 'Collecting closed' : `Collectible at ${price} pixels`);
+      toast.success(price === null ? 'Collecting closed' : `Collectible at ${price} ${unit}`);
     } catch (err: any) {
       handleGateError(err, 'Could not update');
     }
@@ -304,20 +310,35 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     if (!requireAuth()) return;
     if (post.collectedByViewer) return;
     const price = post.collectPrice || 0;
+    const isEthSale = post.collectCurrency === 'ETH';
     const payWith = 'POINTS' as const;
     const confirmed = window.confirm(
       price > 0
-        ? `Collect this post for ${Math.ceil(price)} pixels? It mints to your wallet as an NFT and @${displayName} earns the pixels.`
+        ? isEthSale
+          ? `Buy this artwork for ${price} ETH? It pays @${displayName} directly and mints to your wallet as an NFT.`
+          : `Collect this post for ${Math.ceil(price)} pixels? It mints to your wallet as an NFT and @${displayName} earns the pixels.`
         : 'Collect this post for free? It will be minted to your wallet as an NFT.'
     );
     if (!confirmed) return;
     setBusy(true);
-    const t = toast.loading(price > 0 ? 'Spending pixels…' : 'Minting…');
+    const t = toast.loading(
+      isEthSale && price > 0 ? 'Sending ETH…' : price > 0 ? 'Spending pixels…' : 'Minting…'
+    );
     try {
-      // collects are POINTS-only (off-chain payment), so the server mints the
-      // NFT for you — no wallet tx, no gas from the collector. (The
-      // buyer-pays-gas voucher path is only for on-chain-priced sales.)
-      const r = await collectPost({ postId: post.id, payWith }).unwrap();
+      // ETH sales: pay the author from the buyer's wallet, then the server
+      // verifies the tx and mints. Pixels sales: the server moves pixels
+      // on-chain and mints — no wallet tx from the collector.
+      let txHash: string | undefined;
+      if (isEthSale && price > 0) {
+        if (!signer) {
+          toast.update(t, { render: 'Connect your wallet first', type: 'error', isLoading: false, autoClose: 4000 });
+          setBusy(false);
+          return;
+        }
+        txHash = await sendEth(post.author.address, price, signer as any);
+        toast.update(t, { render: 'Payment sent — minting…', isLoading: true });
+      }
+      const r = await collectPost({ postId: post.id, payWith, txHash }).unwrap();
       toast.update(t, {
         render: `Collected! SAGE Social #${post.id} is yours (token ${r.tokenId}) ⬡`,
         type: 'success',
@@ -437,13 +458,19 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
               className='social-post__collect'
               onClick={(e) => onCollect(e, 'POINTS')}
               disabled={busy || post.collectedByViewer}
-              title='Hold SAGE, spend the pixels it earns — the seller receives them'
+              title={
+                post.collectCurrency === 'ETH'
+                  ? 'Pays the artist directly in ETH; the artwork mints to your wallet'
+                  : 'Hold SAGE, spend the pixels it earns — the seller receives them'
+              }
             >
               <HexIcon filled={post.collectedByViewer} />
               {post.collectedByViewer
                 ? 'Collected'
                 : post.collectPrice > 0
-                ? `Collect · ${Math.ceil(post.collectPrice)} pixels`
+                ? post.collectCurrency === 'ETH'
+                  ? `Buy · ${post.collectPrice} ETH`
+                  : `Collect · ${Math.ceil(post.collectPrice)} pixels`
                 : 'Collect · free'}
               {post.collectCount > 0 && (
                 <span className='social-post__collect-count'>{post.collectCount} minted</span>

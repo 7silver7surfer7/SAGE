@@ -985,17 +985,19 @@ async function setCollectible(
   if (!post) return res.status(404).json({ error: 'post not found' });
   if (post.authorAddress !== r.walletAddress)
     return res.status(403).json({ error: 'only the author can do that' });
-  // price null/undefined = stop new collects; 0 = free collect; >0 = SAGE price
+  // price null/undefined = stop new collects; 0 = free collect
   const p = price === null || price === undefined || price === '' ? null : Number(price);
   if (p !== null && (isNaN(p) || p < 0)) return res.status(400).json({ error: 'bad price' });
   if (p !== null && !parameters.SOCIAL_COLLECTS_ADDRESS)
     return res.status(400).json({ error: 'collecting is not enabled on this network yet' });
-  // collects are POINTS-only now: collectPrice holds the pixel price directly
+  // IMAGE posts sell for ETH (the artist sells the artwork, real money);
+  // text posts sell for pixels (the points economy).
+  const currency = post.imageUrl && post.mediaType !== 'video' ? 'ETH' : 'POINTS';
   await prisma.socialPost.update({
     where: { id },
-    data: { collectPrice: p, collectCurrency: 'POINTS' },
+    data: { collectPrice: p, collectCurrency: currency },
   });
-  res.json({ ok: true, collectPrice: p, collectCurrency: 'POINTS' });
+  res.json({ ok: true, collectPrice: p, collectCurrency: currency });
 }
 
 async function collectPost(
@@ -1017,11 +1019,60 @@ async function collectPost(
   });
   if (already) return res.status(400).json({ error: 'already collected' });
 
-  // pay in the post's currency straight to the author, or (points) burn pixels
-  // collects are POINTS-only: hold SAGE (skin in the game), spend pixels, and
-  // the seller earns them. collectPrice holds the pixel price directly.
-  const currency = 'POINTS' as const;
-  const amount = 0;
+  // ETH-priced posts (image art): the buyer pays the AUTHOR directly with a
+  // wallet tx; we verify it on-chain (amount + recipient + replay via the
+  // unique payTxHash) and then mint. Pixels never enter the picture.
+  let amount = 0;
+  let currency: 'ETH' | 'POINTS' = 'POINTS';
+  let ethTxHash: string | null = null;
+  if (post.collectCurrency === 'ETH') {
+    currency = 'ETH';
+    if (post.collectPrice > 0) {
+      if (!txHash) return res.status(400).json({ error: 'payment tx required' });
+      const dupe = await prisma.socialCollect.findUnique({ where: { payTxHash: txHash } });
+      if (dupe) return res.status(400).json({ error: 'this payment was already used' });
+      try {
+        // 5% tolerance for rounding between quote and signed value
+        amount = await verifyPayment(
+          txHash,
+          r.walletAddress,
+          post.authorAddress,
+          post.collectPrice * 0.95,
+          'ETH'
+        );
+      } catch (e: any) {
+        return res.status(400).json({ error: `payment not verified: ${e.message}` });
+      }
+      ethTxHash = txHash;
+    }
+    const tokenUriEth = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
+    let mintEth: Awaited<ReturnType<typeof mintSocialCollectServerSide>>;
+    try {
+      mintEth = await mintSocialCollectServerSide(r.walletAddress, tokenUriEth);
+    } catch (e: any) {
+      return res.status(500).json({ error: `mint failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
+    }
+    await prisma.$transaction([
+      prisma.socialCollect.create({
+        data: {
+          postId: id,
+          collectorAddress: r.walletAddress,
+          amount,
+          currency,
+          pointsSpent: null,
+          payTxHash: ethTxHash,
+          mintTxHash: mintEth.txHash,
+          contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
+          tokenId: mintEth.tokenId,
+        },
+      }),
+      prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
+    ]);
+    return res.json({ ok: true, tokenId: mintEth.tokenId, mintTxHash: mintEth.txHash, pointsSpent: null });
+  }
+
+  // pixels path: hold SAGE (skin in the game), spend pixels, seller earns them.
+  // collectPrice holds the pixel price directly.
   let pointsSpent: bigint | null = null;
   if (post.collectPrice > 0) {
     try {
