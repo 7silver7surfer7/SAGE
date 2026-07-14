@@ -98,9 +98,16 @@ contract SocialTokenFactory is ReentrancyGuard {
         return allTokens.length;
     }
 
-    /** Launch a creator coin — FREE (pump.fun-style), gas only. */
+    /**
+     * Launch a creator coin — creation is FREE (pump.fun-style), gas only.
+     * Send ETH with the call for an optional INITIAL DEV BUY (pump.fun's
+     * create-and-buy): the value executes as the first purchase on the fresh
+     * curve in the same tx, seeding the chart/liquidity and making the
+     * creator the first holder.
+     */
     function launch(string calldata name_, string calldata symbol_, bool enableAirdrop)
         external
+        payable
         nonReentrant
         returns (address token)
     {
@@ -121,6 +128,7 @@ contract SocialTokenFactory is ReentrancyGuard {
         if (tokenOf[msg.sender] == address(0)) tokenOf[msg.sender] = token; // first = profile token
         allTokens.push(token);
         emit TokenLaunched(token, msg.sender, name_, symbol_, enableAirdrop);
+        if (msg.value > 0) _executeBuy(token, msg.sender, msg.value, 0);
     }
 
     /** pump.fun buy quote: tokensOut for a post-fee ETH input, capped by real reserves. */
@@ -139,13 +147,18 @@ contract SocialTokenFactory is ReentrancyGuard {
     }
 
     function buy(address token, uint256 minTokensOut) external payable nonReentrant {
+        _executeBuy(token, msg.sender, msg.value, minTokensOut);
+    }
+
+    /** Shared buy path — used by buy() and the launch-time dev buy. */
+    function _executeBuy(address token, address buyer, uint256 value, uint256 minTokensOut) internal {
         Curve storage c = curves[token];
         require(c.creator != address(0), 'unknown token');
         require(!c.complete, 'curve complete - sold out');
-        require(msg.value > 0, 'no eth');
-        uint256 fee = (msg.value * FEE_BPS) / 10000;
-        uint256 creatorFee = (msg.value * CREATOR_FEE_BPS) / 10000;
-        uint256 ethIn = msg.value - fee;
+        require(value > 0, 'no eth');
+        uint256 fee = (value * FEE_BPS) / 10000;
+        uint256 creatorFee = (value * CREATOR_FEE_BPS) / 10000;
+        uint256 ethIn = value - fee;
         uint256 out = quoteBuy(token, ethIn);
         require(out >= minTokensOut, 'slippage');
         // pump.fun reserve bookkeeping
@@ -155,8 +168,8 @@ contract SocialTokenFactory is ReentrancyGuard {
         c.realEthReserves += ethIn;
         _pay(treasury, fee - creatorFee);
         _pay(c.creator, creatorFee);
-        require(IERC20(token).transfer(msg.sender, out), 'transfer failed');
-        emit Bought(token, msg.sender, ethIn, out, fee, creatorFee);
+        require(IERC20(token).transfer(buyer, out), 'transfer failed');
+        emit Bought(token, buyer, ethIn, out, fee, creatorFee);
         if (c.realTokenReserves == 0) {
             c.complete = true;
             emit CurveComplete(token);

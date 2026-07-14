@@ -14,20 +14,26 @@ export function factoryContract(signerOrProvider: Signer | ethers.providers.Prov
 }
 
 /**
- * Launch a creator coin — FREE, gas only (pump.fun-style). enableAirdrop=false
- * mints ZERO tokens to the creator: nothing to dump on followers.
+ * Launch a creator coin — creation is FREE, gas only (pump.fun-style).
+ * enableAirdrop=false mints ZERO tokens to the creator: nothing to dump.
+ * initialBuyEth > 0 executes a pump.fun-style DEV BUY in the same tx: it
+ * seeds the curve/chart and makes the creator the first holder.
  */
 export async function launchToken(
   name: string,
   symbol: string,
   enableAirdrop: boolean,
-  signer: Signer
-): Promise<{ token: string; txHash: string }> {
+  signer: Signer,
+  initialBuyEth = 0
+): Promise<{ token: string; txHash: string; devBuy: boolean }> {
   const factory = factoryContract(signer);
-  const tx = await factory.launch(name, symbol, enableAirdrop);
+  const tx = await factory.launch(name, symbol, enableAirdrop, {
+    value: initialBuyEth > 0 ? ethers.utils.parseEther(String(initialBuyEth)) : 0,
+  });
   const receipt = await tx.wait(1);
   const ev = receipt.events?.find((e: any) => e.event === 'TokenLaunched');
-  return { token: ev?.args?.token, txHash: tx.hash };
+  const bought = receipt.events?.find((e: any) => e.event === 'Bought');
+  return { token: ev?.args?.token, txHash: tx.hash, devBuy: !!bought };
 }
 
 /** Buy a creator coin off the bonding curve with ETH (1% fee to the treasury). */

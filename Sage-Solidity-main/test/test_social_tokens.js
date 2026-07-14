@@ -40,10 +40,29 @@ describe('SocialTokenFactory', () => {
     expect(c.airdropEnabled).to.equal(false);
   });
 
-  it('rejects duplicate creators', async () => {
-    await launch();
-    await expect(factory.connect(creator).launch('Y', 'Y', true))
-      .to.be.revertedWith('one token per creator');
+  it('allows multiple launches per creator; first stays the profile token', async () => {
+    const first = await launch();
+    await factory.connect(creator).launch('Y', 'Y', true);
+    expect(await factory.tokenOf(creator.address)).to.equal(first.address);
+    expect(await factory.allTokensLength()).to.equal(2);
+  });
+
+  it('launch with ETH executes a dev buy: creator is the first holder, chart seeded', async () => {
+    const tx = await factory
+      .connect(creator)
+      .launch('Dev', 'DEV', false, { value: ethers.utils.parseEther('0.1') });
+    const rcpt = await tx.wait();
+    const launched = rcpt.events.find((e) => e.event === 'TokenLaunched');
+    const bought = rcpt.events.find((e) => e.event === 'Bought');
+    expect(bought, 'Bought event must fire in the launch tx').to.not.be.undefined;
+    expect(bought.args.buyer).to.equal(creator.address);
+    const token = await ethers.getContractAt('SocialToken', launched.args.token);
+    // no airdrop cut (false) — everything the creator holds came off the curve
+    expect(await token.balanceOf(creator.address)).to.equal(bought.args.tokensOut);
+    expect(bought.args.tokensOut).to.be.gt(0);
+    // curve price moved off the initial spot
+    const c = await factory.curves(launched.args.token);
+    expect(c.realEthReserves).to.be.gt(0);
   });
 
   it('buys follow the pump.fun formula and graduation closes the curve', async () => {
@@ -238,44 +257,53 @@ describe('SocialNFTLauncher', () => {
 });
 
 describe('SagePoints', () => {
-  let points, owner, oracle, alice, bob;
+  let points, sage, owner, alice, bob;
+  const DAY = 24 * 3600;
   beforeEach(async () => {
-    [owner, oracle, alice, bob] = await ethers.getSigners();
+    [owner, alice, bob] = await ethers.getSigners();
+    const M = await ethers.getContractFactory('MockERC20');
+    sage = await M.deploy();
     const P = await ethers.getContractFactory('SagePoints');
-    points = await P.deploy();
+    points = await P.deploy(sage.address);
   });
 
-  it('controller mints accrual; non-controllers cannot', async () => {
-    await points.setController(oracle.address, true);
-    await points.connect(oracle).mint(alice.address, 1000);
-    expect(await points.balanceOf(alice.address)).to.equal(1000);
-    await expect(points.connect(bob).mint(bob.address, 1000)).to.be.revertedWith('not a controller');
+  it('streams pixels per second from the live SAGE balance', async () => {
+    await sage.mint(alice.address, ethers.utils.parseEther('1000')); // 1000 SAGE
+    await ethers.provider.send('evm_increaseTime', [DAY]);
+    await ethers.provider.send('evm_mine', []);
+    // 1000 SAGE × 0.25/day ≈ 250 pixels after one day
+    const pts = await points.pointsOf(alice.address);
+    expect(pts).to.be.gte(249).and.to.be.lte(251);
+    expect(await points.dailyRateOf(alice.address)).to.equal(250);
   });
 
-  it('points are non-transferable by default, toggleable by owner', async () => {
-    await points.mint(alice.address, 500);
-    await expect(points.connect(alice).transfer(bob.address, 100)).to.be.revertedWith(
-      'points are non-transferable'
-    );
-    await points.setEconomics(25, 1, 0, true);
-    await points.connect(alice).transfer(bob.address, 100);
-    expect(await points.balanceOf(bob.address)).to.equal(100);
-  });
-
-  it('owner can retune economics without redeploy', async () => {
-    await points.setEconomics(50, 100, 2500, false);
-    const e = await points.economics();
-    expect(e.pointsPerSagePerDay).to.equal(50);
-    expect(e.collectFloorPoints).to.equal(100);
-    expect(e.verificationPoints).to.equal(2500);
-    await expect(points.connect(alice).setEconomics(1, 1, 1, true)).to.be.revertedWith(
+  it('whale cap bounds accrual; owner can retune economics', async () => {
+    await sage.mint(alice.address, ethers.utils.parseEther('1000000')); // 1M SAGE > 100k cap
+    expect(await points.dailyRateOf(alice.address)).to.equal(25000); // capped
+    await points.setEconomics(50, 200000, false); // 0.5/day, higher cap
+    expect(await points.dailyRateOf(alice.address)).to.equal(100000);
+    await expect(points.connect(alice).setEconomics(1, 1, true)).to.be.revertedWith(
       'Ownable: caller is not the owner'
     );
   });
 
-  it('controller burns spends', async () => {
-    await points.mint(alice.address, 1000);
-    await points.burnFrom(alice.address, 400);
-    expect(await points.balanceOf(alice.address)).to.equal(600);
+  it('controller moves pixels buyer→seller; non-controllers cannot; overdraft reverts', async () => {
+    await sage.mint(alice.address, ethers.utils.parseEther('1000'));
+    await ethers.provider.send('evm_increaseTime', [4 * DAY]); // ~1000 pixels
+    await ethers.provider.send('evm_mine', []);
+    await points.transferPoints(alice.address, bob.address, 500, 'collect:1');
+    expect(await points.pointsOf(bob.address)).to.equal(500);
+    expect(await points.pointsOf(alice.address)).to.be.lt(600); // spent 500 of ~1000
+    await expect(
+      points.connect(bob).spendFrom(alice.address, 1, 'x')
+    ).to.be.revertedWith('not a controller');
+    await expect(
+      points.spendFrom(bob.address, 10000, 'x')
+    ).to.be.revertedWith('insufficient pixels');
+  });
+
+  it('creditTo mints promo pixels on top of the stream', async () => {
+    await points.creditTo(alice.address, 777, 'promo');
+    expect(await points.pointsOf(alice.address)).to.equal(777);
   });
 });

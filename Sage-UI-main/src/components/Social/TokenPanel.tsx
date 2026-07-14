@@ -15,13 +15,18 @@ import {
   tokenSpotPriceEthPerMillion,
 } from '@/utilities/socialToken';
 import VerificationModal from './VerificationModal';
+import { useRecordTradeMutation } from '@/store/socialReducer';
 
 /** Launch modal — a verified creator mints their coin (pays the launch fee). */
 function LaunchModal({ onClose }: { onClose: () => void }) {
   const { data: signer } = useSigner();
   const [record] = useRecordTokenLaunchMutation();
+  const [recordTrade] = useRecordTradeMutation();
   const [name, setName] = useState('');
   const [symbol, setSymbol] = useState('');
+  // pump.fun-style dev buy: the launch tx can carry ETH that executes as the
+  // FIRST buy on the fresh curve — seeds the chart and makes you holder #1
+  const [initialBuy, setInitialBuy] = useState('0.01');
   // default OFF: no-dump launches are the norm — opting IN reserves the 2%
   const [withAirdrop, setWithAirdrop] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -30,12 +35,19 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
   const go = async () => {
     if (!signer) { toast.info('Connect your wallet'); return; }
     if (!name.trim() || !symbol.trim()) { toast.error('Name and symbol required'); return; }
+    const buyEth = Number(initialBuy) || 0;
+    if (buyEth < 0) { toast.error('Initial buy cannot be negative'); return; }
     setBusy(true);
-    const t = toast.loading('Launching your coin… (free — you only pay gas)');
+    const t = toast.loading(buyEth > 0 ? `Launching + buying ${buyEth} ETH…` : 'Launching your coin… (free — you only pay gas)');
     try {
-      const { token, txHash } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any);
+      const { token, txHash, devBuy } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth);
       await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop }).unwrap();
-      toast.update(t, { render: `$${symbol.toUpperCase()} is live 🚀`, type: 'success', isLoading: false, autoClose: 5000 });
+      if (devBuy) {
+        // the dev buy is a real Bought event in the launch tx — record it so
+        // the chart, holders and trades all start seeded
+        await recordTrade({ tokenAddress: token, side: 'buy', txHash }).unwrap().catch(() => {});
+      }
+      toast.update(t, { render: `$${symbol.toUpperCase()} is live 🚀${devBuy ? ' — you are holder #1' : ''}`, type: 'success', isLoading: false, autoClose: 5000 });
       onClose();
     } catch (err: any) {
       if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
@@ -60,6 +72,14 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
         </p>
         <input className='social-search__input' placeholder='Coin name (e.g. Chartreuse Gang)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
         <input className='social-search__input' placeholder='Ticker (e.g. CHRT)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 12 }} />
+        <label className='social-edit__label'>Initial buy (ETH) — seeds your chart, makes you holder #1</label>
+        <input
+          className='social-search__input'
+          placeholder='0.01 (0 = skip)'
+          value={initialBuy}
+          onChange={(e) => setInitialBuy(e.target.value)}
+          style={{ marginBottom: 12 }}
+        />
         <label className='social-profile__gate-row' style={{ marginBottom: 14 }}>
           <input
             type='checkbox'

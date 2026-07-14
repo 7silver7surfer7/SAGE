@@ -1,13 +1,12 @@
 /**
- * Redeploy SocialTokenFactory (v4: multiple launches per creator — tokenOf
- * keeps the FIRST token as the profile token). Reuses the live factory's
+ * Redeploy SocialTokenFactory (v5: payable launch = pump.fun dev buy seeds the curve). Reuses the live factory's
  * constructor params so the curve economics stay identical.
  *
  *   npx hardhat run scripts/deploy_social_token_factory.js --network robinhoodTestnet
  */
 const hre = require('hardhat');
 
-const OLD_FACTORY = '0x081fA456c70076A1826C9287a7B5ed48bdEb0131';
+const OLD_FACTORY = '0x86203521Cfa9fF2d1C918c40F08aAc0c8c196E2a'; // v4
 
 async function main() {
   const [deployer] = await hre.ethers.getSigners();
@@ -26,7 +25,7 @@ async function main() {
   const F = await hre.ethers.getContractFactory('SocialTokenFactory');
   const factory = await F.deploy(treasury, initialVirtualEth, overrides);
   await factory.deployed();
-  console.log('SocialTokenFactory v4:', factory.address);
+  console.log('SocialTokenFactory v5:', factory.address);
   console.log('→ update SOCIAL_TOKEN_FACTORY_ADDRESS in Sage-UI-main/src/constants/config.ts');
 }
 
