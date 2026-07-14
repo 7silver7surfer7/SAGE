@@ -2939,13 +2939,19 @@ async function getMyTokenHoldings(address: string, res: NextApiResponse) {
   }
   const held = Array.from(balances.entries()).filter(([, b]) => b > 0.000001);
   if (!held.length) return res.json({ holdings: [] });
+  // Keep the CHECKSUMMED form (as SocialTokenLaunch/SocialTokenTrade.tokenAddress
+  // actually store it) as the key from here on — an `in` filter against the
+  // lowercased balances-map keys used above matched nothing, since Postgres
+  // string equality is case-sensitive, so every held token looked
+  // "unlaunched" and holdings always came back empty.
+  const heldAddresses = held.map(([a]) => a);
   const launches = await prisma.socialTokenLaunch.findMany({
-    where: { tokenAddress: { in: held.map(([a]) => a) } },
+    where: { tokenAddress: { in: heldAddresses, mode: 'insensitive' } },
   });
   const launchMap = new Map(launches.map((l) => [l.tokenAddress.toLowerCase(), l]));
   const maxIds = await prisma.socialTokenTrade.groupBy({
     by: ['tokenAddress'],
-    where: { tokenAddress: { in: held.map(([a]) => a) } },
+    where: { tokenAddress: { in: heldAddresses, mode: 'insensitive' } },
     _max: { id: true },
   });
   const lastTrades = maxIds.length

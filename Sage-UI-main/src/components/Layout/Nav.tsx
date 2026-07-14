@@ -103,17 +103,20 @@ export default function Nav() {
               );
             })}
           </div>
-          {shouldShowPersonal && (
-            <div className='nav__personal'>
-              {isSignedIn ? (
+          {/* always rendered — see .nav__search above: omitting this box
+              entirely (e.g. on /profile, where shouldShowPersonal is false)
+              left search as the only flex:1 column, which grew to fill all
+              remaining space and shoved the centered menu to the far right. */}
+          <div className='nav__personal'>
+            {shouldShowPersonal &&
+              (isSignedIn ? (
                 <>
                   <ProfileDisplay />
                 </>
               ) : (
                 <Connect></Connect>
-              )}
-            </div>
-          )}
+              ))}
+          </div>
         </div>
       </div>
     </div>
