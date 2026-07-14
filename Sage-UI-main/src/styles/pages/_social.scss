@@ -3166,3 +3166,17 @@ body:has([class*='__overlay']) .layout {
     @include m.theme() { color: m.t(contrast2); }
   }
 }
+
+// "Stop selling" — small text action next to the sell button on own posts
+.social-post__stop-sell {
+  font-size: 0.75rem;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.5);
+  }
+  &:hover {
+    text-decoration: underline;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+}

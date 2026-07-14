@@ -520,18 +520,38 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             {post.boostBurned > 0 && <span>{post.boostBurned}</span>}
           </button>
           {isOwnPost ? (
-            <button
-              className='social-post__action social-post__action--tip'
-              onClick={onSetCollectible}
-              title='Sell this post as an NFT'
-            >
-              <HexIcon />
-              <span>
-                {post.collectPrice === null
-                  ? 'Sell as NFT'
-                  : `${post.collectPrice} pixels · ${post.collectCount} minted`}
-              </span>
-            </button>
+            <>
+              <button
+                className='social-post__action social-post__action--tip'
+                onClick={onSetCollectible}
+                title={post.collectPrice === null ? 'Sell this post as an NFT' : 'Change the price'}
+              >
+                <HexIcon />
+                <span>
+                  {post.collectPrice === null
+                    ? 'Sell as NFT'
+                    : `${post.collectPrice} ${post.collectCurrency === 'ETH' ? 'ETH' : 'pixels'} · ${post.collectCount} minted`}
+                </span>
+              </button>
+              {post.collectPrice !== null && (
+                <button
+                  className='social-post__action social-post__stop-sell'
+                  title='Stop new collects — already-minted NFTs are unaffected'
+                  disabled={busy}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      await setCollectible({ postId: post.id, price: null }).unwrap();
+                      toast.success('Selling stopped');
+                    } catch (err: any) {
+                      handleGateError(err, 'Could not stop selling');
+                    }
+                  }}
+                >
+                  Stop selling
+                </button>
+              )}
+            </>
           ) : (
             <button
               className='social-post__action social-post__action--tip'

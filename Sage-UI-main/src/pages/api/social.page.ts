@@ -487,6 +487,27 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
       .map((p) => ({ p, s: hotScore(p, now) * (0.7 + 0.6 * jitter(p.id)) }))
       .sort((a, b) => b.s - a.s)
       .map((x) => x.p);
+    // Twitter behavior: YOUR own fresh posts lead your feed. A brand-new post
+    // has zero engagement so ranking would bury it — pin the viewer's posts
+    // from the last 10 minutes to the top of page 1 (any composer path, any
+    // refetch), deduped from the ranked list.
+    if (viewer && offset === 0) {
+      const mine = await prisma.socialPost.findMany({
+        where: {
+          authorAddress: viewer,
+          replyToId: null,
+          deletedAt: null,
+          createdAt: { gte: new Date(now - 10 * 60_000) },
+        },
+        include: postInclude(viewer),
+        orderBy: { id: 'desc' },
+        take: 3,
+      });
+      if (mine.length) {
+        const mineIds = new Set(mine.map((m) => m.id));
+        ranked.splice(0, ranked.length, ...mine, ...ranked.filter((p) => !mineIds.has(p.id)));
+      }
+    }
     const page = ranked.slice(offset, offset + FEED_PAGE);
     const nextOffset = offset + FEED_PAGE;
     const nextCursor = nextOffset < ranked.length ? nextOffset : null;
