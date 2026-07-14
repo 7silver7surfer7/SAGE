@@ -40,7 +40,7 @@ const configuration: Configuration = {
     RPC_URL: 'https://rpc.testnet.chain.robinhood.com',
     SUBGRAPH_URL: '',
     MEDIUM_URL: 'https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/@SAGE_WEB3',
-    MARKETPLACE_ADDRESS: '0x5812c7B4ce6386fD6A49Cc62c0457f47c3927FFd',
+    MARKETPLACE_ADDRESS: '0x7315fa4dcAA74E1EFa7c121E0848f42c7D746dC1', // security fix: chainId binding + unchecked-transfer redeploy, 2026-07-14
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0x21e8Bb18193Db10ddecACE141EDE66882c08D991',
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
@@ -63,7 +63,7 @@ const configuration: Configuration = {
     RPC_URL: 'https://rpc.testnet.chain.robinhood.com',
     SUBGRAPH_URL: '',
     MEDIUM_URL: 'https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/@SAGE_WEB3',
-    MARKETPLACE_ADDRESS: '0x5812c7B4ce6386fD6A49Cc62c0457f47c3927FFd',
+    MARKETPLACE_ADDRESS: '0x7315fa4dcAA74E1EFa7c121E0848f42c7D746dC1', // security fix: chainId binding + unchecked-transfer redeploy, 2026-07-14
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0x21e8Bb18193Db10ddecACE141EDE66882c08D991',
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
@@ -86,7 +86,7 @@ const configuration: Configuration = {
     RPC_URL: 'https://rpc.testnet.chain.robinhood.com',
     SUBGRAPH_URL: '',
     MEDIUM_URL: 'https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/@SAGE_WEB3',
-    MARKETPLACE_ADDRESS: '0x5812c7B4ce6386fD6A49Cc62c0457f47c3927FFd',
+    MARKETPLACE_ADDRESS: '0x7315fa4dcAA74E1EFa7c121E0848f42c7D746dC1', // security fix: chainId binding + unchecked-transfer redeploy, 2026-07-14
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0x21e8Bb18193Db10ddecACE141EDE66882c08D991',
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
