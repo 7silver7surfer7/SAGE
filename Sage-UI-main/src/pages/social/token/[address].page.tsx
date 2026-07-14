@@ -35,7 +35,7 @@ export default function TokenDetailPage() {
   const provider = useProvider();
   const { data, isFetching } = useGetTokenDetailQuery(address, {
     skip: !address,
-    pollingInterval: 20_000,
+    pollingInterval: 8_000,
   });
   const [recordTrade] = useRecordTradeMutation();
   const [createPost] = useCreatePostMutation();
@@ -85,7 +85,8 @@ export default function TokenDetailPage() {
     const toastId = toast.loading(`Buying $${t.symbol}…`);
     try {
       const txHash = await buyToken(t.tokenAddress, amt, signer as any);
-      await recordTrade({ tokenAddress: t.tokenAddress, side: 'buy', txHash });
+      const myAddr = await (signer as any).getAddress().catch(() => '');
+      await recordTrade({ tokenAddress: t.tokenAddress, side: 'buy', txHash, ethAmount: amt, trader: myAddr });
       toast.update(toastId, { render: `Bought $${t.symbol} 🎉`, type: 'success', isLoading: false, autoClose: 4000 });
       refreshBalance();
     } catch (e: any) {
@@ -106,7 +107,8 @@ export default function TokenDetailPage() {
     const toastId = toast.loading(`Selling $${t.symbol}…`);
     try {
       const txHash = await sellToken(t.tokenAddress, amt, signer as any);
-      await recordTrade({ tokenAddress: t.tokenAddress, side: 'sell', txHash });
+      const myAddr = await (signer as any).getAddress().catch(() => '');
+      await recordTrade({ tokenAddress: t.tokenAddress, side: 'sell', txHash, tokenAmount: amt, trader: myAddr });
       toast.update(toastId, { render: `Sold $${t.symbol}`, type: 'success', isLoading: false, autoClose: 4000 });
       refreshBalance();
     } catch (e: any) {

@@ -2330,7 +2330,13 @@ async function recordTrade(req: NextApiRequest, res: NextApiResponse, r: { walle
   try {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
-    const rcpt = await provider.getTransactionReceipt(txHash);
+    // the load-balanced RPC pool can lag a block behind the client's node —
+    // retry briefly instead of failing the record
+    let rcpt = await provider.getTransactionReceipt(txHash);
+    for (let i = 0; !rcpt && i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      rcpt = await provider.getTransactionReceipt(txHash);
+    }
     if (!rcpt || rcpt.status !== 1) throw new Error('trade tx not mined');
     if (rcpt.from.toLowerCase() !== r.walletAddress.toLowerCase()) throw new Error('not your trade');
     if (rcpt.to?.toLowerCase() !== factory.toLowerCase()) throw new Error('wrong factory');
@@ -2407,8 +2413,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
     const f = new ethers.Contract(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, FACTORY_ABI, provider);
-    const c = await f.curves(token);
-    const spot = await f.spotPriceWei(token);
+    const [c, spot] = await Promise.all([f.curves(token), f.spotPriceWei(token)]);
     curve = {
       realTokenReserves: Number(ethers.utils.formatEther(c.realTokenReserves)),
       complete: c.complete,

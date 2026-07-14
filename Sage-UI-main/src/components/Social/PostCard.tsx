@@ -346,14 +346,28 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       }
       const r = await collectPost({ postId: post.id, payWith, txHash }).unwrap();
       toast.update(t, {
-        render: `Collected! SAGE Social #${post.id} is yours (token ${r.tokenId}) ⬡`,
+        render: `Minted ⬡ SAGE Social #${post.id} is in your wallet (token ${r.tokenId}${
+          r.pointsSpent ? `, ${r.pointsSpent} pixels` : ''
+        })`,
         type: 'success',
         isLoading: false,
-        autoClose: 6000,
+        autoClose: 7000,
       });
     } catch (err: any) {
-      toast.update(t, { render: 'Collect failed', type: 'error', isLoading: false, autoClose: 1 });
-      handleGateError(err, 'Collect failed');
+      // surface the SERVER's reason in the toast — 'Collect failed' alone
+      // tells the user nothing (wrong balance? own post? not verified?)
+      if (err?.data?.needsVerification) {
+        toast.dismiss(t);
+        setShowVerify(true);
+      } else {
+        const msg = err?.data?.error || err?.message?.slice(0, 90) || 'unknown error';
+        toast.update(t, {
+          render: `Not minted — ${msg}`,
+          type: 'error',
+          isLoading: false,
+          autoClose: 8000,
+        });
+      }
     } finally {
       setBusy(false);
     }

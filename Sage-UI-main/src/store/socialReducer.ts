@@ -568,9 +568,47 @@ const socialApi = baseApi.injectEndpoints({
     }),
     recordTrade: builder.mutation<
       { ok: boolean; priceEth?: number },
-      { tokenAddress: string; side: 'buy' | 'sell'; txHash: string }
+      {
+        tokenAddress: string;
+        side: 'buy' | 'sell';
+        txHash: string;
+        // client-known extras for the INSTANT optimistic paint (not sent to
+        // the server): what you traded and who you are
+        ethAmount?: number;
+        tokenAmount?: number;
+        trader?: string;
+      }
     >({
-      query: (body) => ({ url: 'social?action=RecordTrade', method: 'POST', body }),
+      query: ({ tokenAddress, side, txHash }) => ({
+        url: 'social?action=RecordTrade',
+        method: 'POST',
+        body: { tokenAddress, side, txHash },
+      }),
+      // The trade shows up the INSTANT the wallet tx confirms: paint a
+      // provisional row into the token page cache, then the invalidation
+      // refetch replaces it with the server's decoded truth.
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        let patch: { undo: () => void } | undefined;
+        if (arg.ethAmount !== undefined || arg.tokenAmount !== undefined) {
+          patch = dispatch(
+            socialApi.util.updateQueryData('getTokenDetail', arg.tokenAddress, (draft) => {
+              draft.trades.unshift({
+                side: arg.side,
+                trader: arg.trader || '',
+                ethAmount: arg.ethAmount || 0,
+                tokenAmount: arg.tokenAmount || 0,
+                createdAt: new Date().toISOString(),
+              });
+              draft.tradeCount += 1;
+            })
+          );
+        }
+        try {
+          await queryFulfilled;
+        } catch {
+          patch?.undo();
+        }
+      },
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialProfile', id: `tok-${arg.tokenAddress}` }],
     }),
     sendGroupMessage: builder.mutation<{ ok: boolean; id: number }, { owner: string; text: string }>({
