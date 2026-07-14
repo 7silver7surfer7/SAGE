@@ -67,8 +67,8 @@ export default function howtobuyash() {
       <div className='howtobuyash-header'>Earning Pixels </div>
       <p className='howtobuyash__earning-pixels-info'>
         When connecting to the platform, you immediately start earning pixels if you have SAGE
-        tokens. You will earn .25 Pixels a day per SAGE. This reward is capped at 1,000,000 SAGE
-        and will earn you 250,000 Pixels a day.
+        tokens. You will earn .01 Pixels a day per SAGE. This reward is capped at 5,000,000 SAGE
+        and will earn you 50,000 Pixels a day.
       </p>
     </div>
   );
