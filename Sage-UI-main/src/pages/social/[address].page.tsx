@@ -127,7 +127,9 @@ function MintsGrid({ address, isSelf }: { address: string; isSelf: boolean }) {
 export default function SocialProfilePage() {
   const router = useRouter();
   const address = (router.query.address as string) || '';
-  const { isSignedIn } = useSAGEAccount();
+  const { isSignedIn, userData } = useSAGEAccount();
+  const viewerVerified =
+    !!(userData as any)?.verifiedAt || (userData as any)?.role === 'ADMIN';
   const [pickerOpen, setPickerOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -280,7 +282,14 @@ export default function SocialProfilePage() {
             <>
               <button
                 className='social-profile__follow social-profile__follow--on'
-                onClick={() => router.push(`/social/messages/?to=${profile.address}`)}
+                onClick={() => {
+                  // DMs are a verified perk — prompt the checkmark immediately
+                  if (!viewerVerified) {
+                    setVerifyOpen(true);
+                    return;
+                  }
+                  router.push(`/social/messages/?to=${profile.address}`);
+                }}
               >
                 Message
               </button>

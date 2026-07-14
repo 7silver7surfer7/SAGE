@@ -2,6 +2,7 @@ import { getRewardsContract } from '@/utilities/contracts';
 import { EarnedPoints } from '@prisma/client';
 import type { GetEarnedPointsResponse } from '@/api/points.page';
 import { baseApi } from './baseReducer';
+import { parameters } from '@/constants/config';
 
 var escrowPoints: number = 0;
 
@@ -23,10 +24,12 @@ export const pointsApi = baseApi.injectEndpoints({
         const { data } = await fetchWithBQ(`points`);
         const pointsEarned = BigInt((data as any).totalPointsEarned);
         const userAddress = (data as EarnedPoints).address;
-        const pointsUsed = await getTotalPointsUsed(userAddress);
-        // Never surface a negative balance. On-chain `totalPointsUsed` persists
-        // across DB resets (testnet/staging wipes reset earned but not the
-        // contract), so earned − used can go negative — clamp it to 0.
+        // With SagePoints live, /api/points already returns the NET on-chain
+        // balance (spends settle inside the contract) — subtracting the legacy
+        // Rewards.totalPointsUsed would double-count pre-reset history.
+        const pointsUsed = parameters.SAGE_POINTS_ADDRESS
+          ? BigInt(0)
+          : await getTotalPointsUsed(userAddress);
         let pointsBalance = pointsEarned - pointsUsed;
         if (pointsBalance < BigInt(0)) pointsBalance = BigInt(0);
         // as the balance is fresh from contract and database, release any escrow on hold
@@ -41,7 +44,9 @@ export const pointsApi = baseApi.injectEndpoints({
         const { data } = await fetchWithBQ(`points?address=${walletAddress}`);
         const pointsEarned = BigInt((data as any).totalPointsEarned);
         const userAddress = (data as EarnedPoints).address;
-        const pointsUsed = await getTotalPointsUsed(userAddress);
+        const pointsUsed = parameters.SAGE_POINTS_ADDRESS
+          ? BigInt(0)
+          : await getTotalPointsUsed(userAddress);
         let pointsBalance = pointsEarned - pointsUsed;
         if (pointsBalance < BigInt(0)) pointsBalance = BigInt(0); // never negative
         console.log(

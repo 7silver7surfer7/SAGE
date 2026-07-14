@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { useSigner } from 'wagmi';
-import { tipSage, sendEth } from '@/utilities/tip';
+import { sendEth } from '@/utilities/tip';
 import {
   useGetVerificationInfoQuery,
   usePurchaseVerificationMutation,
@@ -10,10 +10,10 @@ import VerifiedBadge from './VerifiedBadge';
 
 const BENEFITS = [
   ['Verified checkmark', 'Shown next to your name everywhere on SAGE Social'],
-  ['Sell posts as NFTs', 'Set a SAGE price; collectors mint your post to their wallet'],
-  ['Collect posts', 'Mint other artists’ posts — pay in SAGE or your pixels'],
-  ['Collect with pixels', 'Spend the pixels you earn holding SAGE instead of tokens'],
-  ['Boost posts', 'Burn SAGE to pin a post to the top of the global feed'],
+  ['Sell posts as NFTs', 'Images sell in ETH; tweets sell in pixels — collectors mint them to their wallet'],
+  ['Collect posts', 'Mint other artists’ posts — pay in ETH or pixels'],
+  ['Earn pixels holding SAGE', 'Pixels stream to your wallet every second, on-chain'],
+  ['Boost posts', 'Burn SAGE to lift a post in the global feed'],
   ['Direct messages', 'Wallet-to-wallet DMs with anyone on the network'],
   ['2× invite capacity', 'Your invite code carries 10 uses instead of 5'],
 ];
@@ -28,21 +28,19 @@ export default function VerificationModal({ onClose }: Props) {
   const [purchase] = usePurchaseVerificationMutation();
   const [busy, setBusy] = useState(false);
 
-  const onBuy = async (currency: 'SAGE' | 'ETH') => {
+  // verification is paid in ETH only
+  const onBuy = async () => {
     if (!info) return;
     if (!signer) {
       toast.info('Connect your wallet first');
       return;
     }
-    const price = currency === 'ETH' ? info.priceEth : info.priceSage;
+    const price = info.priceEth;
     setBusy(true);
-    const t = toast.loading(`Sending ${price} ${currency}…`);
+    const t = toast.loading(`Sending ${price} ETH…`);
     try {
-      const txHash =
-        currency === 'ETH'
-          ? await sendEth(info.treasury, price, signer as any)
-          : await tipSage(info.treasury, price, signer as any);
-      await purchase({ txHash, currency }).unwrap();
+      const txHash = await sendEth(info.treasury, price, signer as any);
+      await purchase({ txHash, currency: 'ETH' }).unwrap();
       toast.update(t, {
         render: 'You are verified — welcome to premium ✅',
         type: 'success',
@@ -85,22 +83,11 @@ export default function VerificationModal({ onClose }: Props) {
             </li>
           ))}
         </ul>
-        <button
-          className='social-verify__buy'
-          disabled={busy || !info}
-          onClick={() => onBuy('SAGE')}
-        >
-          {info ? `Get verified — ${info.priceSage} SAGE ($${info.priceUsd})` : 'Loading price…'}
-        </button>
-        <button
-          className='social-verify__buy social-verify__buy--eth'
-          disabled={busy || !info}
-          onClick={() => onBuy('ETH')}
-        >
-          {info ? `or pay ${info.priceEth} ETH ($${info.priceUsd})` : 'Loading price…'}
+        <button className='social-verify__buy' disabled={busy || !info} onClick={onBuy}>
+          {info ? `Get verified — ${info.priceEth} ETH ($${info.priceUsd})` : 'Loading price…'}
         </button>
         <p className='social-verify__fine'>
-          One-time payment to the SAGE treasury. The price tracks $10 in SAGE at the current
+          One-time payment to the SAGE treasury. The price tracks $10 in ETH at the current
           market rate.
         </p>
       </div>

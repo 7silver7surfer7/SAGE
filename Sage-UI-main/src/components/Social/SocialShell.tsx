@@ -137,6 +137,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
     { name: 'Activity', url: '/social/activity', icon: 'bell' },
     { name: 'Messages', url: '/social/messages', icon: 'chat', badge: me?.unreadMessages || 0 },
     { name: 'Leaderboard', url: '/social/leaderboard', icon: 'trophy' },
+    { name: 'Tokens', url: '/social/tokens', icon: 'rocket' },
     { name: 'Launch token', url: '/social/launch/token', icon: 'rocket' },
     { name: 'Launch NFT', url: '/social/launch/nft', icon: 'palette' },
     ...(meAddress

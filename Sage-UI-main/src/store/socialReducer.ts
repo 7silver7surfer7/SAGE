@@ -99,6 +99,14 @@ export interface InvitePreview {
   owner: { address: string; username: string | null; profilePicture: string | null };
 }
 
+export interface TokenListItem {
+  tokenAddress: string;
+  name: string;
+  symbol: string;
+  imageUrl: string | null;
+  creator: SocialUserCard;
+}
+
 export type Conversation = {
   partner: SocialUserCard;
   lastMessage: string;
@@ -352,6 +360,10 @@ const socialApi = baseApi.injectEndpoints({
     getProfileToken: builder.query<ProfileTokenResponse, string>({
       query: (address) => ({ url: `social?action=GetProfileToken&address=${address}` }),
       providesTags: (_r, _e, address) => [{ type: 'SocialProfile', id: address }],
+    }),
+    getTokens: builder.query<{ tokens: TokenListItem[] }, void>({
+      query: () => ({ url: 'social?action=GetTokens' }),
+      providesTags: ['SocialFeed'],
     }),
     getTokenDetail: builder.query<TokenDetail, string>({
       query: (address) => ({ url: `social?action=GetTokenDetail&address=${address}` }),
@@ -638,6 +650,7 @@ export const {
   useToggleGroupChatMutation,
   useKickFromGroupChatMutation,
   useSetProfileImageMutation,
+  useGetTokensQuery,
   useGetTokenDetailQuery,
   useRecordTokenLaunchMutation,
   useRecordAirdropMutation,

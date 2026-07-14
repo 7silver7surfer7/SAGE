@@ -309,6 +309,12 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     e.stopPropagation();
     if (!requireAuth()) return;
     if (post.collectedByViewer) return;
+    // collecting is a verified perk — prompt the $10 checkmark IMMEDIATELY,
+    // before any price dialog (this is the conversion moment)
+    if (!viewerVerified) {
+      setShowVerify(true);
+      return;
+    }
     const price = post.collectPrice || 0;
     const isEthSale = post.collectCurrency === 'ETH';
     const payWith = 'POINTS' as const;

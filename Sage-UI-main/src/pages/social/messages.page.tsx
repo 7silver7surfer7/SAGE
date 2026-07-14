@@ -114,8 +114,11 @@ function DMThread({ partner }: { partner: string }) {
 
 export default function MessagesPage() {
   const router = useRouter();
-  const { isSignedIn } = useSAGEAccount();
+  const { isSignedIn, userData } = useSAGEAccount();
+  const viewerVerified =
+    !!(userData as any)?.verifiedAt || (userData as any)?.role === 'ADMIN';
   const [composeOpen, setComposeOpen] = useState(false);
+  const [showVerify, setShowVerify] = useState(false);
   const { data, isFetching } = useGetConversationsQuery(undefined, {
     skip: !isSignedIn,
     pollingInterval: 30_000,
@@ -132,7 +135,14 @@ export default function MessagesPage() {
             <p className='social__subtitle'>direct messages — private, wallet to wallet</p>
           </div>
           {isSignedIn && (
-            <button className='social-dm__new' onClick={() => setComposeOpen(true)}>
+            <button
+              className='social-dm__new'
+              onClick={() => {
+                // messaging is a verified perk — prompt the checkmark first
+                if (!viewerVerified) setShowVerify(true);
+                else setComposeOpen(true);
+              }}
+            >
               ＋ New message
             </button>
           )}
@@ -184,6 +194,7 @@ export default function MessagesPage() {
           </div>
         )}
       </div>
+      {showVerify && <VerificationModal onClose={() => setShowVerify(false)} />}
       {composeOpen && (
         <ComposeMessageModal
           onClose={() => setComposeOpen(false)}
