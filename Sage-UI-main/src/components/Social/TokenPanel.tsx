@@ -28,6 +28,7 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
   // pump.fun-style dev buy: the launch tx can carry ETH that executes as the
   // FIRST buy on the fresh curve — seeds the chart and makes you holder #1
   const [initialBuy, setInitialBuy] = useState('0.01');
+  const [description, setDescription] = useState('');
   // default OFF: no-dump launches are the norm — opting IN reserves the 2%
   const [withAirdrop, setWithAirdrop] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -42,7 +43,7 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
     const t = toast.loading(buyEth > 0 ? `Launching + buying ${buyEth} ETH…` : 'Launching your coin… (free — you only pay gas)');
     try {
       const { token, txHash, devBuy } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth);
-      await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop }).unwrap();
+      await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop, description: description.trim() || undefined }).unwrap();
       if (devBuy) {
         // the dev buy is a real Bought event in the launch tx — record it so
         // the chart, holders and trades all start seeded
@@ -73,6 +74,15 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
         </p>
         <input className='social-search__input' placeholder='Coin name (e.g. Chartreuse Gang)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
         <input className='social-search__input' placeholder='Ticker (e.g. CHRT)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 12 }} />
+        <textarea
+          className='social-search__input'
+          placeholder='One-liner about your coin (shown on its page)'
+          value={description}
+          maxLength={300}
+          rows={2}
+          onChange={(e) => setDescription(e.target.value)}
+          style={{ marginBottom: 12, resize: 'vertical', borderRadius: 16 }}
+        />
         <label className='social-edit__label'>Initial buy — seeds your chart, makes you holder #1</label>
         <div className='social-unit-input' style={{ marginBottom: 12 }}>
           <input placeholder='0.01 (0 = skip)' value={initialBuy} onChange={(e) => setInitialBuy(e.target.value)} />

@@ -1939,7 +1939,7 @@ async function recordTokenLaunch(
   r: { walletAddress: string }
 ) {
   if (!(await requireVerified(r.walletAddress, res))) return; // premium: launching is a paid perk
-  const { tokenAddress, name, symbol, launchTxHash, imageUrl, airdropEnabled } = req.body || {};
+  const { tokenAddress, name, symbol, launchTxHash, imageUrl, airdropEnabled, description } = req.body || {};
   const token = canon(tokenAddress);
   if (!token || !launchTxHash || !name || !symbol)
     return res.status(400).json({ error: 'tokenAddress, name, symbol, launchTxHash required' });
@@ -1976,6 +1976,7 @@ async function recordTokenLaunch(
         symbol: String(symbol).slice(0, 12),
         launchTxHash,
         imageUrl: imageUrl || null,
+        description: description ? String(description).slice(0, 300) : null,
         airdropEnabled: airdropEnabled !== false,
       },
     });
@@ -2457,6 +2458,17 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
   const INITIAL_REAL = 793_100_000; // pump.fun-shaped initial real reserves
   const soldPct = curve ? Math.min(100, ((INITIAL_REAL - curve.realTokenReserves) / INITIAL_REAL) * 100) : 0;
 
+  // market header numbers (pump.fun-style): USD mcap, ATH, 24h change.
+  // priceEth is ETH per 1M tokens → mcap = price × 1000 (1B supply) × ETH/USD
+  const ethUsd = await boostEthUsd();
+  const athPriceEth = trades.reduce((m, t) => Math.max(m, t.priceEth), curve?.priceEth || 0);
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  const before24h = [...trades].reverse().find((t) => +t.createdAt <= dayAgo);
+  // baseline: last trade before the 24h window; if the token is younger than
+  // 24h, the curve's initial price (its true starting point)
+  const INITIAL_PRICE = 2_000_000 / 1_073_000_000;
+  const price24hAgoEth = before24h ? before24h.priceEth : trades.length ? INITIAL_PRICE : curve?.priceEth || 0;
+
   // live trading view (1s client poll) — a CDN cache here would freeze the tape
   res.setHeader('Cache-Control', 'no-store');
   res.json({
@@ -2465,6 +2477,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
       name: launch.name,
       symbol: launch.symbol,
       imageUrl: launch.imageUrl,
+      description: launch.description || null,
       airdropEnabled: launch.airdropEnabled,
       creator: {
         address: launch.creatorAddress,
@@ -2474,6 +2487,9 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
       },
     },
     priceEth: curve?.priceEth ?? (trades.length ? trades[trades.length - 1].priceEth : 0),
+    ethUsd,
+    athPriceEth,
+    price24hAgoEth,
     complete: curve?.complete ?? false,
     bondingProgressPct: Math.round(soldPct * 10) / 10,
     holderCount: holders.length,

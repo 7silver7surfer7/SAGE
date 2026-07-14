@@ -40,6 +40,7 @@ export default function TokenDetailPage() {
     pollingInterval: 10_000, // reconcile only — the candle tape streams from chain events
   });
   const [recordTrade] = useRecordTradeMutation();
+  const [bucketS, setBucketS] = useState(60); // 1m default, pump.fun-style
   const [createPost] = useCreatePostMutation();
   const [busy, setBusy] = useState(false);
   const [myBalance, setMyBalance] = useState<number | null>(null);
@@ -126,6 +127,18 @@ export default function TokenDetailPage() {
     }
   };
 
+  const shareX = () => {
+    const url = `${window.location.origin}/social/token/${t.tokenAddress}`;
+    const text = `$${t.symbol} — ${t.name} on SAGE Social 🚀\n${url}`;
+    // pre-drafted tweet: opens X's composer, nothing is sent for them
+    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, '_blank');
+  };
+
+  const copyCa = () => {
+    navigator.clipboard.writeText(t.tokenAddress);
+    toast.success('Contract address copied');
+  };
+
   const share = () => {
     if (!isSignedIn) { toast.info('Connect your wallet to post'); return; }
     const url = `${window.location.origin}/social/token/${t.tokenAddress}`;
@@ -150,22 +163,85 @@ export default function TokenDetailPage() {
           )}
           <div className='token-page__id'>
             <h1>
-              ${t.symbol} <span className='token-page__name'>{t.name}</span>
+              {t.name} <span className='token-page__name'>${t.symbol}</span>
             </h1>
-            <button className='token-page__creator' onClick={() => router.push(`/social/${t.creator.address}`)}>
-              by {creatorName}
-              {t.creator.verified && <VerifiedBadge size={12} />}
-            </button>
-            {!t.airdropEnabled && <span className='token-page__badge'>🔒 no-dump launch</span>}
+            <div className='token-page__meta-row'>
+              <button className='token-page__creator' onClick={() => router.push(`/social/${t.creator.address}`)}>
+                <span className='token-page__creator-avatar'>
+                  <PfpImage src={t.creator.profilePicture} />
+                </span>
+                {creatorName}
+                {t.creator.verified && <VerifiedBadge size={12} />}
+              </button>
+              <button className='token-page__ca' title='Copy contract address' onClick={copyCa}>
+                {t.tokenAddress.slice(0, 6)}…{t.tokenAddress.slice(-4)} ⧉
+              </button>
+              {!t.airdropEnabled && <span className='token-page__badge'>🔒 no-dump</span>}
+            </div>
+            {t.description && <p className='token-page__desc'>{t.description}</p>}
           </div>
-          <button className='token-page__share' onClick={share}>Share to feed</button>
+          <div className='token-page__share-col'>
+            <button className='token-page__share' onClick={share}>Share to feed</button>
+            <button className='token-page__share token-page__share--x' onClick={shareX}>Share on 𝕏</button>
+          </div>
         </div>
+
+        {/* pump.fun-style market header: big mcap + 24h change + ATH bar */}
+        {(() => {
+          const ethUsd = data?.ethUsd || 0;
+          const mcap = (data?.priceEth || 0) * 1000 * ethUsd;
+          const mcapAgo = (data?.price24hAgoEth || 0) * 1000 * ethUsd;
+          const diff = mcap - mcapAgo;
+          const pct = mcapAgo > 0 ? (diff / mcapAgo) * 100 : 0;
+          const ath = Math.max((data?.athPriceEth || 0) * 1000 * ethUsd, mcap);
+          const fmtUsd = (v: number) =>
+            v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(1)}K` : `$${v.toFixed(2)}`;
+          return (
+            <div className='token-page__mcap'>
+              <span className='token-page__mcap-label'>Market cap</span>
+              <div className='token-page__mcap-row'>
+                <b className='token-page__mcap-value'>{fmtUsd(mcap)}</b>
+                <span className='token-page__mcap-change' data-up={diff >= 0}>
+                  {diff >= 0 ? '+' : '−'}{fmtUsd(Math.abs(diff)).replace('$', '$')} ({diff >= 0 ? '+' : ''}
+                  {pct.toFixed(2)}%) <em>24hr</em>
+                </span>
+                <div className='token-page__ath'>
+                  <div className='token-page__ath-bar'>
+                    <div
+                      className='token-page__ath-fill'
+                      style={{ width: `${ath > 0 ? Math.min(100, (mcap / ath) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <span className='token-page__ath-label'>ATH <b>{fmtUsd(ath)}</b></span>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className='token-page__stats'>
           <div><span>Price</span><b>{data?.priceEth ? data.priceEth.toPrecision(3) : '0'} <em>ETH/1M</em></b></div>
           <div><span>Holders</span><b>{data?.holderCount ?? 0}</b></div>
           <div><span>Trades</span><b>{data?.tradeCount ?? 0}</b></div>
           <div><span>Status</span><b>{data?.complete ? 'Graduated' : 'On curve'}</b></div>
+        </div>
+
+        {/* timeframe switcher */}
+        <div className='token-page__tf'>
+          {[
+            [60, '1m'],
+            [300, '5m'],
+            [900, '15m'],
+            [3600, '1h'],
+          ].map(([sec, label]) => (
+            <button
+              key={sec}
+              data-active={bucketS === sec}
+              onClick={() => setBucketS(sec as number)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         <CandleChart
@@ -177,6 +253,7 @@ export default function TokenDetailPage() {
           }))}
           tokenAddress={t.tokenAddress}
           onLiveTrade={() => refetch()}
+          bucketS={bucketS}
         />
 
         <div className='token-page__curve'>

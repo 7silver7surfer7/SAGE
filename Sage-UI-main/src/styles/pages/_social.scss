@@ -3579,3 +3579,168 @@ body:has([class*='__overlay']) .layout {
 .social__header--row {
   padding-right: 96px;
 }
+
+/* ── pump.fun-style token header extensions ── */
+.token-page__meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.token-page__creator-avatar {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-block;
+  @include m.theme() {
+    background: m.t(base2);
+  }
+}
+.token-page__ca {
+  border: none;
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 0.75rem;
+  @include m.theme() {
+    background: rgba(m.t(contrast), 0.07);
+    color: m.t(contrast);
+  }
+  &:hover {
+    @include m.theme() {
+      background: rgba(m.t(accent), 0.2);
+    }
+  }
+}
+.token-page__desc {
+  margin-top: 6px;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  max-width: 56ch;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.65);
+  }
+}
+.token-page__share-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.token-page__share--x {
+  @include m.theme() {
+    background: transparent;
+    color: m.t(contrast);
+    border: 1px solid rgba(m.t(contrast), 0.3);
+  }
+}
+
+/* market-cap hero */
+.token-page__mcap {
+  margin: 4px 0 14px;
+}
+.token-page__mcap-label {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.5);
+  }
+}
+.token-page__mcap-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.token-page__mcap-value {
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+}
+.token-page__mcap-change {
+  font-weight: 700;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  color: #f6608a; // down
+  &[data-up='true'] {
+    @include m.theme() {
+      color: m.t(accent);
+    }
+  }
+  em {
+    font-style: normal;
+    font-weight: 400;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.45);
+    }
+  }
+}
+.token-page__ath {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 220px;
+  margin-left: auto;
+}
+.token-page__ath-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  @include m.theme() {
+    background: rgba(m.t(contrast), 0.1);
+  }
+}
+.token-page__ath-fill {
+  height: 100%;
+  border-radius: 999px;
+  @include m.theme() {
+    background: m.t(accent);
+  }
+}
+.token-page__ath-label {
+  font-size: 0.8rem;
+  white-space: nowrap;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.55);
+  }
+  b {
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+}
+
+/* timeframe switcher */
+.token-page__tf {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+  button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.5);
+    }
+    &[data-active='true'] {
+      @include m.theme() {
+        background: rgba(m.t(accent), 0.15);
+        color: m.t(accent);
+      }
+    }
+  }
+}

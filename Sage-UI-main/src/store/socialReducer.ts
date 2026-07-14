@@ -218,10 +218,14 @@ export interface TokenDetail {
     name: string;
     symbol: string;
     imageUrl: string | null;
+    description: string | null;
     airdropEnabled: boolean;
     creator: SocialUserCard;
   };
   priceEth: number;
+  ethUsd: number;
+  athPriceEth: number;
+  price24hAgoEth: number;
   complete: boolean;
   bondingProgressPct: number;
   holderCount: number;
@@ -570,6 +574,7 @@ const socialApi = baseApi.injectEndpoints({
         launchTxHash: string;
         imageUrl?: string;
         airdropEnabled?: boolean;
+        description?: string;
       }
     >({
       query: (body) => ({ url: 'social?action=RecordTokenLaunch', method: 'POST', body }),

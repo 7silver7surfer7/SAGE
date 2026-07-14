@@ -34,14 +34,14 @@ interface Candle {
 // buy draws a real body instead of an invisible flat doji.
 const INITIAL_PRICE_ETH_PER_M = (2 * 1_000_000) / 1_073_000_000;
 
-const BUCKET_S = 60; // 1-minute candles, pump.fun's default granularity
+const DEFAULT_BUCKET_S = 60; // 1-minute candles, pump.fun's default granularity
 
-/** Bucket the raw trade-price series into 1m OHLC candles. */
-function toCandles(series: Point[]): Candle[] {
+/** Bucket the raw trade-price series into OHLC candles. */
+function toCandles(series: Point[], bucketS: number): Candle[] {
   const sorted = [...series].sort((a, b) => +new Date(a.t) - +new Date(b.t));
   const out: Candle[] = [];
   for (const p of sorted) {
-    const bucket = (Math.floor(+new Date(p.t) / 1000 / BUCKET_S) * BUCKET_S) as UTCTimestamp;
+    const bucket = (Math.floor(+new Date(p.t) / 1000 / bucketS) * bucketS) as UTCTimestamp;
     const last = out[out.length - 1];
     if (last && last.time === bucket) {
       last.high = Math.max(last.high, p.price);
@@ -57,12 +57,12 @@ function toCandles(series: Point[]): Candle[] {
   return out;
 }
 
-/** Volume histogram buckets (Σ ETH per minute, colored by net side). */
-function toVolume(trades: TradePoint[], dark: boolean) {
+/** Volume histogram buckets (Σ ETH per bucket, colored by net side). */
+function toVolume(trades: TradePoint[], dark: boolean, bucketS: number) {
   const sorted = [...trades].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt));
   const map = new Map<number, { buy: number; sell: number }>();
   for (const t of sorted) {
-    const bucket = Math.floor(+new Date(t.createdAt) / 1000 / BUCKET_S) * BUCKET_S;
+    const bucket = Math.floor(+new Date(t.createdAt) / 1000 / bucketS) * bucketS;
     const e = map.get(bucket) || { buy: 0, sell: 0 };
     e[t.side] += t.ethAmount;
     map.set(bucket, e);
@@ -91,11 +91,14 @@ export default function CandleChart({
   trades = [],
   tokenAddress,
   onLiveTrade,
+  bucketS = DEFAULT_BUCKET_S,
 }: {
   series: Point[];
   trades?: TradePoint[];
   tokenAddress: string;
   onLiveTrade?: () => void;
+  /** candle width in seconds (60 = 1m, 300 = 5m, …) */
+  bucketS?: number;
 }) {
   const { theme } = useTheme();
   const provider = useProvider();
@@ -105,8 +108,8 @@ export default function CandleChart({
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const lastCandleRef = useRef<Candle | null>(null);
 
-  const candles = useMemo(() => toCandles(series), [series]);
-  const volume = useMemo(() => toVolume(trades, theme === 'dark'), [trades, theme]);
+  const candles = useMemo(() => toCandles(series, bucketS), [series, bucketS]);
+  const volume = useMemo(() => toVolume(trades, theme === 'dark', bucketS), [trades, theme, bucketS]);
 
   // build / theme the chart
   useEffect(() => {
@@ -182,7 +185,7 @@ export default function CandleChart({
       try {
         const spotWei = await factory.spotPriceWei(tokenAddress);
         const price = Number(ethers.utils.formatEther(spotWei.mul(1_000_000))); // ETH per 1M
-        const now = (Math.floor(Date.now() / 1000 / BUCKET_S) * BUCKET_S) as UTCTimestamp;
+        const now = (Math.floor(Date.now() / 1000 / bucketS) * bucketS) as UTCTimestamp;
         const last = lastCandleRef.current;
         let candle: Candle;
         if (last && last.time === now) {
