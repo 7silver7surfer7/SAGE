@@ -10,11 +10,15 @@ const ONE = ethers.utils.parseEther("1");
 // address(0) = SAGE token (offers here are all SAGE-denominated)
 const SAGE_CURRENCY = ethers.constants.AddressZero;
 
+// Marketplace now rejects a signed offer whose chainId doesn't match
+// block.chainid — set once beforeEach runs (Hardhat's local network id).
+let CHAIN_ID;
+
 async function signSellOffer(signer, contractAddress, price, tokenId) {
     const message = keccak256(
         ethers.utils.defaultAbiCoder.encode(
             ["address", "address", "uint256", "uint256", "uint256", "uint256", "address", "bool"],
-            [signer.address, contractAddress, price, tokenId, futureTimestamp, 1, SAGE_CURRENCY, true]
+            [signer.address, contractAddress, price, tokenId, futureTimestamp, CHAIN_ID, SAGE_CURRENCY, true]
         )
     );
     return signer.signMessage(message);
@@ -30,7 +34,7 @@ async function buyFromSellOffer(market, buyer, seller, contractAddress, price, t
             price,
             tokenId,
             futureTimestamp,
-            1,
+            CHAIN_ID,
             SAGE_CURRENCY,
             signedOffer
         );
@@ -40,6 +44,7 @@ describe("Per-token royalties", () => {
     beforeEach(async () => {
         [owner, addr1, addr2, artist, multisig, ...addrs] =
             await ethers.getSigners();
+        CHAIN_ID = (await ethers.provider.getNetwork()).chainId;
         SageStorage = await ethers.getContractFactory("SageStorage");
         sageStorage = await SageStorage.deploy(owner.address, multisig.address);
 

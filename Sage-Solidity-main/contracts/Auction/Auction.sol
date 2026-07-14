@@ -227,7 +227,12 @@ contract Auction is
                 pendingReturns[_to] += _amount;
             }
         } else {
-            token.transfer(_to, _amount);
+            // unchecked return meant a non-standard ERC20 that returns false
+            // instead of reverting on failure would silently mark this
+            // payout done while _to received nothing. SAGE's current token
+            // reverts on failure (this was benign today), but require()
+            // makes that failure loud regardless of what `token` ever is.
+            require(token.transfer(_to, _amount), "ERC20 payout failed");
         }
     }
 

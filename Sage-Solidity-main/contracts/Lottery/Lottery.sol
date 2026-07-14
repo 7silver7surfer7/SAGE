@@ -441,7 +441,12 @@ contract Lottery is
                 pendingReturns[_to] += _amount;
             }
         } else {
-            token.transfer(_to, _amount);
+            // unchecked return meant a non-standard ERC20 that returns false
+            // instead of reverting on failure would silently mark this
+            // payout done while _to received nothing. SAGE's current token
+            // reverts on failure (this was benign today), but require()
+            // makes that failure loud regardless of what `token` ever is.
+            require(token.transfer(_to, _amount), "ERC20 payout failed");
         }
     }
 
@@ -531,7 +536,11 @@ contract Lottery is
     ) public view returns (address[] memory) {
         address[] memory result = new address[](_to - _from + 1);
         for (uint256 i = _from; i <= _to; i++) {
-            result[i] = lotteryTickets[_lotteryId][i];
+            // result is sized to the (_from.._to) range, not lotteryTickets'
+            // own indices — writing result[i] instead of result[i - _from]
+            // ran off the end of the array (out-of-bounds panic) for any
+            // call with _from > 0.
+            result[i - _from] = lotteryTickets[_lotteryId][i];
         }
         return result;
     }
@@ -730,7 +739,7 @@ contract Lottery is
      * @param _amount Amount to withdraw
      */
     function withdraw(uint256 _amount) external onlyAdmin {
-        token.transfer(sageStorage.multisig(), _amount);
+        require(token.transfer(sageStorage.multisig(), _amount), "ERC20 transfer failed");
     }
 
     /**

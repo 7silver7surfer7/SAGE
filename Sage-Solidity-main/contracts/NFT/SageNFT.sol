@@ -177,8 +177,11 @@ contract SageNFT is
         IERC20 token = IERC20(erc20);
         uint256 balance = token.balanceOf(address(this));
         uint256 _artist = (balance * artistShare) / 10000;
-        token.transfer(artist, _artist);
-        token.transfer(_platformRoyaltyDest(), balance - _artist);
+        require(token.transfer(artist, _artist), "artist transfer failed");
+        require(
+            token.transfer(_platformRoyaltyDest(), balance - _artist),
+            "platform transfer failed"
+        );
     }
 
     function withdraw() public {

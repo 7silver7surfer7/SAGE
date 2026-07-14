@@ -43,6 +43,11 @@ describe("Marketplace Contract", () => {
             multisig,
             ...addrs
         ] = await ethers.getSigners();
+        // the actual network's chainId — Marketplace now rejects a signed
+        // offer whose chainId doesn't match block.chainid, so a hardcoded
+        // placeholder (this used to be a literal 1, mainnet's id, while
+        // Hardhat's local network runs as 31337) would fail every offer
+        CHAIN_ID = (await ethers.provider.getNetwork()).chainId;
         SageStorage = await ethers.getContractFactory("SageStorage");
         sageStorage = await SageStorage.deploy(owner.address, multisig.address);
 
@@ -92,7 +97,7 @@ describe("Marketplace Contract", () => {
             "1000000000000000000",
             1,
             futureTimestamp,
-            1,
+            CHAIN_ID,
             SAGE_CURRENCY,
             true
         );
@@ -106,7 +111,7 @@ describe("Marketplace Contract", () => {
                 "1000000000000000000",
                 1,
                 futureTimestamp,
-                1,
+                CHAIN_ID,
                 SAGE_CURRENCY,
                 signedOffer
             );
@@ -127,7 +132,7 @@ describe("Marketplace Contract", () => {
             price,
             1,
             futureTimestamp,
-            1,
+            CHAIN_ID,
             NATIVE_CURRENCY,
             true
         );
@@ -143,7 +148,7 @@ describe("Marketplace Contract", () => {
                 price,
                 1,
                 futureTimestamp,
-                1,
+                CHAIN_ID,
                 NATIVE_CURRENCY,
                 signedOffer,
                 { value: price }
@@ -169,7 +174,7 @@ describe("Marketplace Contract", () => {
                 price,
                 1,
                 futureTimestamp,
-                1,
+                CHAIN_ID,
                 NATIVE_CURRENCY,
                 true
             )
@@ -183,7 +188,7 @@ describe("Marketplace Contract", () => {
                     price,
                     1,
                     futureTimestamp,
-                    1,
+                    CHAIN_ID,
                     NATIVE_CURRENCY,
                     signedOffer,
                     { value: ethers.utils.parseEther("0.5") }
@@ -200,7 +205,7 @@ describe("Marketplace Contract", () => {
                 price,
                 1,
                 futureTimestamp,
-                1,
+                CHAIN_ID,
                 NATIVE_CURRENCY,
                 true
             )
@@ -218,7 +223,7 @@ describe("Marketplace Contract", () => {
                     price,
                     1,
                     futureTimestamp,
-                    1,
+                    CHAIN_ID,
                     SAGE_CURRENCY,
                     signedOffer
                 )
@@ -234,7 +239,7 @@ describe("Marketplace Contract", () => {
                 price,
                 1,
                 futureTimestamp,
-                1,
+                CHAIN_ID,
                 NATIVE_CURRENCY,
                 false
             )
@@ -248,7 +253,7 @@ describe("Marketplace Contract", () => {
                     price,
                     1,
                     futureTimestamp,
-                    1,
+                    CHAIN_ID,
                     NATIVE_CURRENCY,
                     signedOffer
                 )
@@ -279,7 +284,7 @@ describe("Marketplace Contract", () => {
                 100, //price
                 1, //tokenId
                 futureTimestamp, //expireAt
-                1, //chainId
+                CHAIN_ID, //chainId
                 SAGE_CURRENCY,
                 true //isSellOrder
             )
@@ -292,7 +297,7 @@ describe("Marketplace Contract", () => {
                 100,
                 1,
                 futureTimestamp,
-                1,
+                CHAIN_ID,
                 SAGE_CURRENCY,
                 signedOffer
             );
@@ -304,7 +309,7 @@ describe("Marketplace Contract", () => {
                 100, //price
                 1, //tokenId
                 futureTimestamp, //expireAt
-                1, // chainId
+                CHAIN_ID, // chainId
                 SAGE_CURRENCY,
                 signedOffer
             )
@@ -320,7 +325,7 @@ describe("Marketplace Contract", () => {
                 100,
                 1,
                 pastTimestamp,
-                1,
+                CHAIN_ID,
                 SAGE_CURRENCY,
                 true
             )
@@ -334,7 +339,7 @@ describe("Marketplace Contract", () => {
                     100,
                     1,
                     pastTimestamp,
-                    1,
+                    CHAIN_ID,
                     SAGE_CURRENCY,
                     signedOffer
                 )
@@ -350,7 +355,7 @@ describe("Marketplace Contract", () => {
                 100,
                 1,
                 futureTimestamp,
-                1,
+                CHAIN_ID,
                 SAGE_CURRENCY,
                 false
             )
@@ -364,7 +369,7 @@ describe("Marketplace Contract", () => {
                     100,
                     1,
                     futureTimestamp,
-                    1,
+                    CHAIN_ID,
                     SAGE_CURRENCY,
                     signedOffer
                 )
@@ -380,7 +385,7 @@ describe("Marketplace Contract", () => {
                 100,
                 1,
                 futureTimestamp,
-                1,
+                CHAIN_ID,
                 SAGE_CURRENCY,
                 true
             )
@@ -394,10 +399,41 @@ describe("Marketplace Contract", () => {
                     100,
                     10,
                     futureTimestamp,
-                    1,
+                    CHAIN_ID,
                     SAGE_CURRENCY,
                     signedOffer
                 )
         ).to.be.revertedWith("Invalid signature");
+    });
+
+    it("Should reject a signed offer whose chainId doesn't match the network", async function() {
+        await mockERC20.connect(addr1).approve(market.address, 1000);
+        const wrongChainId = Number(CHAIN_ID) + 1;
+        let signedOffer = await artist.signMessage(
+            encodeOffer(
+                artist.address,
+                nftContractAddress,
+                100,
+                1,
+                futureTimestamp,
+                wrongChainId,
+                SAGE_CURRENCY,
+                true
+            )
+        );
+        await expect(
+            market
+                .connect(addr1)
+                .buyFromSellOffer(
+                    artist.address,
+                    nftContractAddress,
+                    100,
+                    1,
+                    futureTimestamp,
+                    wrongChainId,
+                    SAGE_CURRENCY,
+                    signedOffer
+                )
+        ).to.be.revertedWith("Wrong chain");
     });
 });

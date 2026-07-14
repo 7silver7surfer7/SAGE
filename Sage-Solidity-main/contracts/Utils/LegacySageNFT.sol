@@ -48,8 +48,11 @@ contract LegacySageNFT is ERC721URIStorage {
         IERC20 token = IERC20(erc20);
         uint256 balance = token.balanceOf(address(this));
         uint256 _artist = (balance * artistShare) / 10000;
-        token.transfer(artist, _artist);
-        token.transfer(sageStorage.multisig(), balance - _artist);
+        require(token.transfer(artist, _artist), "artist transfer failed");
+        require(
+            token.transfer(sageStorage.multisig(), balance - _artist),
+            "platform transfer failed"
+        );
     }
 
     // legacy contracts whitelist the marketplace registered in SageStorage

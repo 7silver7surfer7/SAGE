@@ -185,6 +185,24 @@ describe("Lottery Contract", function() {
         expect(await lottery.getLotteryTicketCount(1)).to.equal(3);
     });
 
+    it("Should return the correct slice of ticket holders for any _from", async function() {
+        await lottery
+            .connect(addr1)
+            .buyTicketsWithSignedMessage(150, 1, 1, signedMessageA);
+        await lottery
+            .connect(addr2)
+            .buyTicketsWithSignedMessage(1500, 1, 2, signedMessageB);
+        // 3 tickets total (indexes 0-2). A non-zero _from used to write past
+        // the end of the result array (sized to the requested range, not to
+        // lotteryTickets' own indices) and revert with an out-of-bounds panic.
+        const full = await lottery.getLotteryTickets(1, 0, 2);
+        expect(full.length).to.equal(3);
+        const slice = await lottery.getLotteryTickets(1, 1, 2);
+        expect(slice.length).to.equal(2);
+        expect(slice[0]).to.equal(full[1]);
+        expect(slice[1]).to.equal(full[2]);
+    });
+
     it("Should allow non member to buy tickets with coins", async function() {
         await lottery.connect(addr2).buyTickets(2, 1);
         expect(await lottery.getLotteryTicketCount(2)).to.equal(1);

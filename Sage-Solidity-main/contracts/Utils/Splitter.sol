@@ -73,9 +73,12 @@ contract Splitter is AccessControl, ReentrancyGuard {
             uint256 amountPerDestination = (_amount * weights[i]) /
                 _totalWeight;
             if (_erc20Address != address(0)) {
-                IERC20(_erc20Address).transfer(
-                    destinations[i],
-                    amountPerDestination
+                require(
+                    IERC20(_erc20Address).transfer(
+                        destinations[i],
+                        amountPerDestination
+                    ),
+                    "ERC20 transfer failed"
                 );
             }
         }

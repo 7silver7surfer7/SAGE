@@ -98,6 +98,11 @@ contract Marketplace {
         bytes calldata signature
     ) public {
         require(msg.sender == signer, "Can only cancel own offers");
+        // chainId is part of the signed message but was never checked
+        // against the chain this contract is actually running on — a
+        // signature meant for one chain (or a same-address fork/clone of
+        // this contract on another chain) would verify here regardless.
+        require(chainId == block.chainid, "Wrong chain");
 
         bytes32 message = verifySignature(
             signer,
@@ -155,7 +160,7 @@ contract Marketplace {
             (bool ok, ) = to.call{value: amount}("");
             require(ok, "ETH transfer failed");
         } else {
-            token.transferFrom(payer, to, amount);
+            require(token.transferFrom(payer, to, amount), "ERC20 transfer failed");
         }
     }
 
@@ -216,6 +221,7 @@ contract Marketplace {
             require(currency == address(0), "Unsupported currency");
             require(msg.value == 0, "Listing is not priced in ETH");
         }
+        require(chainId == block.chainid, "Wrong chain");
         bytes32 message = verifySignature(
             signer,
             contractAddress,
@@ -266,6 +272,7 @@ contract Marketplace {
         // ride along as msg.value — native-ETH buy offers are impossible
         // without a wrapped token. SAGE only.
         require(currency == address(0), "ETH buy offers not supported");
+        require(chainId == block.chainid, "Wrong chain");
         bytes32 message = verifySignature(
             buyer,
             contractAddress,
