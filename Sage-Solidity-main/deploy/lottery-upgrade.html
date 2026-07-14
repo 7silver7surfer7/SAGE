@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lottery UUPS Upgrade — Robinhood Testnet</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d12;
+    --panel: #14171f;
+    --border: #262b38;
+    --text: #e8eaf0;
+    --muted: #8b91a5;
+    --accent: #5b8cff;
+    --warn-bg: #2a1c0f;
+    --warn-border: #6b4a1e;
+    --warn-text: #f0b862;
+    --ok-bg: #0f2a1c;
+    --ok-border: #1e6b3e;
+    --ok-text: #62d98a;
+    --err-bg: #2a0f14;
+    --err-border: #6b1e2a;
+    --err-text: #f06272;
+    --mono: "SF Mono", "Menlo", "Consolas", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 48px 20px;
+  }
+  main { width: 100%; max-width: 640px; }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .subtitle { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin-bottom: 16px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .row:last-child { border-bottom: none; }
+  .row .label { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+  .row .value {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    text-align: right;
+    word-break: break-all;
+  }
+  .callout {
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    margin-bottom: 16px;
+  }
+  .callout.warn { background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); }
+  .callout.ok { background: var(--ok-bg); border: 1px solid var(--ok-border); color: var(--ok-text); }
+  .callout.err { background: var(--err-bg); border: 1px solid var(--err-border); color: var(--err-text); }
+  .callout strong { color: inherit; }
+  button {
+    width: 100%;
+    padding: 14px;
+    border-radius: 10px;
+    border: none;
+    font-size: 14.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #fff; }
+  button.primary:not(:disabled):hover { opacity: 0.88; }
+  button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  button.secondary:not(:disabled):hover { border-color: var(--accent); }
+  .check-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .check-line label {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+  .check-line input { margin-top: 2px; }
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+  }
+  .status-dot.pending { background: var(--warn-text); }
+  .status-dot.success { background: var(--ok-text); }
+  .status-dot.error { background: var(--err-text); }
+  a { color: var(--accent); }
+  code { font-family: var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+  #log {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin-top: 12px;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Lottery UUPS Upgrade</h1>
+  <p class="subtitle">Robinhood testnet (chain 46630) — one signed transaction, no scripts, no private key handled by this page.</p>
+
+  <div class="panel">
+    <h2>What this does</h2>
+    <div class="row"><span class="label">Action</span><span class="value">upgradeTo(address)</span></div>
+    <div class="row"><span class="label">Lottery proxy</span><span class="value">0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E</span></div>
+    <div class="row"><span class="label">New implementation</span><span class="value">0x538056BBF931446Bd25af40927cdf7dE109489aB</span></div>
+    <div class="row"><span class="label">Fixes shipped</span><span class="value" style="text-align:left">getLotteryTickets off-by-index bug; unchecked ERC20 transfer() returns</span></div>
+  </div>
+
+  <div class="callout warn">
+    <strong>Requires the SageStorage multisig key.</strong> Lottery's <code>_authorizeUpgrade</code> only accepts a call from
+    <code>sageStorage.multisig()</code>, currently <code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code>. Connecting any other wallet
+    will produce a transaction that reverts on-chain (you'll still pay gas for the attempt). The new implementation contract above is
+    already deployed — this page only needs to activate it.
+  </div>
+
+  <div class="panel">
+    <h2>1. Connect</h2>
+    <button id="connectBtn" class="primary">Connect Wallet</button>
+    <div id="connectStatus" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="panel">
+    <h2>2. Confirm & sign</h2>
+    <div class="check-line" style="margin-bottom:14px;">
+      <label>
+        <input type="checkbox" id="confirmCheck" />
+        I've verified the proxy and implementation addresses above match <code>scripts/redeploy_market_lottery_fix.js</code> / the .openzeppelin manifest, and I hold the multisig key.
+      </label>
+    </div>
+    <button id="sendBtn" class="primary" disabled>Sign & Send upgradeTo(...)</button>
+    <div id="txStatus" style="margin-top:12px;"></div>
+    <div id="log"></div>
+  </div>
+</main>
+
+<script>
+  const PROXY_ADDRESS = '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E';
+  const NEW_IMPLEMENTATION = '0x538056BBF931446Bd25af40927cdf7dE109489aB';
+  const EXPECTED_SIGNER = '0x3E099aF007CaB8233D44782D8E6fe80FECDC321e';
+  const CHAIN_ID_HEX = '0xb626'; // 46630
+  const CHAIN_ID_DEC = 46630;
+  const RPC_URL = 'https://rpc.testnet.chain.robinhood.com';
+  const EXPLORER_TX = 'https://explorer.testnet.chain.robinhood.com/tx/';
+  const UPGRADE_TO_SELECTOR = '0x3659cfe6';
+
+  const connectBtn = document.getElementById('connectBtn');
+  const connectStatus = document.getElementById('connectStatus');
+  const confirmCheck = document.getElementById('confirmCheck');
+  const sendBtn = document.getElementById('sendBtn');
+  const txStatus = document.getElementById('txStatus');
+  const logEl = document.getElementById('log');
+
+  let account = null;
+
+  function log(line) {
+    logEl.textContent += (logEl.textContent ? '\n' : '') + line;
+  }
+
+  function calloutHtml(kind, html) {
+    return `<div class="callout ${kind}">${html}</div>`;
+  }
+
+  function encodeUpgradeTo(addr) {
+    const clean = addr.toLowerCase().replace('0x', '').padStart(64, '0');
+    return UPGRADE_TO_SELECTOR + clean;
+  }
+
+  function updateSendEnabled() {
+    sendBtn.disabled = !(account && confirmCheck.checked);
+  }
+  confirmCheck.addEventListener('change', updateSendEnabled);
+
+  async function ensureChain() {
+    const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+    if (currentChainId === CHAIN_ID_HEX) return;
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: CHAIN_ID_HEX }],
+      });
+    } catch (switchError) {
+      if (switchError.code === 4902) {
+        await window.ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: CHAIN_ID_HEX,
+            chainName: 'Robinhood Chain Testnet',
+            nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+            rpcUrls: [RPC_URL],
+            blockExplorerUrls: ['https://explorer.testnet.chain.robinhood.com'],
+          }],
+        });
+      } else {
+        throw switchError;
+      }
+    }
+  }
+
+  connectBtn.addEventListener('click', async () => {
+    if (!window.ethereum) {
+      connectStatus.innerHTML = calloutHtml('err', 'No injected wallet found. Open this page in a browser with MetaMask (or a hardware-wallet-connected browser extension) installed.');
+      return;
+    }
+    connectBtn.disabled = true;
+    connectBtn.textContent = 'Connecting…';
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      account = accounts[0];
+      await ensureChain();
+
+      const matches = account.toLowerCase() === EXPECTED_SIGNER.toLowerCase();
+      connectStatus.innerHTML = calloutHtml(
+        matches ? 'ok' : 'err',
+        `Connected: <code>${account}</code><br/>` +
+        (matches
+          ? 'This matches the required multisig address.'
+          : `<strong>This does NOT match the required multisig</strong> (<code>${EXPECTED_SIGNER}</code>). The upgrade will revert if you send it from this account.`)
+      );
+      connectBtn.textContent = 'Connected';
+      updateSendEnabled();
+    } catch (e) {
+      connectStatus.innerHTML = calloutHtml('err', 'Connection failed: ' + (e.message || e));
+      connectBtn.disabled = false;
+      connectBtn.textContent = 'Connect Wallet';
+    }
+  });
+
+  sendBtn.addEventListener('click', async () => {
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Waiting for signature…';
+    txStatus.innerHTML = '';
+    logEl.textContent = '';
+    try {
+      await ensureChain();
+      const data = encodeUpgradeTo(NEW_IMPLEMENTATION);
+      log('to: ' + PROXY_ADDRESS);
+      log('data: ' + data);
+
+      const txHash = await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: account,
+          to: PROXY_ADDRESS,
+          data,
+          value: '0x0',
+        }],
+      });
+
+      log('tx hash: ' + txHash);
+      txStatus.innerHTML = calloutHtml('warn', `<span class="status-dot pending"></span>Submitted — waiting for confirmation.<br/><a href="${EXPLORER_TX}${txHash}" target="_blank" rel="noopener">${txHash}</a>`);
+      sendBtn.textContent = 'Waiting for confirmation…';
+
+      pollReceipt(txHash);
+    } catch (e) {
+      txStatus.innerHTML = calloutHtml('err', 'Transaction failed or was rejected: ' + (e.message || e));
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Sign & Send upgradeTo(...)';
+    }
+  });
+
+  async function pollReceipt(txHash) {
+    try {
+      const receipt = await window.ethereum.request({
+        method: 'eth_getTransactionReceipt',
+        params: [txHash],
+      });
+      if (!receipt) {
+        setTimeout(() => pollReceipt(txHash), 3000);
+        return;
+      }
+      const ok = receipt.status === '0x1';
+      log('receipt status: ' + receipt.status + (ok ? ' (success)' : ' (REVERTED)'));
+      txStatus.innerHTML = calloutHtml(
+        ok ? 'ok' : 'err',
+        `<span class="status-dot ${ok ? 'success' : 'error'}"></span>` +
+        (ok
+          ? `Upgrade confirmed — Lottery proxy now points at <code>${NEW_IMPLEMENTATION}</code>.`
+          : `Transaction reverted on-chain.`) +
+        `<br/><a href="${EXPLORER_TX}${txHash}" target="_blank" rel="noopener">${txHash}</a>`
+      );
+      sendBtn.textContent = ok ? 'Done' : 'Sign & Send upgradeTo(...)';
+      sendBtn.disabled = ok;
+    } catch (e) {
+      setTimeout(() => pollReceipt(txHash), 3000);
+    }
+  }
+</script>
+</body>
+</html>
