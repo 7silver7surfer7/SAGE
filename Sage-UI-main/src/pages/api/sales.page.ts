@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getRequester } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
-import { SaleEventType } from '@prisma/client';
+import { Role, SaleEventType } from '@prisma/client';
 import { getSagePriceUsd } from '@/utilities/sagePrice';
 
 export default async function (request: NextApiRequest, response: NextApiResponse) {
@@ -24,6 +24,13 @@ export default async function (request: NextApiRequest, response: NextApiRespons
       await registerRefund(String(walletAddress), body, response);
       break;
     case 'GetSalesEvents':
+      // full platform sales/revenue history — feeds the admin dashboard.
+      // Only "signed in" was ever checked above, not role, so any regular
+      // user could call this directly and see every sale platform-wide.
+      if (requester?.role !== Role.ADMIN) {
+        response.status(403).end('Forbidden');
+        return;
+      }
       await getSalesEvents(response);
       break;
   }
