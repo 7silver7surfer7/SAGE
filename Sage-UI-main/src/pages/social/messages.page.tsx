@@ -32,6 +32,23 @@ function timeAgo(iso: string): string {
   if (s < 31536000) return `${Math.floor(s / 604800)}w`;
   return new Date(iso).toLocaleDateString();
 }
+/** "5:14 PM" — one clock time shown per group of consecutive messages. */
+function clockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+/** Consecutive messages from the same side collapse into one visual group,
+ *  reading like a real conversation instead of an evenly-spaced list. */
+function groupMessages(messages: DirectMessage[]): { mine: boolean; messages: DirectMessage[] }[] {
+  const groups: { mine: boolean; messages: DirectMessage[] }[] = [];
+  for (const m of messages) {
+    const last = groups[groups.length - 1];
+    if (last && last.mine === m.mine) last.messages.push(m);
+    else groups.push({ mine: m.mine, messages: [m] });
+  }
+  return groups;
+}
+
 const BackIcon = () => (
   <svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2'>
     <path d='M19 12H5M12 19l-7-7 7-7' strokeLinecap='round' strokeLinejoin='round' />
@@ -130,8 +147,15 @@ function DMThread({ partner, partnerCard }: { partner: string; partnerCard?: Soc
             {!canPage && merged.length > 0 && (
               <div className='social-dm__older'>Beginning of conversation</div>
             )}
-            {merged.map((m) => (
-              <div key={m.id} className='social-dm__bubble' data-mine={m.mine}>{m.text}</div>
+            {groupMessages(merged).map((g) => (
+              <div key={g.messages[0].id} className='social-dm__group' data-mine={g.mine}>
+                {g.messages.map((m) => (
+                  <div key={m.id} className='social-dm__bubble' data-mine={m.mine}>{m.text}</div>
+                ))}
+                <span className='social-dm__group-time'>
+                  {clockTime(g.messages[g.messages.length - 1].createdAt)}
+                </span>
+              </div>
             ))}
           </>
         )}

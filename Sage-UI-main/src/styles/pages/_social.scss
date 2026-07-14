@@ -1102,6 +1102,26 @@ $col-width: 620px;
     flex-direction: column;
     gap: 8px;
   }
+  // consecutive messages from the same side collapse into one group (tight
+  // internal gap) with a single timestamp, instead of every message getting
+  // the same spacing whether it's a new thought or a follow-up sent seconds
+  // later — .social-dm__scroll's own gap then reads as "new group" spacing.
+  &__group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    align-items: flex-start;
+    &[data-mine='true'] {
+      align-items: flex-end;
+    }
+  }
+  &__group-time {
+    font-size: 0.68rem;
+    margin: 2px 2px 0;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.4);
+    }
+  }
   &__bubble {
     max-width: 72%;
     padding: 9px 14px;
