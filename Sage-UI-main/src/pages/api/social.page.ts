@@ -1877,6 +1877,7 @@ async function getUserMints(address: string, res: NextApiResponse) {
 }
 
 async function getActivity(res: NextApiResponse, r: { walletAddress: string }) {
+  res.setHeader('Cache-Control', 'no-store');
   const me = r.walletAddress;
   const myPosts = { Post: { authorAddress: me } };
   const [likes, reposts, tips, collects, follows, replies] = await Promise.all([
@@ -2107,6 +2108,7 @@ async function search(q: string, req: NextApiRequest, res: NextApiResponse) {
 
 /** The right-rail ticker: everything the network just did, money first. */
 async function getGlobalActivity(res: NextApiResponse) {
+  res.setHeader('Cache-Control', 'no-store');
   const [tips, collects, boosts, follows, posts] = await Promise.all([
     prisma.socialTip.findMany({ orderBy: { id: 'desc' }, take: 10 }),
     prisma.socialCollect.findMany({

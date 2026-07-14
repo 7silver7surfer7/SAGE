@@ -117,7 +117,10 @@ const usersApi = baseApi.injectEndpoints({
         }
         return { data: null };
       },
-      invalidatesTags: ['User'],
+      // ONE profile: the settings page and SAGE Social read the same User row,
+      // so a save here must refresh the social caches too — without these tags
+      // an edit from /profile never showed on /social until a hard reload
+      invalidatesTags: ['User', 'SocialProfile', 'SocialFeed'],
     }),
     getIsFollowing: builder.query<string[], void>({
       query: () => 'user?action=GetIsFollowing',

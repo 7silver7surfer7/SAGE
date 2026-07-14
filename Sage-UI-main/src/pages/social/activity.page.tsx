@@ -35,7 +35,7 @@ function timeAgo(iso: string): string {
 export default function ActivityPage() {
   const router = useRouter();
   const { isSignedIn } = useSAGEAccount();
-  const { data, isFetching } = useGetActivityQuery(undefined, { skip: !isSignedIn });
+  const { data, isFetching } = useGetActivityQuery(undefined, { skip: !isSignedIn, pollingInterval: 10_000, refetchOnFocus: true });
 
   return (
     <SocialShell>

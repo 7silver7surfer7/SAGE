@@ -46,7 +46,7 @@ const EVENT_VERB: Record<GlobalEvent['type'], string> = {
 
 function ActivityTicker() {
   const router = useRouter();
-  const { data } = useGetGlobalActivityQuery(undefined, { pollingInterval: 30_000 });
+  const { data } = useGetGlobalActivityQuery(undefined, { pollingInterval: 10_000, refetchOnFocus: true });
   return (
     <div className='social-widget'>
       <div className='social-widget__head'>

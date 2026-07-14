@@ -54,6 +54,8 @@ export default function LaunchNftPage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  // optional wide banner for the drop page — the artwork stays the fallback
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
   const [price, setPrice] = useState('0.01'); // reserve (auction) / mint price (OE, zip)
   const [durationHours, setDurationHours] = useState('24');
   const [maxPerUser, setMaxPerUser] = useState('0');
@@ -61,6 +63,7 @@ export default function LaunchNftPage() {
   const [busy, setBusy] = useState(false);
   const [liveDropId, setLiveDropId] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const bannerRef = useRef<HTMLInputElement>(null);
 
   const [createDrop] = useCreateDropWithUploadsMutation();
   const [setFollowGate] = useSetFollowGateMutation();
@@ -99,7 +102,8 @@ export default function LaunchNftPage() {
         artistWallet: addr,
         name: title.trim(),
         description: description.trim(),
-        bannerFile: file, // the artwork doubles as the drop banner
+        // explicit banner wins; otherwise the artwork doubles as the banner
+        bannerFile: bannerFile || file,
         artworks: isZip
           ? []
           : [
@@ -228,7 +232,9 @@ export default function LaunchNftPage() {
                     // formats starts a fresh form instead of carrying the
                     // previous upload over
                     setFile(null);
+                    setBannerFile(null);
                     if (fileRef.current) fileRef.current.value = '';
+                    if (bannerRef.current) bannerRef.current.value = '';
                     setTitle('');
                     setDescription('');
                     setPrice('0.01');
@@ -281,6 +287,21 @@ export default function LaunchNftPage() {
                   onClick={() => fileRef.current?.click()}
                 >
                   {file ? `✓ ${file.name} — replace` : isZip ? 'Upload ZIP of images' : 'Upload artwork'}
+                </button>
+                <input
+                  ref={bannerRef}
+                  type='file'
+                  accept='image/jpeg,image/png,image/webp,image/gif'
+                  style={{ display: 'none' }}
+                  onChange={(e) => setBannerFile(e.target.files?.[0] || null)}
+                />
+                <button
+                  className='social-refer__btn social-launch__file social-launch__file--banner'
+                  onClick={() => bannerRef.current?.click()}
+                >
+                  {bannerFile
+                    ? `✓ ${bannerFile.name} — replace banner`
+                    : `Add banner (optional)${isZip ? '' : ' — defaults to the artwork'}`}
                 </button>
 
                 <div className='social-launch__row'>

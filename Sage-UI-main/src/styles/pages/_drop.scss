@@ -65,6 +65,18 @@ strong {
   width: 100%;
   position: absolute;
   filter: brightness(30%);
+  // solid dark backdrop so the WHITE hero text stays readable even when the
+  // banner is missing or hasn't loaded (social ZIP drops have no banner until
+  // processing patches one in; a light artwork at 30% is dark, but NO image
+  // used to leave white-on-white)
+  background: #161616;
+}
+
+// belt-and-braces: the hero text carries its own shadow so it survives any
+// bright pixel region of a light artwork banner
+.drop-page__header-drop-name,
+.drop-page__header-drop-description {
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.55);
 }
 
 .drop-page__header {
