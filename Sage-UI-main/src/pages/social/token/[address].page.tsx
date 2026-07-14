@@ -4,7 +4,7 @@ import { toast } from 'react-toastify';
 import { useSigner, useProvider } from 'wagmi';
 import LoaderDots from '@/components/LoaderDots';
 import SocialShell from '@/components/Social/SocialShell';
-import PriceChart from '@/components/Social/PriceChart';
+import CandleChart from '@/components/Social/CandleChart';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
@@ -33,9 +33,9 @@ export default function TokenDetailPage() {
   const { walletAddress, isSignedIn } = useSAGEAccount();
   const { data: signer } = useSigner();
   const provider = useProvider();
-  const { data, isFetching } = useGetTokenDetailQuery(address, {
+  const { data, isFetching, refetch } = useGetTokenDetailQuery(address, {
     skip: !address,
-    pollingInterval: 1_000, // live like pump.fun — every second
+    pollingInterval: 10_000, // reconcile only — the candle tape streams from chain events
   });
   const [recordTrade] = useRecordTradeMutation();
   const [createPost] = useCreatePostMutation();
@@ -164,7 +164,11 @@ export default function TokenDetailPage() {
           <div><span>Status</span><b>{data?.complete ? 'Graduated' : 'On curve'}</b></div>
         </div>
 
-        <PriceChart series={(data?.series || []).map((p) => ({ t: p.t, price: p.price }))} />
+        <CandleChart
+          series={(data?.series || []).map((p) => ({ t: p.t, price: p.price }))}
+          tokenAddress={t.tokenAddress}
+          onLiveTrade={() => refetch()}
+        />
 
         <div className='token-page__curve'>
           <div className='token-page__curve-head'>

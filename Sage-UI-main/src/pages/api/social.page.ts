@@ -1034,8 +1034,6 @@ async function collectPost(
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
   if (post.collectPrice === null) return res.status(400).json({ error: 'post is not collectible' });
-  if (post.authorAddress === r.walletAddress)
-    return res.status(400).json({ error: 'you cannot collect your own post' });
 
   const already = await prisma.socialCollect.findUnique({
     where: { postId_collectorAddress: { postId: id, collectorAddress: r.walletAddress } },
@@ -2059,8 +2057,6 @@ async function requestCollectVoucher(
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
   if (post.collectPrice === null) return res.status(400).json({ error: 'post is not collectible' });
-  if (post.authorAddress === r.walletAddress)
-    return res.status(400).json({ error: 'you cannot collect your own post' });
   const already = await prisma.socialCollect.findUnique({
     where: { postId_collectorAddress: { postId: id, collectorAddress: r.walletAddress } },
   });

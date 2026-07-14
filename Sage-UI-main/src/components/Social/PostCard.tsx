@@ -472,7 +472,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             )}
           </div>
         )}
-        {post.collectPrice !== null && !isOwnPost && (
+        {post.collectPrice !== null && (
           <div className='social-post__collect-row'>
             <button
               className='social-post__collect'
