@@ -78,12 +78,16 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const go = async () => {
     if (!signer) { toast.info('Connect your wallet'); return; }
     if (!name.trim() || !symbol.trim()) { toast.error('Name and ticker required'); return; }
-    const buyEth = Number(initialBuy) || 0;
+    const buyEthStr = initialBuy.trim();
+    const buyEth = Number(buyEthStr) || 0;
     if (buyEth < 0) { toast.error('Initial buy cannot be negative'); return; }
+    if (buyEthStr && !Number.isFinite(buyEth)) { toast.error('Check the initial buy amount'); return; }
     setBusy(true);
     const t = toast.loading(buyEth > 0 ? `Launching + buying ${buyEth} ETH…` : 'Launching your coin… (free — you only pay gas)');
     try {
-      const { token, txHash, devBuy } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth);
+      // pass the raw string through — see launchToken's docstring for why
+      // (Number()/String() mangles small decimals into scientific notation)
+      const { token, txHash, devBuy } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth > 0 ? buyEthStr : '0');
       await record({
         tokenAddress: token,
         name: name.trim(),

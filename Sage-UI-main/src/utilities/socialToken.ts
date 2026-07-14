@@ -18,17 +18,22 @@ export function factoryContract(signerOrProvider: Signer | ethers.providers.Prov
  * enableAirdrop=false mints ZERO tokens to the creator: nothing to dump.
  * initialBuyEth > 0 executes a pump.fun-style DEV BUY in the same tx: it
  * seeds the curve/chart and makes the creator the first holder.
+ *
+ * Takes the RAW user-typed string, not a number — routing a small decimal
+ * like "0.0000001" through Number()/String() flips it to JS scientific
+ * notation ("1e-7"), which parseEther rejects with "invalid decimal value"
+ * even though the original string was perfectly valid.
  */
 export async function launchToken(
   name: string,
   symbol: string,
   enableAirdrop: boolean,
   signer: Signer,
-  initialBuyEth = 0
+  initialBuyEth = '0'
 ): Promise<{ token: string; txHash: string; devBuy: boolean }> {
   const factory = factoryContract(signer);
   const tx = await factory.launch(name, symbol, enableAirdrop, {
-    value: initialBuyEth > 0 ? ethers.utils.parseEther(String(initialBuyEth)) : 0,
+    value: Number(initialBuyEth) > 0 ? ethers.utils.parseEther(initialBuyEth) : 0,
   });
   const receipt = await tx.wait(1);
   const ev = receipt.events?.find((e: any) => e.event === 'TokenLaunched');
