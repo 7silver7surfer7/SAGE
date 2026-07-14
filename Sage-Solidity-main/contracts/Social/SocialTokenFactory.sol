@@ -148,7 +148,11 @@ contract SocialTokenFactory is ReentrancyGuard {
         IWETHMin(weth).deposit{ value: ethAmt }();
         require(IWETHMin(weth).transfer(pair, ethAmt), 'weth transfer failed');
         require(IERC20(token).transfer(pair, tokenAmt), 'token transfer failed');
-        IUniswapV2PairMin(pair).mint(treasury); // LP owned by the treasury
+        // LP is BURNED (pump.fun's Raydium-era guarantee): nobody — including
+        // the platform — can ever pull a graduated pool's liquidity. Platform
+        // revenue comes from the Uniswap factory's feeTo switch instead
+        // (1/6 of fee growth to the treasury).
+        IUniswapV2PairMin(pair).mint(0x000000000000000000000000000000000000dEaD);
         emit TokenGraduated(token, pair, ethAmt, tokenAmt);
     }
 

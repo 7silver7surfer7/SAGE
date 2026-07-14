@@ -275,8 +275,8 @@ export default function TokenDetailPage() {
           <div
             title={
               data?.complete
-                ? 'Graduated: the curve sold out. Its ETH + reserve tokens seed a Uniswap pool — trading continues there.'
-                : `On curve: ${data?.bondingProgressPct ?? 0}% of 793.1M sold. The FINAL BUY auto-graduates the token — its collected ETH and reserve tokens are deposited into a Uniswap pool in the same transaction, and trading moves to the open market.`
+                ? 'Graduated: the curve sold out. Its ETH + reserve tokens seeded a Uniswap pool and the LP was BURNED — liquidity is locked forever; nobody can pull it.'
+                : `On curve: ${data?.bondingProgressPct ?? 0}% of 793.1M sold. The FINAL BUY auto-graduates the token — its collected ETH and reserve tokens are deposited into a Uniswap pool in the same transaction and the LP is BURNED (liquidity locked forever). Trading moves to the open market.`
             }
           >
             <span>Status</span>

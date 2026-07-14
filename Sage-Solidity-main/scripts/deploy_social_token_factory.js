@@ -1,5 +1,5 @@
 /**
- * Redeploy SocialTokenFactory (v7: AUTOMATIC graduation on the completing buy). Reuses the live factory's
+ * Redeploy SocialTokenFactory (v8: graduation BURNS the LP (liquidity locked forever)). Reuses the live factory's
  * constructor params so the curve economics stay identical.
  *
  *   npx hardhat run scripts/deploy_social_token_factory.js --network robinhoodTestnet
@@ -27,7 +27,7 @@ async function main() {
   const F = await hre.ethers.getContractFactory('SocialTokenFactory');
   const factory = await F.deploy(treasury, initialVirtualEth, UNISWAP_FACTORY, WETH, overrides);
   await factory.deployed();
-  console.log('SocialTokenFactory v7:', factory.address);
+  console.log('SocialTokenFactory v8:', factory.address);
   console.log('→ update SOCIAL_TOKEN_FACTORY_ADDRESS in Sage-UI-main/src/constants/config.ts');
 }
 

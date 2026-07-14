@@ -104,14 +104,16 @@ describe('SocialTokenFactory', () => {
     expect((await factory.curves(token.address)).complete).to.equal(true);
     // graduation is AUTOMATIC on the completing buy — pool already exists
     const pair = await factory.pairOf(token.address);
+    const DEAD = '0x000000000000000000000000000000000000dEaD';
     expect(pair).to.not.equal(ethers.constants.AddressZero);
     // the pool holds the curve's ETH (as WETH) and the reserve tokens
     expect(await weth.balanceOf(pair)).to.be.gt(0);
     expect(await token.balanceOf(pair)).to.be.gt(0);
     expect((await factory.curves(token.address)).realEthReserves).to.equal(0);
-    // LP belongs to the treasury
+    // the LP is BURNED — the treasury holds none, the dead address holds it all
     const pairC = new ethers.Contract(pair, ['function balanceOf(address) view returns (uint256)'], ethers.provider);
-    expect(await pairC.balanceOf(treasury.address)).to.be.gt(0);
+    expect(await pairC.balanceOf(DEAD)).to.be.gt(0);
+    expect(await pairC.balanceOf(treasury.address)).to.equal(0);
     // double-graduation is blocked
     await expect(factory.graduate(token.address)).to.be.revertedWith('already graduated');
   });
