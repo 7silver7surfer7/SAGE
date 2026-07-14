@@ -1,0 +1,59 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+@use '@/styles/abstracts/breakpoints' as b;
+
+// The main-site "SAGE design language" chrome (Logotype + label/info header,
+// same structure as .drops-page) wrapping the pump.fun-style board that
+// already exists on SAGE Social — this page is the public, no-invite-needed
+// door to the exact same creator-coin curve.
+.tokens-page {
+  @include m.page;
+  align-items: center;
+}
+
+.tokens-page__header {
+  @include m.standard-width;
+}
+
+.tokens-page__subheader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.tokens-page__subheader-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.tokens-page__subheader-label {
+  @include m.text-h1;
+}
+
+.tokens-page__subheader-info {
+  font-style: normal;
+  font-weight: 400;
+  @include m.text-p1;
+  text-transform: uppercase;
+}
+
+.tokens-page__launch-btn {
+  @include m.button-base;
+  width: min(220px, 80vw);
+  flex: none;
+  @include m.theme() {
+    background-color: m.t(accent);
+    color: m.t(base);
+  }
+}
+
+.tokens-page__board-section {
+  margin-top: 48px;
+  width: 100%;
+  @include m.mobile-width;
+  @include b.min-width('medium') {
+    @include m.desktop-width;
+  }
+}

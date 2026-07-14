@@ -12,9 +12,9 @@ import Copyright from '../Branding/Copyright';
 import {
   basePathDrops,
   basePathHome,
-  basePathSubmissions,
   basePathAgentApi,
   basePathHowToBuyAsh,
+  basePathTokens,
 } from '@/constants/paths';
 import Motto from '../Layout/Motto';
 
@@ -41,8 +41,8 @@ const navLinks: NavLink[] = [
     url: '/social',
   },
   {
-    name: 'Apply',
-    url: basePathSubmissions,
+    name: 'Tokens',
+    url: basePathTokens,
   },
   {
     name: 'Agent API',

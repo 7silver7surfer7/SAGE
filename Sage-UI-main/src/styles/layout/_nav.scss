@@ -70,8 +70,11 @@
 
 .nav__personal {
   // equal-flex side column so search (left) and profile (right) mirror around
-  // the centered menu
+  // the centered menu — min-width: 0 is required for that mirror to hold:
+  // without it, a wide profile chip (ENS name + verified/admin badge) forces
+  // this column past its fair 1fr share, which shoves the centered menu left.
   flex: 1;
+  min-width: 0;
   // profile sits on the RIGHT — hug the right edge, mirroring the left search
   display: flex;
   align-items: center;
@@ -110,6 +113,7 @@
 
 .nav__search {
   flex: 1;
+  min-width: 0;
   display: flex;
   // search sits on the LEFT — hug the left edge (mirrors profile on the right)
   justify-content: flex-start;

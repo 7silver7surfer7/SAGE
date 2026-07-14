@@ -2337,8 +2337,9 @@ async function recordTokenLaunch(
   res: NextApiResponse,
   r: { walletAddress: string }
 ) {
-  if (!(await canParticipate(r.walletAddress)))
-    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
+  // Unlike posting/DMs (invite-only SAGE Social), launching and trading a
+  // coin is a permissionless pump.fun-style feature — any signed-in wallet
+  // can launch, matching the public /tokens page's own no-invite-needed access.
   const { tokenAddress, name, symbol, launchTxHash, imageUrl, bannerUrl, airdropEnabled, description, website } = req.body || {};
   const token = canon(tokenAddress);
   if (!token || !launchTxHash || !name || !symbol)

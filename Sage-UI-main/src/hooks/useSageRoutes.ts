@@ -4,9 +4,9 @@ import {
   basePathAuctions,
   basePathLotteries,
   basePathHome,
-  basePathSubmissions,
   basePathAgentApi,
   basePathProfile,
+  basePathTokens,
 } from '@/constants/paths';
 import { useRouter } from 'next/router';
 import { User, Drop } from '@prisma/client';
@@ -36,8 +36,8 @@ export default function useSageRoutes() {
     await router.push(basePathHome);
   }
 
-  async function pushToSubmissions() {
-    await router.push(basePathSubmissions);
+  async function pushToTokens() {
+    await router.push(basePathTokens);
   }
 
   async function pushToAgentApi() {
@@ -82,7 +82,7 @@ export default function useSageRoutes() {
     pushToCreators,
     pushToDrops,
     pushToHome,
-    pushToSubmissions,
+    pushToTokens,
     pushToAgentApi,
     pushToProfile,
     pushToSocial,

@@ -25,7 +25,7 @@ import { humanWalletError } from '@/utilities/walletError';
  * social links, a big drag-and-drop art upload with the limits printed on
  * the module, and an optional wide banner for the coin page.
  */
-function LaunchModal({ onClose }: { onClose: () => void }) {
+export function LaunchModal({ onClose }: { onClose: () => void }) {
   const { data: signer } = useSigner();
   const [record] = useRecordTokenLaunchMutation();
   const [recordTrade] = useRecordTradeMutation();

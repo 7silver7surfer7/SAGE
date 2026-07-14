@@ -35,11 +35,6 @@ export default function Footer() {
               <div className='footer__middle-item-content'>
                 <h1 className='footer__middle-item-content-link'>
                   <a href='https://x.com/sageartxyz' target='_blank' rel='noopener noreferrer'>
-                    Artists Apply
-                  </a>
-                </h1>
-                <h1 className='footer__middle-item-content-link'>
-                  <a href='https://x.com/sageartxyz' target='_blank' rel='noopener noreferrer'>
                     Business Inquiry
                   </a>
                 </h1>

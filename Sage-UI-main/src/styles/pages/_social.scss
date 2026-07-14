@@ -1815,8 +1815,11 @@ body:has([class*='__overlay']) .layout {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    max-height: calc(100vh - 100px);
-    overflow-y: auto;
+    // no max-height/overflow here: capping it made the Activity card's own
+    // rows get clipped inside a separate scroll box that this sticky element
+    // never revealed by scrolling the page. Letting it size to content means
+    // both widgets render in full; sticky positioning still scrolls it away
+    // naturally once it's taller than the viewport has room for.
   }
   &__tabbar {
     display: none;

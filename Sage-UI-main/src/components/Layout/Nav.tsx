@@ -16,7 +16,7 @@ export default function Nav() {
   const {
     pushToDrops,
     pushToHome,
-    pushToSubmissions,
+    pushToTokens,
     pushToAgentApi,
     pushToHowToBuyAsh,
     pushToSocial,
@@ -50,8 +50,8 @@ export default function Nav() {
       routeFunction: () => pushToSocial(),
     },
     {
-      name: 'Apply',
-      routeFunction: pushToSubmissions,
+      name: 'Tokens',
+      routeFunction: pushToTokens,
     },
     {
       name: 'Agent API',
