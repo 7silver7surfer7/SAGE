@@ -87,11 +87,13 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
       });
     }
 
-    // the launcher mints token i → {baseUri}{i}.json; we return the prefix as
-    // a gateway URL (ipfs:// prefix would need a per-token CID; Filebase
-    // folder pins resolve under the bucket gateway path)
-    const gateway = process.env.FILEBASE_GATEWAY || `https://ipfs.filebase.io/ipfs`;
-    const baseUri = `${gateway}/${process.env.FILEBASE_BUCKET}/${slug}/`;
+    // the launcher mints token i → {baseUri}{i}.json. Per-object pins each
+    // get their OWN CID (no directory CID over the S3 API), so a gateway
+    // prefix can never resolve sequential paths — tokenURIs are served by
+    // our /api/collection-meta resolver, which streams the pinned bytes
+    // straight out of the bucket. The metadata/images themselves stay on IPFS.
+    const site = (process.env.NEXTAUTH_URL || '').replace(/\/$/, '');
+    const baseUri = `${site}/api/collection-meta/${slug}/`;
     res.json({ ok: true, baseUri, count: entries.length, name: collectionName });
   } catch (e: any) {
     console.error('collection zip error', e);

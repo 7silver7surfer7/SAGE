@@ -193,6 +193,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => requestCollectVoucher(request, response, r));
       case 'DeletePost':
         return await withAuth(request, response, (r) => deletePost(request, response, r));
+      case 'EditPost':
+        return await withAuth(request, response, (r) => editPost(request, response, r));
       default:
         return response.status(400).json({ error: 'unknown action' });
     }
@@ -302,6 +304,7 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
     imageUrl: p.imageUrl,
     mediaType: p.mediaType,
     createdAt: p.createdAt,
+    editedAt: p.editedAt || null,
     replyToId: p.replyToId,
     likeCount: p.likeCount,
     repostCount: p.repostCount,
@@ -331,6 +334,38 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
     repostedByViewer: viewer ? (p.Reposts?.length ?? 0) > 0 : false,
     collectedByViewer: viewer ? (p.Collects?.length ?? 0) > 0 : false,
   };
+}
+
+/**
+ * Adds live-timing fields to serialized DROP posts so the feed card can show
+ * a countdown: dropAuctionId (the client reads the auction's on-chain state —
+ * the timer starts at the FIRST BID, which the DB row can't know) and
+ * dropEndTime (open editions have a fixed end; collections are until-sellout).
+ */
+async function attachDropTiming(serialized: any[]): Promise<any[]> {
+  const dropIds = Array.from(
+    new Set(serialized.filter((p) => p.dropId).map((p) => p.dropId as number))
+  );
+  if (!dropIds.length) return serialized;
+  const drops = await prisma.drop.findMany({
+    where: { id: { in: dropIds } },
+    select: {
+      id: true,
+      Auctions: { select: { id: true, endTime: true }, take: 1 },
+      OpenEditions: { select: { endTime: true }, take: 1 },
+    },
+  });
+  const byId = new Map(drops.map((d) => [d.id, d]));
+  for (const p of serialized) {
+    const d = p.dropId ? byId.get(p.dropId) : null;
+    if (!d) continue;
+    p.dropAuctionId = d.Auctions[0]?.id ?? null;
+    p.dropEndTime =
+      p.dropKind === 'auction'
+        ? d.Auctions[0]?.endTime ?? null
+        : d.OpenEditions[0]?.endTime ?? null;
+  }
+  return serialized;
 }
 
 const postInclude = (viewer?: string | null) => ({
@@ -531,7 +566,7 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
     const nextOffset = offset + FEED_PAGE;
     const nextCursor = nextOffset < ranked.length ? nextOffset : null;
     const verified = await pfpVerifiedMap(page);
-    return res.json({ posts: page.map((p) => serializePost(p, viewer, verified)), nextCursor });
+    return res.json({ posts: await attachDropTiming(page.map((p) => serializePost(p, viewer, verified))), nextCursor });
   }
 
   // ── latest / following: pure reverse-chronological, id-cursor paginated ──
@@ -555,7 +590,7 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
   const nextCursor = posts.length > 20 ? posts[19].id : null;
   const page = posts.slice(0, 20);
   const verified = await pfpVerifiedMap(page);
-  res.json({ posts: page.map((p) => serializePost(p, viewer, verified)), nextCursor });
+  res.json({ posts: await attachDropTiming(page.map((p) => serializePost(p, viewer, verified))), nextCursor });
 }
 
 async function getUserPosts(address: string, req: NextApiRequest, res: NextApiResponse) {
@@ -569,7 +604,7 @@ async function getUserPosts(address: string, req: NextApiRequest, res: NextApiRe
     take: 40,
   });
   const verified = await pfpVerifiedMap(posts);
-  res.json({ posts: posts.map((p) => serializePost(p, viewer, verified)) });
+  res.json({ posts: await attachDropTiming(posts.map((p) => serializePost(p, viewer, verified))) });
 }
 
 async function getPost(id: number, req: NextApiRequest, res: NextApiResponse) {
@@ -583,8 +618,9 @@ async function getPost(id: number, req: NextApiRequest, res: NextApiResponse) {
     take: 100,
   });
   const verified = await pfpVerifiedMap([post, ...replies]);
+  const [serializedPost] = await attachDropTiming([serializePost(post, viewer, verified)]);
   res.json({
-    post: serializePost(post, viewer, verified),
+    post: serializedPost,
     replies: replies.map((p) => serializePost(p, viewer, verified)),
   });
 }
@@ -737,6 +773,49 @@ async function createPost(
       data: { replyCount: { increment: 1 } },
     });
   }
+  const verified = await pfpVerifiedMap([post]);
+  res.json({ post: serializePost(post, r.walletAddress, verified) });
+}
+
+/**
+ * Edit a post's text — a VERIFIED-only perk (Twitter Blue style). Unverified
+ * users get the 403 + needsVerification upsell the client turns into the
+ * verification modal. Link previews re-unfurl so an edited URL gets a fresh
+ * card; the "edited" label comes from editedAt.
+ */
+async function editPost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  if (!(await requireVerified(r.walletAddress, res))) return;
+  const postId = Number(req.body?.postId);
+  const trimmed = String(req.body?.text || '').trim();
+  if (!postId) return res.status(400).json({ error: 'postId required' });
+  const existing = await prisma.socialPost.findUnique({ where: { id: postId } });
+  if (!existing || existing.deletedAt) return res.status(404).json({ error: 'post not found' });
+  if (existing.authorAddress.toLowerCase() !== r.walletAddress.toLowerCase())
+    return res.status(403).json({ error: 'you can only edit your own posts' });
+  if (!trimmed && !existing.imageUrl) return res.status(400).json({ error: 'empty post' });
+  if (trimmed.length > 500) return res.status(400).json({ error: 'post too long (500 max)' });
+
+  let link: Awaited<ReturnType<typeof fetchLinkPreview>> = null;
+  const firstUrl = extractFirstUrl(trimmed);
+  if (firstUrl) {
+    try {
+      link = await fetchLinkPreview(firstUrl);
+    } catch {
+      link = null;
+    }
+  }
+  const post = await prisma.socialPost.update({
+    where: { id: postId },
+    data: {
+      text: trimmed,
+      editedAt: new Date(),
+      linkUrl: link?.url || null,
+      linkTitle: link?.title || null,
+      linkDesc: link?.desc || null,
+      linkImage: link?.image || null,
+    },
+    include: postInclude(r.walletAddress),
+  });
   const verified = await pfpVerifiedMap([post]);
   res.json({ post: serializePost(post, r.walletAddress, verified) });
 }

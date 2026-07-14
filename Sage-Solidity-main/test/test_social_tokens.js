@@ -125,7 +125,7 @@ describe('SocialTokenFactory', () => {
     const spend = ethers.utils.parseEther('0.1');
     await factory.connect(buyer).buy(token.address, 0, { value: spend });
     const totalFee = spend.mul(125).div(10000); // 1.25%
-    const creatorFee = spend.mul(30).div(10000); // 0.30% creator below tier1
+    const creatorFee = spend.mul(30).div(10000); // 0.30% creator — FLAT on the curve (official table)
     expect((await treasury.getBalance()).sub(tBefore)).to.equal(totalFee.sub(creatorFee));
     expect((await creator.getBalance()).sub(cBefore)).to.equal(creatorFee);
     const bal1 = await token.balanceOf(buyer.address);
@@ -361,15 +361,15 @@ describe('SageSwapRouter (post-graduation trading + creator revenue share)', () 
     expect(await factory.pairOf(addr)).to.not.equal(ethers.constants.AddressZero);
   });
 
-  it('router buys work on the pool; tiered fee: 0.30% treasury instant + 0.65% creator accrues', async () => {
+  it('router buys work on the pool; official tier 2 (≥$85k): 0.95% creator + 0.05% treasury', async () => {
     const spend = ethers.utils.parseEther('1');
     const tBefore = await treasury.getBalance();
     const balBefore = await token.balanceOf(buyer.address);
     await router.connect(buyer).buy(token.address, 0, { value: spend });
     expect(await token.balanceOf(buyer.address)).to.be.gt(balBefore);
-    // pool mcap ≈ 27 ETH < tier1 → 0.95% total: 0.65% creator / 0.30% treasury
-    expect(await router.creatorFees(token.address)).to.equal(spend.mul(65).div(10000));
-    expect((await treasury.getBalance()).sub(tBefore)).to.equal(spend.mul(30).div(10000));
+    // pool mcap ≈ 27 ETH ≥ tier-2 floor (24Ξ ≈ $85k) → creator 0.950%, treasury 0.05%
+    expect(await router.creatorFees(token.address)).to.equal(spend.mul(950).div(100000));
+    expect((await treasury.getBalance()).sub(tBefore)).to.equal(spend.mul(50).div(100000));
   });
 
   it('router sells return ETH minus fees; creator accrues on both sides', async () => {
@@ -379,7 +379,7 @@ describe('SageSwapRouter (post-graduation trading + creator revenue share)', () 
     const ethBefore = await buyer.getBalance();
     await router.connect(buyer).sell(token.address, bal, 0);
     expect(await buyer.getBalance()).to.be.gt(ethBefore); // got ETH back (minus gas)
-    expect(await router.creatorFees(token.address)).to.be.gt(ethers.utils.parseEther('1').mul(65).div(10000));
+    expect(await router.creatorFees(token.address)).to.be.gt(ethers.utils.parseEther('1').mul(950).div(100000));
   });
 
   it('only the creator can claim; claim zeroes the accrual', async () => {

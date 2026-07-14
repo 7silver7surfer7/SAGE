@@ -14,6 +14,7 @@ export interface SocialPost {
   imageUrl: string | null;
   mediaType: 'image' | 'video' | null;
   createdAt: string;
+  editedAt?: string | null;
   replyToId: number | null;
   likeCount: number;
   repostCount: number;
@@ -32,6 +33,10 @@ export interface SocialPost {
   dropId: number | null;
   dropKind: 'auction' | 'openEdition' | 'collection' | null;
   dropPrice: number | null;
+  /** auction drops: id for reading on-chain state (timer starts at first bid) */
+  dropAuctionId?: number | null;
+  /** open editions: fixed end; auctions: DB fallback until chain state loads */
+  dropEndTime?: string | null;
   author: SocialAuthor;
   likedByViewer: boolean;
   repostedByViewer: boolean;
@@ -631,6 +636,24 @@ const socialApi = baseApi.injectEndpoints({
       },
       invalidatesTags: ['SocialFeed'],
     }),
+    editPost: builder.mutation<{ post: SocialPost }, { postId: number; text: string }>({
+      query: (body) => ({ url: 'social?action=EditPost', method: 'POST', body }),
+      async onQueryStarted({ postId }, { dispatch, queryFulfilled }) {
+        // paint the server's post (fresh link card + editedAt) into both feeds
+        try {
+          const { data } = await queryFulfilled;
+          (['global', 'following'] as const).forEach((scope) =>
+            dispatch(
+              socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
+                const i = draft.posts.findIndex((x) => x.id === postId);
+                if (i >= 0) draft.posts[i] = { ...draft.posts[i], ...data.post };
+              })
+            )
+          );
+        } catch {}
+      },
+      invalidatesTags: ['SocialProfile'],
+    }),
     sendMessage: builder.mutation<{ ok: boolean; id: number }, { to: string; text: string }>({
       query: (body) => ({ url: 'social?action=SendMessage', method: 'POST', body }),
       invalidatesTags: ['SocialMessages'],
@@ -781,6 +804,7 @@ export const {
   useGetProfileTokenQuery,
   useSearchSocialQuery,
   useDeletePostMutation,
+  useEditPostMutation,
   useGetGroupChatQuery,
   useSendGroupMessageMutation,
   useToggleGroupChatMutation,

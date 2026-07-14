@@ -382,7 +382,7 @@ export default function TokenDetailPage() {
           <p className='token-page__curve-note'>
             {data?.complete
               ? data?.uniswapPair
-                ? 'Graduated — trading continues right here through the Uniswap pool (0.25% router fee, 0.05% to the creator).'
+                ? 'Graduated — trading continues right here through the Uniswap pool (LP burned). Fees follow pump.fun’s exact tiers: the creator earns up to 0.95% per trade, gliding to 0.05% as market cap grows.'
                 : 'Sold out! Graduation is automatic on the final buy — if this token predates auto-migration, trigger it below.'
               : 'When the curve sells out the token graduates to a Uniswap pool. Early buyers are further down the curve.'}
           </p>

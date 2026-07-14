@@ -93,9 +93,9 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
         <p className='social-verify__blurb'>
           The pump.fun bonding curve, ported to ETH: 1B supply, 793.1M sold off the curve,
           auto-graduates to a Uniswap pool (LP burned) when it sells out. Launching is FREE
-          (gas only). Fees are DYNAMIC like pump.fun: 1.25% on the curve — your share grows
-          from 0.30% to 0.95% as market cap climbs; after graduation total fees drop with
-          size (0.95% → 0.20%) and you keep the majority, claimable any time.
+          (gas only). Fees run pump.fun&apos;s exact schedule: 1.25% on the curve (0.30% yours);
+          after graduation the tiers stagger by market cap — your share peaks at 0.95% past
+          $85k and glides to 0.05% by $20M, claimable any time.
         </p>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 10 }}>
           <button

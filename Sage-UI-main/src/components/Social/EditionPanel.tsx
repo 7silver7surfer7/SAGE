@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import { useSigner, useProvider } from 'wagmi';
 import { createEdition, createCollection, mintEdition, editionMinted } from '@/utilities/socialToken';
@@ -215,7 +214,6 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
 }
 
 export default function EditionPanel({ address, isSelf }: { address: string; isSelf: boolean }) {
-  const router = useRouter();
   const { data } = useGetProfileEditionsQuery(address, { skip: !address });
   const [haltEdition] = useHaltEditionMutation();
   const { data: signer } = useSigner();
@@ -264,7 +262,7 @@ export default function EditionPanel({ address, isSelf }: { address: string; isS
           <button
             className='social-token__airdrop'
             style={{ marginLeft: 'auto' }}
-            onClick={() => router.push('/social/launch/nft')}
+            onClick={() => setOpen(true)}
           >
             Launch artwork
           </button>

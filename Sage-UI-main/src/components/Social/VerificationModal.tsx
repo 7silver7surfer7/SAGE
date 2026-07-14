@@ -10,10 +10,11 @@ import VerifiedBadge from './VerifiedBadge';
 
 const BENEFITS = [
   ['Verified checkmark', 'Shown next to your name everywhere on SAGE Social'],
+  ['Edit your posts', 'Fix a typo after posting — edits carry a subtle “edited” label'],
   ['Sell posts as NFTs', 'Images sell in ETH; tweets sell in pixels — collectors mint them to their wallet'],
   ['Collect posts', 'Mint other artists’ posts — pay in ETH or pixels'],
   ['Earn pixels holding SAGE', 'Pixels stream to your wallet every second, on-chain'],
-  ['Boost posts', 'Burn SAGE to lift a post in the global feed'],
+  ['Boost posts', 'Pay ETH to lift a post in the global feed'],
   ['Direct messages', 'Wallet-to-wallet DMs with anyone on the network'],
   ['2× invite capacity', 'Your invite code carries 10 uses instead of 5'],
 ];

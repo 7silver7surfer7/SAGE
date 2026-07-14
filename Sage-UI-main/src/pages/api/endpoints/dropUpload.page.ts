@@ -15,6 +15,7 @@ import {
   BatchCheckpoint,
   CollectionProgress,
 } from '@/utilities/collectionBundler';
+import { processCollectionZipToFilebase } from '@/utilities/collectionPinner';
 import { mirrorToS3, s3MirrorUrl } from '@/utilities/s3Mirror';
 import { getRequester, requireRole, Requester } from '@/utilities/apiAuth';
 import { parameters } from '@/constants/config';
@@ -118,7 +119,11 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       await insertCollectionMint(request.body, response);
       break;
     case 'ProcessCollectionZip':
-      await processCollectionZipAction(Number(request.query.id), response);
+      await processCollectionZipAction(
+        Number(request.query.id),
+        String(request.query.storage || 'arweave'),
+        response
+      );
       break;
     case 'GetCollectionStatus':
       await getCollectionStatus(Number(request.query.id), response);
@@ -779,8 +784,12 @@ async function insertCollectionMint(data: any, response: NextApiResponse) {
  * GetCollectionStatus in parallel. Idempotent: checkpoints in `progress`
  * mean a retry skips already-posted bundles.
  */
-async function processCollectionZipAction(collectionMintId: number, response: NextApiResponse) {
-  console.log(`processCollectionZip(${collectionMintId})`);
+async function processCollectionZipAction(
+  collectionMintId: number,
+  storage: string,
+  response: NextApiResponse
+) {
+  console.log(`processCollectionZip(${collectionMintId}, ${storage})`);
   const cm = await prisma.collectionMint.findUnique({
     where: { id: collectionMintId },
     include: { Drop: true },
@@ -794,6 +803,73 @@ async function processCollectionZipAction(collectionMintId: number, response: Ne
     return;
   }
   const zipUrl = `https://${process.env.S3_BUCKET}.s3.us-east-2.amazonaws.com/collection-staging/${collectionMintId}.zip`;
+
+  // Filebase mode — the social launcher's self-serve ZIP drops. Pins every
+  // image + metadata to IPFS instead of Arweave-bundling; no AR is spent, so
+  // the balance pre-flight below doesn't apply.
+  if (storage === 'filebase') {
+    try {
+      await prisma.collectionMint.update({
+        where: { id: collectionMintId },
+        data: { status: 'processing' },
+      });
+      const result = await processCollectionZipToFilebase({
+        zipUrl,
+        collectionMintId,
+        dropName: cm.Drop.name,
+        description: cm.Drop.description,
+        siteUrl: process.env.NEXTAUTH_URL || '',
+        onProgress: async (p) => {
+          await prisma.collectionMint.update({
+            where: { id: collectionMintId },
+            data: {
+              progress: JSON.stringify({
+                imagesTotal: p.imagesTotal,
+                imagesBundled: p.imagesBundled,
+                bundlesPosted: [],
+              }),
+            },
+          });
+        },
+      });
+      await prisma.collectionMint.update({
+        where: { id: collectionMintId },
+        data: {
+          status: 'done',
+          baseUri: result.baseUri,
+          maxSupply: result.maxSupply,
+          previewImagePath: result.previewImagePath,
+          pathMap: JSON.stringify(result.pathMap),
+        },
+      });
+      // the launcher can't use a ZIP as the drop banner — patch in the first
+      // image now that it exists (InsertDrop ran with an empty banner)
+      if (!cm.Drop.bannerImageS3Path) {
+        await prisma.drop.update({
+          where: { id: cm.dropId },
+          data: {
+            bannerImageS3Path: result.previewImagePath,
+            tileImageS3Path: result.previewImagePath,
+          },
+        });
+      }
+      response.json({ status: 'done', maxSupply: result.maxSupply });
+    } catch (e: any) {
+      console.log('processCollectionZipToFilebase failed:', e);
+      await prisma.collectionMint
+        .update({
+          where: { id: collectionMintId },
+          data: {
+            status: 'failed',
+            progress: JSON.stringify({ error: e?.message?.slice(0, 200) || 'pinning failed' }),
+          },
+        })
+        .catch(() => {});
+      response.status(500).json({ error: e?.message?.slice(0, 200) || 'pinning failed' });
+    }
+    return;
+  }
+
   try {
     // Pre-flight: this run spends real AR from the platform wallet — refuse
     // outright if the balance can't plausibly cover the zip's byte size.
@@ -983,7 +1059,8 @@ async function registerCollectionMint(
       response.status(400).json({ error: 'Unknown collection index' });
       return;
     }
-    const imageUrl = `https://arweave.net/${entry.img}`;
+    // Arweave pathMaps store bare txids; Filebase pathMaps store full URLs
+    const imageUrl = entry.img.startsWith('http') ? entry.img : `https://arweave.net/${entry.img}`;
     const record = await prisma.nft.create({
       data: {
         // match the name baked into the token's Arweave metadata (from the

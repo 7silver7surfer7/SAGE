@@ -46,6 +46,29 @@ export async function uploadJsonToFilebase(
   return cid ? `ipfs://${cid}` : null;
 }
 
+/**
+ * Reads an object straight from the Filebase bucket (S3 API, credentialed).
+ * Used by the /api/collection-meta resolver: per-object pins each get their
+ * OWN CID, so a collection has no shared directory CID and `baseUri + i.json`
+ * can't resolve on the public IPFS gateway — this route is how a collection's
+ * sequential tokenURIs get served.
+ */
+export async function getFilebaseObject(
+  key: string
+): Promise<{ body: Buffer; contentType: string } | null> {
+  const fb = await filebaseClient();
+  if (!fb) return null;
+  try {
+    const obj = await fb.s3.getObject({ Bucket: fb.bucket, Key: key }).promise();
+    return {
+      body: obj.Body as Buffer,
+      contentType: obj.ContentType || 'application/octet-stream',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Filebase S3 client, or null when unconfigured. */
 async function filebaseClient() {
   const bucket = process.env.FILEBASE_BUCKET;

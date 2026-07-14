@@ -797,7 +797,9 @@ $col-width: 620px;
   &__overlay {
     position: fixed;
     inset: 0;
-    z-index: 70;
+    // above the site nav (z-index 998) — menu items must never
+    // bleed over a modal
+    z-index: 1200;
     background: rgba(0, 0, 0, 0.72);
     display: flex;
     align-items: center;
@@ -1476,7 +1478,8 @@ body:has([class*='__overlay']) .layout {
   &__overlay {
     position: fixed;
     inset: 0;
-    z-index: 60;
+    // above the site nav (z-index 998)
+    z-index: 1200;
     background: rgba(0, 0, 0, 0.7);
     display: flex;
     align-items: center;
@@ -3958,6 +3961,46 @@ body:has([class*='__overlay']) .layout {
   font-variant-numeric: tabular-nums;
   @include m.theme() {
     color: rgba(m.t(contrast), 0.6);
+  }
+}
+
+/* verified-only inline post editing */
+.social-post__edit {
+  margin: 6px 0 8px;
+  textarea {
+    width: 100%;
+    resize: vertical;
+    border-radius: 14px;
+  }
+}
+.social-post__edit-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+  button {
+    width: auto;
+    padding: 8px 18px;
+  }
+}
+.social-post__edited {
+  font-size: 0.78rem;
+  font-style: italic;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.45);
+  }
+}
+
+.social-post__drop-timer {
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 9px;
+  border-radius: 999px;
+  @include m.theme() {
+    background: rgba(m.t(contrast), 0.07);
+    color: rgba(m.t(contrast), 0.75);
   }
 }
 .social-post__drop-go {

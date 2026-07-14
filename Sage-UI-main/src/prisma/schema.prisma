@@ -407,6 +407,9 @@ model SocialPost {
   // out, GetPost 404s. Posts with collects can NEVER be deleted — the minted
   // NFTs' tokenURI metadata lives at this row.
   deletedAt    DateTime?
+  // editing is a VERIFIED-only perk (Twitter Blue style); set on every edit
+  // so the card can show an "edited" label
+  editedAt     DateTime?
   // reply threading (self-relation); null = top-level post
   replyToId    Int?
   ReplyTo      SocialPost?    @relation("SocialReplies", fields: [replyToId], references: [id], onDelete: Cascade)

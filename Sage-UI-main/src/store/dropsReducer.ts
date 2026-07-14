@@ -147,13 +147,20 @@ export const dropsApi = baseApi.injectEndpoints({
             : `Creating drop "${req.name}" (${req.artworks.length} artwork${req.artworks.length === 1 ? '' : 's'})`
         );
         try {
-          const { url: bannerUrl } = await dropProgress.track(
-            req.storage === 'filebase' ? 'Uploading banner to Filebase (IPFS)' : 'Uploading banner to Arweave',
-            () =>
-              req.storage === 'filebase'
-                ? uploadFileToFilebase(req.bannerFile)
-                : uploadFileToArweave(req.bannerFile)
-          );
+          // A ZIP collection's "banner" is the zip itself — nothing uploadable
+          // as an image. Leave the banner empty; the collection processor
+          // patches in the FIRST IMAGE once the zip is unpacked and pinned.
+          const bannerIsZip =
+            /zip/i.test(req.bannerFile.type || '') || /\.zip$/i.test(req.bannerFile.name || '');
+          const { url: bannerUrl } = bannerIsZip
+            ? { url: '' }
+            : await dropProgress.track(
+                req.storage === 'filebase' ? 'Uploading banner to Filebase (IPFS)' : 'Uploading banner to Arweave',
+                () =>
+                  req.storage === 'filebase'
+                    ? uploadFileToFilebase(req.bannerFile)
+                    : uploadFileToArweave(req.bannerFile)
+              );
           let artistProfilePicture: string | undefined;
           if (req.artistIconFile) {
             const { url, optimizedUrl } = await dropProgress.track(
@@ -1017,11 +1024,17 @@ async function runCollectionPipeline(
   // (which keeps running after the client disconnects, and checkpoints its
   // work) actually finished fine — same shape as the 2026-07-12 "rMonet"
   // banner-upload timeout.
-  const stepId = dropProgress.begin('Bundling images to Arweave (this can take a while)');
-  // kickoff: swallow transport errors — the status poll decides success/failure
-  fetch(`/api/endpoints/dropUpload/?action=ProcessCollectionZip&id=${collectionMintId}`).catch(
-    () => {}
+  const stepId = dropProgress.begin(
+    req.storage === 'filebase'
+      ? 'Pinning images to Filebase/IPFS (this can take a while)'
+      : 'Bundling images to Arweave (this can take a while)'
   );
+  // kickoff: swallow transport errors — the status poll decides success/failure
+  fetch(
+    `/api/endpoints/dropUpload/?action=ProcessCollectionZip&id=${collectionMintId}&storage=${
+      req.storage || 'arweave'
+    }`
+  ).catch(() => {});
   try {
     // Poll until the job reports a terminal status. No client-side deadline —
     // thousands-of-images zips legitimately take a long time, and the server

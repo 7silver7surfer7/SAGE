@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import { useSigner } from 'wagmi';
@@ -20,11 +20,57 @@ import {
   useSetCollectibleMutation,
   useCollectPostMutation,
   useRequestCollectVoucherMutation,
+  useEditPostMutation,
 } from '@/store/socialReducer';
+import { useGetAuctionStateQuery } from '@/store/auctionsReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import VerifiedBadge from './VerifiedBadge';
 import VerificationModal from './VerificationModal';
 import BoostModal from './BoostModal';
+
+/** live countdown text for the drop bar — "2d 4h", "3h 12m", "4m 09s" */
+function countdownText(msLeft: number): string {
+  const s = Math.max(0, Math.floor(msLeft / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${String(sec).padStart(2, '0')}s`;
+}
+
+/**
+ * The timer chip on a drop post. Auctions read the on-chain auction state —
+ * the contract starts the clock at the FIRST BID, so until then there is no
+ * end time and the chip says so. Open editions count down to their fixed end.
+ */
+function DropCountdown({ post }: { post: SocialPost }) {
+  const isAuction = post.dropKind === 'auction';
+  const { data: auctionState } = useGetAuctionStateQuery(post.dropAuctionId as number, {
+    skip: !isAuction || !post.dropAuctionId,
+    pollingInterval: 30_000,
+  });
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  let endMs: number | null = null;
+  if (isAuction) {
+    if (auctionState?.endTime) endMs = auctionState.endTime * 1000;
+    else if (auctionState) endMs = null; // chain confirmed: no bid yet
+    else if (post.dropEndTime) endMs = new Date(post.dropEndTime).getTime();
+  } else if (post.dropEndTime) {
+    endMs = new Date(post.dropEndTime).getTime();
+  }
+  if (isAuction && !endMs)
+    return <span className='social-post__drop-timer'>⏱ first bid starts the timer</span>;
+  if (!endMs) return null; // collections: until sold out — no clock
+  if (endMs <= now)
+    return <span className='social-post__drop-timer'>{isAuction ? '🔨 ended' : '◎ ended'}</span>;
+  return <span className='social-post__drop-timer'>⏱ {countdownText(endMs - now)}</span>;
+}
 
 function timeAgo(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -114,6 +160,12 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [deletePost] = useDeletePostMutation();
   const [busy, setBusy] = useState(false);
   const [showVerify, setShowVerify] = useState(false);
+  // verified-only post editing (Twitter Blue style): the menu item always
+  // shows on own posts; unverified users get the verification upsell
+  const [editPost] = useEditPostMutation();
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [localEdit, setLocalEdit] = useState<{ text: string; editedAt: string } | null>(null);
   const [showBoost, setShowBoost] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const { openConnectModal } = useConnectModal();
@@ -198,6 +250,37 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       return;
     }
     toast.error(err?.data?.error || err?.message?.slice(0, 80) || fallback);
+  };
+
+  const startEdit = () => {
+    setMenuOpen(false);
+    if (!viewerVerified) {
+      // the upsell: editing is a verified perk — show the paywall
+      setShowVerify(true);
+      return;
+    }
+    setEditText(localEdit?.text ?? post.text);
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    const trimmed = editText.trim();
+    if (!trimmed && !post.imageUrl) {
+      toast.error('A post needs some text');
+      return;
+    }
+    setBusy(true);
+    try {
+      const { post: updated } = await editPost({ postId: post.id, text: trimmed }).unwrap();
+      setLocalEdit({ text: updated.text, editedAt: updated.editedAt || new Date().toISOString() });
+      setEditing(false);
+      toast.success('Post updated');
+    } catch (err: any) {
+      if (err?.data?.needsVerification) setShowVerify(true);
+      else toast.error(err?.data?.error || 'Could not edit');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const onDelete = async (e: React.MouseEvent) => {
@@ -450,6 +533,16 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
                   <button onClick={onShareCopy}>Copy link</button>
                   <button onClick={onShareX}>Share on 𝕏</button>
                   <button onClick={onHide}>Hide this post</button>
+                  {isOwnPost && !post.dropId && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startEdit();
+                      }}
+                    >
+                      Edit post {!viewerVerified && '✦'}
+                    </button>
+                  )}
                   {isOwnPost && (
                     <button
                       className='social-post__menu-danger'
@@ -466,7 +559,37 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             )}
           </div>
         </div>
-        {post.text && <p className='social-post__text'>{linkifyText(post.text)}</p>}
+        {editing ? (
+          <div className='social-post__edit' onClick={(e) => e.stopPropagation()}>
+            <textarea
+              className='social-search__input'
+              value={editText}
+              maxLength={500}
+              rows={3}
+              autoFocus
+              onChange={(e) => setEditText(e.target.value)}
+            />
+            <div className='social-post__edit-row'>
+              <button className='social-refer__btn' disabled={busy} onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+              <button className='social-verify__buy' disabled={busy} onClick={saveEdit}>
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          (localEdit?.text ?? post.text) && (
+            <p className='social-post__text'>
+              {linkifyText(localEdit?.text ?? post.text)}
+              {(localEdit?.editedAt || post.editedAt) && (
+                <span className='social-post__edited' title='This post was edited'>
+                  {' '}· edited
+                </span>
+              )}
+            </p>
+          )
+        )}
         {post.linkUrl && !post.imageUrl && (
           <a
             className='social-post__linkcard'
@@ -519,6 +642,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
                 ? `reserve ${post.dropPrice} ETH`
                 : `${post.dropPrice} ETH / mint`}
             </span>
+            <DropCountdown post={post} />
             <span className='social-post__drop-go'>
               {post.dropKind === 'auction' ? 'Place bid →' : 'Mint →'}
             </span>

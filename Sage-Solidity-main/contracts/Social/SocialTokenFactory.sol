@@ -67,16 +67,13 @@ contract SocialTokenFactory is ReentrancyGuard {
     uint256 public constant INITIAL_VIRTUAL_TOKEN_RESERVES = 1_073_000_000 ether;
     uint256 public constant INITIAL_REAL_TOKEN_RESERVES = 793_100_000 ether;
     uint256 public constant AIRDROP_CUT = 20_000_000 ether; // 2%, only when enabled
-    // ── DYNAMIC FEES (pump.fun Project-Ascend style) ──
-    // Curve trades pay 1.25% total; the creator/treasury split FLIPS toward
-    // the creator once market cap crosses tier1 — early trades fund the
-    // platform, mature tokens fund their creator.
+    // ── CURVE FEES — pump.fun's official schedule (docs/fees) ──
+    // Bonding-curve trades pay a FLAT 1.25% total: 0.30% to the creator,
+    // 0.95% to the protocol, 0% LP (there is no pool yet). The market-cap
+    // STAGGERING pump.fun documents applies only post-graduation, on the AMM
+    // — see SageSwapRouter's 25-tier table.
     uint16 public constant FEE_BPS = 125; // 1.25% total trade fee
-    uint16 public constant CREATOR_FEE_BPS_LOW = 30; // 0.30% creator below tier1
-    uint16 public constant CREATOR_FEE_BPS_HIGH = 95; // 0.95% creator at/above tier1
-    // mcap threshold in wei (price × 1B supply); adjustable by the treasury
-    uint256 public feeTier1McapWei;
-    event FeeTierUpdated(uint256 tier1McapWei);
+    uint16 public constant CREATOR_FEE_BPS = 30; // 0.30% creator, flat on the curve
 
     address public immutable treasury;
     uint256 public immutable initialVirtualEth;
@@ -123,14 +120,6 @@ contract SocialTokenFactory is ReentrancyGuard {
         initialVirtualEth = _initialVirtualEth;
         uniswapFactory = _uniswapFactory;
         weth = _weth;
-        feeTier1McapWei = 86 ether; // ≈ $300k mcap at deploy-time ETH price
-    }
-
-    /** Treasury retunes the fee tier as the ETH price moves — no redeploy. */
-    function setFeeTier(uint256 tier1McapWei) external {
-        require(msg.sender == treasury, 'only treasury');
-        feeTier1McapWei = tier1McapWei;
-        emit FeeTierUpdated(tier1McapWei);
     }
 
     /** Current mcap in wei: spot price × 1B supply. */
@@ -140,9 +129,9 @@ contract SocialTokenFactory is ReentrancyGuard {
         return (c.virtualEthReserves * 1 ether * 1_000_000_000) / c.virtualTokenReserves;
     }
 
-    /** The creator's bps share of FEE_BPS at this token's current mcap. */
-    function creatorFeeBps(address token) public view returns (uint16) {
-        return mcapWei(token) >= feeTier1McapWei ? CREATOR_FEE_BPS_HIGH : CREATOR_FEE_BPS_LOW;
+    /** The creator's bps share of FEE_BPS — flat on the curve (pump.fun). */
+    function creatorFeeBps(address) public pure returns (uint16) {
+        return CREATOR_FEE_BPS;
     }
 
     function allTokensLength() external view returns (uint256) {
