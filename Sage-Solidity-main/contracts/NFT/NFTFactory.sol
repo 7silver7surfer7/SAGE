@@ -65,12 +65,17 @@ contract NFTFactory {
             "Contract already exists"
         );
 
+        // 1200 matches the historical fixed royalty SageNFT always started
+        // at before it took this as a constructor param — unchanged
+        // behavior for the shared, factory-registered artist contract
+        // (setDefaultRoyalty still corrects it per-drop same as before).
         SageNFT newContract = new SageNFT(
             name,
             symbol,
             address(sageStorage),
             artistAddress,
-            artistShare
+            artistShare,
+            1200
         );
         artistContracts[artistAddress] = newContract;
         emit NewNFTContract(address(newContract), artistAddress);

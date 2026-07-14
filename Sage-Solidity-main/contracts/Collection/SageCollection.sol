@@ -8,6 +8,7 @@ import "../../interfaces/IWhitelist.sol";
 import "../../interfaces/ISageStorage.sol";
 import "../../interfaces/ISageConfig.sol";
 import "../../interfaces/INFT.sol";
+import "../NFT/DedicatedNftDeployer.sol";
 
 /**
  * Fixed-price SEQUENTIAL collection mint ("PFP-style" drop): a collection of
@@ -43,6 +44,22 @@ contract SageCollection is Pausable {
         uint256 costTokens; // Mint price in SAGE wei (or ETH wei for ETH collections)
         uint256 id; // Collection id
         address currency; // address(0) = SAGE token, NATIVE_CURRENCY = native ETH
+        // 0 = freeze the live SageConfig primary share at creation (the
+        // admin-curated dashboard flow's existing behavior, unchanged);
+        // >0 = use this value directly instead — lets a self-serve caller
+        // (e.g. the social launcher's 99/1 split) set its real share at
+        // creation instead of needing a separate setCollectionArtistShare
+        // transaction right after.
+        uint256 artistShareBps;
+    }
+
+    /** Params for deploying a fresh, dedicated per-drop SageNFT in the SAME
+     *  transaction as createCollectionWithNewNft — see that function. */
+    struct NewNftParams {
+        string name;
+        string symbol;
+        uint256 artistShare; // bps, the NFT's own pooled-royalty artist cut (matches NFTFactory's 8333 default)
+        uint96 royaltyBps; // secondary-sale royalty, stamped at deploy instead of a separate setDefaultRoyalty() call
     }
 
     // Sentinel meaning "native ETH"
@@ -93,6 +110,17 @@ contract SageCollection is Pausable {
      *  Only its runtime CODE matters here, not its data. */
     function setTrustedNftReference(address _ref) external onlyAdmin {
         trustedNftReference = _ref;
+    }
+
+    // Deploys the fresh per-drop SageNFT for createCollectionWithNewNft via a
+    // cross-contract call rather than an inlined `new SageNFT(...)` — the
+    // latter bundles SageNFT's entire creation bytecode into whichever
+    // contract calls it, which pushed this contract's deployed size past
+    // Spurious Dragon's 24,576-byte limit. See DedicatedNftDeployer.sol.
+    address public nftDeployer;
+
+    function setNftDeployer(address _deployer) external onlyAdmin {
+        nftDeployer = _deployer;
     }
 
     /** True only if `_c` is a REAL SageNFT deployment — checked by comparing
@@ -155,6 +183,40 @@ contract SageCollection is Pausable {
         public
         onlyAdminOrArtist(c.nftContract)
     {
+        _createCollectionInternal(c);
+    }
+
+    /** One-transaction self-serve path: deploys a fresh, dedicated per-drop
+     *  SageNFT (name/symbol/royalty stamped at deploy, no separate
+     *  setDefaultRoyalty call) AND registers the collection against it, both
+     *  in this single call — instead of "deploy NFT, setDefaultRoyalty,
+     *  createCollection, setCollectionArtistShare" as four separate
+     *  transactions each needing their own wallet confirmation. No
+     *  onlyAdminOrArtist / _isTrustedNft check needed: msg.sender IS the
+     *  artist by construction (we deploy the contract right here), so there
+     *  is no untrusted nftContract input to validate. `c.nftContract` in the
+     *  passed struct is ignored — it's overwritten with the address of the
+     *  contract this function just deployed. */
+    function createCollectionWithNewNft(
+        NewNftParams calldata nftParams,
+        Collection calldata c
+    ) external returns (address nftContractAddress) {
+        require(nftDeployer != address(0), "Deployer not set");
+        address nft = DedicatedNftDeployer(nftDeployer).deploy(
+            nftParams.name,
+            nftParams.symbol,
+            address(sageStorage),
+            msg.sender,
+            nftParams.artistShare,
+            nftParams.royaltyBps
+        );
+        Collection memory withNft = c;
+        withNft.nftContract = INFT(nft);
+        _createCollectionInternal(withNft);
+        return nft;
+    }
+
+    function _createCollectionInternal(Collection memory c) internal {
         require(
             c.startTime > 0 &&
                 (c.closeTime == 0 || c.closeTime > c.startTime),
@@ -170,9 +232,14 @@ contract SageCollection is Pausable {
         // otherwise pass an existing id + their OWN nftContract and overwrite
         // someone else's collection (the DB's ids are sequential/guessable)
         require(collections[c.id].startTime == 0, "Collection already exists");
+        require(c.artistShareBps <= 10000, "Invalid share");
         collections[c.id] = c;
-        // freeze the platform split for this collection at its creation-time value
-        collectionArtistShare[c.id] = _primaryArtistShare();
+        // freeze the platform split for this collection at its creation-time
+        // value — c.artistShareBps>0 lets the caller set it directly instead
+        // (e.g. the self-serve social launcher's 99/1 split)
+        collectionArtistShare[c.id] = c.artistShareBps > 0
+            ? c.artistShareBps
+            : _primaryArtistShare();
         emit CollectionCreated(c.id, address(c.nftContract));
     }
 
@@ -258,15 +325,17 @@ contract SageCollection is Pausable {
                 require(okPlatform, "Platform ETH transfer failed");
             } else {
                 require(msg.value == 0, "Collection is not priced in ETH");
-                token.transferFrom(
-                    msg.sender,
-                    c.nftContract.artist(),
-                    artistShare
+                require(
+                    token.transferFrom(msg.sender, c.nftContract.artist(), artistShare),
+                    "Artist transfer failed"
                 );
-                token.transferFrom(
-                    msg.sender,
-                    sageStorage.multisig(),
-                    totalCostInTokens - artistShare
+                require(
+                    token.transferFrom(
+                        msg.sender,
+                        sageStorage.multisig(),
+                        totalCostInTokens - artistShare
+                    ),
+                    "Platform transfer failed"
                 );
             }
         } else {

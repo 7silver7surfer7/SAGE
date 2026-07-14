@@ -54,12 +54,19 @@ contract SageNFT is
         string memory _symbol,
         address _sageStorage,
         address _artist,
-        uint256 _artistShare
+        uint256 _artistShare,
+        // takes the drop's real royalty up front instead of always starting
+        // at the legacy 1200 and needing a separate setDefaultRoyalty() tx
+        // right after deploy to correct it (a self-serve caller can't call
+        // that setter anyway — onlyAdminOrMultisig — so a fresh per-drop
+        // contract had no way to carry its own royalty until this).
+        uint96 _defaultRoyaltyBps
     ) ERC721(_name, _symbol) {
+        require(_defaultRoyaltyBps <= MAX_ROYALTY_BPS, "Royalty exceeds cap");
         sageStorage = ISageStorage(_sageStorage);
         artist = _artist;
         artistShare = _artistShare;
-        defaultRoyaltyBps = 1200; // matches the legacy fixed royalty until a drop sets its own
+        defaultRoyaltyBps = _defaultRoyaltyBps;
         // nextTokenId is initialized to 1, since starting at 0 leads to higher gas cost for the first minter
         nextTokenId.increment();
     }

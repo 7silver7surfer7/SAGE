@@ -52,6 +52,7 @@ describe("SageCollection Contract", function () {
             costTokens: 10,
             id: 1,
             currency: ethers.constants.AddressZero,
+            artistShareBps: 0,
         };
         await collection.createCollection(collectionInfo);
         await mockERC20.connect(addr2).approve(collection.address, 1000);
@@ -278,5 +279,61 @@ describe("SageCollection Contract", function () {
         await expect(
             collection.connect(artist).createCollection(collectionInfo) // id: 1, already exists
         ).to.be.revertedWith("Collection already exists");
+    });
+
+    describe("createCollectionWithNewNft (one-tx self-serve path)", () => {
+        beforeEach(async () => {
+            const Deployer = await ethers.getContractFactory("DedicatedNftDeployer");
+            deployer = await Deployer.deploy();
+            await collection.setNftDeployer(deployer.address);
+        });
+
+        it("Should reject when the deployer address isn't set", async function () {
+            const Collection2 = await ethers.getContractFactory("SageCollection");
+            const collection2 = await Collection2.deploy(sageStorage.address, mockERC20.address);
+            await expect(
+                collection2.connect(addr3).createCollectionWithNewNft(
+                    { name: "Drop", symbol: "DRP", artistShare: 8333, royaltyBps: 500 },
+                    { ...collectionInfo, id: 20, nftContract: ethers.constants.AddressZero }
+                )
+            ).to.be.revertedWith("Deployer not set");
+        });
+
+        it("Should deploy a fresh dedicated NFT and register the collection against it in one call, without admin rights", async function () {
+            const tx = await collection.connect(addr3).createCollectionWithNewNft(
+                { name: "Drop", symbol: "DRP", artistShare: 8333, royaltyBps: 500 },
+                { ...collectionInfo, id: 21, nftContract: ethers.constants.AddressZero }
+            );
+            const receipt = await tx.wait();
+            const created = receipt.events.find((e) => e.event === "CollectionCreated");
+            const newNftAddress = created.args.nftContract;
+            expect(newNftAddress).to.not.equal(ethers.constants.AddressZero);
+
+            const newNft = await ethers.getContractAt("SageNFT", newNftAddress);
+            expect(await newNft.artist()).to.equal(addr3.address);
+            expect(await newNft.artistShare()).to.equal(8333);
+            expect(await newNft.defaultRoyaltyBps()).to.equal(500);
+
+            const c = await collection.getCollection(21);
+            expect(c.nftContract).to.equal(newNftAddress);
+
+            // the newly deployed contract can actually mint through the collection
+            await collection.setTrustedNftReference(newNftAddress); // unrelated path, unaffected — sanity only
+            await mockERC20.connect(addr2).approve(collection.address, 1000);
+            await collection.connect(addr2).mint(21, 1);
+            expect(await newNft.ownerOf(1)).to.equal(addr2.address);
+        });
+
+        it("Should stamp the caller as artist regardless of who nftContract in the struct claims", async function () {
+            const tx = await collection.connect(addr2).createCollectionWithNewNft(
+                { name: "Drop2", symbol: "DRP2", artistShare: 8333, royaltyBps: 0 },
+                { ...collectionInfo, id: 22, nftContract: nft.address } // ignored — overwritten
+            );
+            const receipt = await tx.wait();
+            const created = receipt.events.find((e) => e.event === "CollectionCreated");
+            expect(created.args.nftContract).to.not.equal(nft.address);
+            const newNft = await ethers.getContractAt("SageNFT", created.args.nftContract);
+            expect(await newNft.artist()).to.equal(addr2.address);
+        });
     });
 });

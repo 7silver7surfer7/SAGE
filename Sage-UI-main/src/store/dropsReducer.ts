@@ -12,7 +12,6 @@ import {
 } from '@/utilities/contracts';
 import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.json';
 import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
-import sageNftJson from '@/constants/abis/NFT/SageNFT.sol/SageNFT.json';
 import { parameters, currencyAddressFor, isEthCurrency } from '@/constants/config';
 import { chunk, ALLOWLIST_CHUNK_SIZE } from '@/utilities/allowlist';
 import { fetchOrCreateNftContract } from './nftsReducer';
@@ -1099,6 +1098,14 @@ async function runCollectionPipeline(
  * like the other game deploys: rows with a contractAddress are skipped, so a
  * re-approve resumes cleanly. Requires zip processing to have finished (the
  * baseUri/maxSupply come from it) — an unprocessed collection fails the step.
+ *
+ * One wallet confirmation per collection: createCollectionWithNewNft deploys
+ * the DEDICATED per-drop NFT contract (named after the drop — external
+ * marketplaces title a collection by ERC-721 name(), so minting into the
+ * artist's shared contract made every drop surface under one collection) AND
+ * registers the collection against it, both in a single on-chain tx, with the
+ * royalty and (for social drops) the artist-share split stamped in the same
+ * call instead of two follow-up setter transactions.
  */
 async function deployCollectionMints(
   drop: DropFull,
@@ -1117,37 +1124,37 @@ async function deployCollectionMints(
           `wait for processing to complete (or re-run it from the create form) and re-approve.`
       );
     }
-    // DEDICATED per-drop NFT contract, named after the DROP: external
-    // marketplaces title a collection by ERC-721 name(), so minting into the
-    // artist's shared contract made every drop surface under one collection.
-    // Deployed standalone (not via the factory, which enforces one contract
-    // per artist) — safeMint rights come from the storage-level role.minter
-    // the SageCollection game already holds, and marketplace royalty paths
-    // read artist()/artistShare() straight off the contract. Idempotent:
-    // resume reuses the persisted address.
+    const collectionStruct = {
+      startTime: Math.floor(new Date(cm.startTime).getTime() / 1000),
+      // null endTime -> closeTime 0 = no deadline, open until sold out
+      closeTime: cm.endTime ? Math.floor(new Date(cm.endTime).getTime() / 1000) : 0,
+      maxSupply: cm.maxSupply,
+      mintCount: 0,
+      limitPerUser: cm.limitPerUser,
+      baseUri: cm.baseUri,
+      whitelist: whitelistAddress,
+      costTokens: ethers.utils.parseEther(String(cm.costTokens)),
+      id: cm.id,
+      currency: currencyAddressFor((drop as any).currency),
+      artistShareBps: (drop as any).isSocial ? SOCIAL_ARTIST_SHARE_BPS : 0,
+    };
+
     let nftContractAddress = (cm as any).nftContractAddress;
     if (!nftContractAddress) {
       const symbol =
         drop.name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'SAGE';
-      console.log(`deployCollectionMints() :: deploying "${drop.name}" (${symbol}) NFT contract…`);
-      const nftFactory = new ethers.ContractFactory(
-        sageNftJson.abi,
-        sageNftJson.bytecode,
-        signer
-      );
-      const instance = await nftFactory.deploy(
-        drop.name,
-        symbol,
-        parameters.STORAGE_ADDRESS,
-        drop.artistAddress,
-        8333 // artist share of pooled legacy royalties, matches factory default
-      );
-      await instance.deployed();
-      nftContractAddress = instance.address;
-      // stamp the drop's royalty so every token minted carries it
       const bps = Math.round(((drop as any).royaltyPercentage ?? 12) * 100);
-      const rTx = await instance.setDefaultRoyalty(bps);
-      await rTx.wait();
+      console.log(`deployCollectionMints() :: deploying "${drop.name}" (${symbol}) NFT contract + creating collection #${cm.id} in one tx…`);
+      const tx = await contract.createCollectionWithNewNft(
+        { name: drop.name, symbol, artistShare: 8333, royaltyBps: bps },
+        { ...collectionStruct, nftContract: ethers.constants.AddressZero }
+      );
+      const receipt = await tx.wait();
+      const created = receipt.events?.find((e: any) => e.event === 'CollectionCreated');
+      nftContractAddress = created?.args?.nftContract;
+      if (!nftContractAddress) {
+        throw new Error(`Collection #${cm.id}: couldn't read the deployed NFT contract address from the transaction receipt.`);
+      }
       // persist + server sets contractURI (needs the platform key's
       // storage DEFAULT_ADMIN — a dashboard admin wallet would revert)
       const { data: saved } = await fetchWithBQ(
@@ -1155,49 +1162,30 @@ async function deployCollectionMints(
       );
       if ((saved as any)?.error) throw new Error((saved as any).error);
       console.log(`deployCollectionMints() :: dedicated NFT contract ${nftContractAddress}`);
-    }
-    // Idempotency check: cm.id (a DB auto-increment id, not scoped per
-    // contract) is reused as the ON-CHAIN collection id on every retry.
-    // createCollection() reverts "Collection already exists" if it's
-    // already registered — which happens whenever the tx itself succeeded
-    // but a LATER step in this same function (recording contractAddress
-    // below, or the artist-share call) threw, leaving contractAddress null
-    // in the DB forever while the on-chain collection is real. Every
-    // subsequent re-approve then retried createCollection blind and hit
-    // the same revert, permanently stranding the drop. Checking on-chain
-    // state first makes a retry pick up where it actually left off instead.
-    const existing = await contract.getCollection(cm.id);
-    if (existing.startTime > 0) {
-      console.log(`deployCollectionMints() :: collection #${cm.id} already exists on-chain, skipping createCollection`);
     } else {
-      const tx = await contract.createCollection({
-        startTime: Math.floor(new Date(cm.startTime).getTime() / 1000),
-        // null endTime -> closeTime 0 = no deadline, open until sold out
-        closeTime: cm.endTime ? Math.floor(new Date(cm.endTime).getTime() / 1000) : 0,
-        maxSupply: cm.maxSupply,
-        mintCount: 0,
-        limitPerUser: cm.limitPerUser,
-        baseUri: cm.baseUri,
-        nftContract: nftContractAddress,
-        whitelist: whitelistAddress,
-        costTokens: ethers.utils.parseEther(String(cm.costTokens)),
-        id: cm.id,
-        currency: currencyAddressFor((drop as any).currency),
-      });
-      await tx.wait();
+      // Resume path: an earlier partial run already deployed the dedicated
+      // NFT contract (e.g. the process crashed between steps) — fall back to
+      // registering the collection against that existing contract directly.
+      // Idempotency check: cm.id (a DB auto-increment id, not scoped per
+      // contract) is reused as the ON-CHAIN collection id on every retry.
+      // createCollection() reverts "Collection already exists" if it's
+      // already registered — which happens whenever the tx itself succeeded
+      // but a LATER step in this same function (recording contractAddress
+      // below) threw, leaving contractAddress null in the DB forever while
+      // the on-chain collection is real. Checking on-chain state first makes
+      // a retry pick up where it actually left off instead.
+      const existing = await contract.getCollection(cm.id);
+      if (existing.startTime > 0) {
+        console.log(`deployCollectionMints() :: collection #${cm.id} already exists on-chain, skipping createCollection`);
+      } else {
+        const tx = await contract.createCollection({ ...collectionStruct, nftContract: nftContractAddress });
+        await tx.wait();
+      }
     }
     const { data: updated } = await fetchWithBQ(
       `drops?action=UpdateCollectionContractAddress&id=${cm.id}&address=${parameters.COLLECTION_ADDRESS}`
     );
     if ((updated as any)?.error) throw new Error((updated as any).error);
-    if ((drop as any).isSocial) {
-      try {
-        const stx = await contract.setCollectionArtistShare(cm.id, SOCIAL_ARTIST_SHARE_BPS);
-        await stx.wait();
-      } catch (e) {
-        console.warn(`deployCollectionMints() :: could not apply the social rate to collection ${cm.id} — it keeps the marketplace default`, e);
-      }
-    }
   }
 }
 
