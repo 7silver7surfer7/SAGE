@@ -73,6 +73,23 @@ function BaseMedia({
   // stale Arweave edge node exactly like an unpatched video used to.
   const retryable = useRetryableSrc(arweaveProxySrc(src));
 
+  // 'contain' callers (mint/bid modal artwork) want the WHOLE image visible
+  // at its true proportions — but their container is a fixed CSS box sized
+  // for one reference image. A wide/landscape piece inside that box just
+  // gets letterboxed (large empty bars top/bottom) even though the image
+  // itself now correctly fills its box (see the isZoomable <img> below).
+  // Measuring the real image once it loads and sizing THIS wrapper to match
+  // lets the box adapt per-artwork instead of forcing every image into one
+  // shape. Scoped to fit==='contain' only — 'cover' grid tiles (fixed tile
+  // aspect ratio, cropping is the point) must keep their own fixed shape.
+  // starts square (a neutral placeholder — BaseMedia has no idea what shape
+  // any given caller's artwork will turn out to be) so there's always a
+  // real, non-zero box to paint into before the image loads and its true
+  // ratio is measured, instead of collapsing to 0 height for that first frame.
+  const [naturalRatio, setNaturalRatio] = useState(1);
+  useEffect(() => setNaturalRatio(1), [src]);
+  const adaptsToImage = fit === 'contain' && isZoomable && !isVideo();
+
   const videoMustStartMuted = () => {
     if (typeof window !== 'undefined') {
       const ua = window.navigator.userAgent.toLowerCase();
@@ -109,7 +126,23 @@ function BaseMedia({
     : {};
 
   return (
-    <div>
+    // position:relative gives the isZoomable <img> below (position:absolute;
+    // inset:0) a guaranteed LOCAL anchor — without it, an unstyled caller
+    // (no position on its own wrapper either) would send that img hunting
+    // further up the tree for the nearest positioned ancestor, up to and
+    // including none at all (full-page blowup — the exact "gradient
+    // covering the whole screen" bug PfpImage's own comment describes).
+    // adaptsToImage: height:100% is dropped in favor of the measured
+    // aspect-ratio (once known) so this box matches the real artwork
+    // instead of stretching to fill its parent's own fixed-ratio height.
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: adaptsToImage ? undefined : '100%',
+        aspectRatio: adaptsToImage ? String(naturalRatio) : undefined,
+      }}
+    >
       <ConditionalWrapper
         condition={true === isZoomable && !isVideo()}
         wrapper={(children: JSX.Element) => <Zoom classDialog='custom-zoom'>{children}</Zoom>}
@@ -144,9 +177,30 @@ function BaseMedia({
           <img
             src={retryable.src}
             onError={retryable.onError}
-            // layout='fill'
+            onLoad={
+              adaptsToImage
+                ? (e) => {
+                    const { naturalWidth, naturalHeight } = e.currentTarget;
+                    if (naturalWidth && naturalHeight) setNaturalRatio(naturalWidth / naturalHeight);
+                  }
+                : undefined
+            }
+            // width/height:100% alone silently no-ops here: this <img> sits
+            // inside BaseMedia's own unstyled wrapper div AND react-medium-
+            // image-zoom's own wrapper (ships with no explicit height in its
+            // stylesheet), so the percentage-height chain breaks before it
+            // ever reaches the real, aspect-ratio-driven height further up
+            // (e.g. .games-modal__main-img-container). The <img> was
+            // rendering at its own natural intrinsic size instead — e.g. a
+            // short/wide artwork inside a taller aspect-ratio box left a
+            // large empty gap below it, before the next element. position:
+            // absolute + inset:0 skips both unstyled wrappers and anchors
+            // straight to the nearest POSITIONED ancestor, same fix already
+            // relied on for next/image's layout='fill' (see PfpImage above).
             style={{
               overflow: 'hidden',
+              position: 'absolute',
+              inset: 0,
               width: '100%',
               height: '100%',
               objectFit: fit,

@@ -1141,6 +1141,11 @@ $col-width: 620px;
   }
   &__input {
     flex: 1;
+    // flex items default to min-width:auto, refusing to shrink below their
+    // own content width — on a narrow screen that can push the Send button
+    // (a sibling in this same row) out past the visible edge instead of
+    // letting the textarea shrink to make room for it.
+    min-width: 0;
     background: transparent;
     border-radius: 20px;
     padding: 12px 16px;
@@ -1165,6 +1170,7 @@ $col-width: 620px;
     }
   }
   &__send {
+    flex: none;
     border: none;
     border-radius: 999px;
     padding: 8px 18px;

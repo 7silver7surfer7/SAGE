@@ -112,10 +112,20 @@
   // width: clamp(311px, 80vw, 487px);
   // height: clamp(300px, 80vw, 527px);
   width: 100%;
-  aspect-ratio: 487/527;
+  // NOT a fixed aspect-ratio (was 487/527, ~a near-square box) — real
+  // artwork varies widely (this modal shows the WHOLE piece, uncropped, per
+  // BaseMedia's fit='contain'), and a fixed box just letterboxes anything
+  // that isn't close to that one ratio. BaseMedia's own wrapper now measures
+  // the real image and sizes itself to match (see its `adaptsToImage`
+  // logic) — this container just wraps around that, height:auto.
   opacity: 1;
   @include b.min-width('medium') {
     width: 487px;
+    // opt out of .games-modal__main's align-items:stretch — this box should
+    // size to its own (real-aspect-ratio) content, not be stretched to
+    // match the text column's height with the same leftover-space result
+    // the fixed aspect-ratio used to cause.
+    align-self: flex-start;
   }
 }
 
