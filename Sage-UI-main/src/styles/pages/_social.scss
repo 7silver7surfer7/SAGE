@@ -2327,7 +2327,11 @@ body:has([class*='__overlay']) .layout {
 /* tighten the post rows on narrow phones so chips and tip totals never clip */
 @media (max-width: 640px) {
   .social-post__actions {
-    gap: 12px;
+    // comment/repost/like/boost spread across the full row (Twitter-style)
+    // instead of clumping together — the tip button below already wraps to
+    // its own line, so there's no clipping risk in giving these room
+    justify-content: space-between;
+    gap: 8px;
     flex-wrap: wrap;
   }
   .social-post__action {
