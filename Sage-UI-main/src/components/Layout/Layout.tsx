@@ -80,7 +80,11 @@ export default function Layout({ children, router }: Props) {
         pauseOnHover
         data-cy='toast-container'
       />
-      <div key={router.route} className='layout'>
+      <div
+        key={router.route}
+        className='layout'
+        data-social={router.pathname.startsWith('/social')}
+      >
         <Nav />
         <MenuToggle
           isDynamicColors={true}

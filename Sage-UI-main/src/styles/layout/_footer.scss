@@ -8,6 +8,15 @@
     display: flex;
     width: 100vw;
   }
+  // /social has its own fixed bottom tab bar (SocialShell) standing in for
+  // page furniture on mobile — the marketing footer below it just clutters
+  // a short page (e.g. an empty/near-empty Messages list) since it isn't
+  // pushed off-screen the way it reliably is on desktop's taller shell.
+  .layout[data-social='true'] & {
+    @media (max-width: 820px) {
+      display: none;
+    }
+  }
 }
 
 .footer__content {
