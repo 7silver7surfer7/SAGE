@@ -1,96 +1,61 @@
+import { useRouter } from 'next/router';
 import { useGetBidHistoryQuery } from '@/store/auctionsReducer';
+import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
-// import { gql, useQuery } from '@apollo/client';
-import { ethers } from 'ethers';
-
-// interface BidHistoryItem {
-//   bidder: string;
-//   amount: number;
-//   blockTimestamp: number;
-// }
+import { transformTitle } from '@/utilities/strings';
 
 interface Props {
   auctionId: number;
   isActive: boolean;
 }
 
-// styles/layout/_game-page.scss
+// styles/components/_games-modal.scss
 export default function BidHistoryTable({ auctionId, isActive }: Props) {
+  const router = useRouter();
   const { data: bids } = useGetBidHistoryQuery(auctionId);
 
-  // const BID_HISTORY_QUERY = gql`
-  //   query GetBidHistory($auctionId: String) {
-  //     auction(id: $auctionId) {
-  //       bids {
-  //         bidder
-  //         amount
-  //         blockTimestamp
-  //       }
-  //     }
-  //   }
-  // `;
-  // const auctionIdHexStr = '0x' + auctionId.toString(16);
-  // const {
-  //   data: graphData,
-  //   previousData,
-  //   startPolling,
-  // } = useQuery(BID_HISTORY_QUERY, {
-  //   variables: { auctionId: auctionIdHexStr },
-  // });
-  // if (!graphData || !graphData.auction || !graphData.auction.bids) return null;
-  // const sortedBids = sortBidHistory(graphData.auction.bids);
-  // startPolling(1000);
+  if (!isActive) return null;
+
+  if (!bids?.length) {
+    return (
+      <div className='games-modal__bid-history-table' data-active={isActive}>
+        <p className='games-modal__bid-history-empty'>No bids yet — be the first.</p>
+      </div>
+    );
+  }
 
   return (
-    <table className='games-modal__bid-history-table' data-active={isActive}>
-      <tbody className='games-modal__bid-history-data'>
-        {bids?.map(({ bidderAddress, bidderUsername, amount, blockTimestamp }) => {
-          // const { amountFormatted, amountFormattedShortened } = formatAmount(amount);
-          const dateTime = new Date(blockTimestamp * 1000).toLocaleString();
-          // const animateFirst: string = previousData ? 'true' : 'false';
-          if (!isActive) return null;
+    <div className='games-modal__bid-history-table' data-active={isActive}>
+      <div className='games-modal__bid-history-data'>
+        {bids.map((bid, i) => {
+          const dateTime = new Date(bid.blockTimestamp * 1000).toLocaleString();
+          const name = bid.bidderUsername
+            ? transformTitle(bid.bidderUsername)
+            : shortenAddress(bid.bidderAddress);
           return (
-            <tr className='games-modal__bid-history-row' key={amount} data-animate-first={'true'}>
-              <th data-col='time' className='games-modal__bid-history-cell'>
-                {dateTime}
-              </th>
-              <th data-col='bidder' className='games-modal__bid-history-cell'>
-                {bidderUsername ? bidderUsername : bidderAddress}
-              </th>
-              <th data-col='amount' className='games-modal__bid-history-cell'>
-                {amount} SAGE
-              </th>
-            </tr>
+            <button
+              key={`${bid.bidderAddress}-${bid.blockTimestamp}`}
+              className='games-modal__bid-history-row'
+              data-leading={i === 0}
+              onClick={(e) => {
+                e.stopPropagation();
+                // wallet-keyed — resolves for every bidder even without a
+                // marketplace username (the /creators/[username] route can't)
+                router.push(`/social/${bid.bidderAddress}`);
+              }}
+            >
+              <span className='games-modal__bid-history-avatar'>
+                <PfpImage src={bid.bidderProfilePicture} />
+              </span>
+              <span className='games-modal__bid-history-bidder'>{name}</span>
+              <span className='games-modal__bid-history-time'>{dateTime}</span>
+              <span className='games-modal__bid-history-amount'>
+                {bid.amount} {bid.currency}
+              </span>
+            </button>
           );
         })}
-      </tbody>
-    </table>
+      </div>
+    </div>
   );
 }
-
-const isEthAddress = (value: string): boolean => {
-  try {
-    ethers.utils.getAddress(value);
-    return true;
-  } catch (e) {
-    return false;
-  }
-};
-
-function formatAmount(amount: any) {
-  const amountString = String(amount);
-  const amountBigNumber = ethers.BigNumber.from(amountString);
-  const amountFormatted = ethers.utils.formatUnits(amountBigNumber);
-  const amountFormattedShortened = parseFloat(amountFormatted).toFixed(6);
-  return { amountFormatted, amountFormattedShortened };
-}
-
-// function sortBidHistory(bidHistory: BidHistoryItem[]) {
-//   const bidHistoryCopy = [...bidHistory];
-//   function inDescendingAmountOrder(a: BidHistoryItem, b: BidHistoryItem) {
-//     return +b.amount - +a.amount;
-//   }
-//   const sorted = bidHistoryCopy.sort(inDescendingAmountOrder);
-//   const firstTen = sorted.slice(0, 10);
-//   return firstTen;
-// }

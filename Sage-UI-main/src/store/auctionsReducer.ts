@@ -23,6 +23,15 @@ export interface AuctionState {
   timeExtension: number;
 }
 
+export interface BidHistoryRow {
+  amount: number;
+  bidderAddress: string;
+  bidderUsername: string | null;
+  bidderProfilePicture: string | null;
+  blockTimestamp: number;
+  currency: 'ETH' | 'SAGE';
+}
+
 const auctionsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (builder) => ({
@@ -53,7 +62,7 @@ const auctionsApi = baseApi.injectEndpoints({
         `auctions?action=GetNftByAuctionAndWinner&auctionId=${auctionId}&winner=${walletAddress}`,
       providesTags: ['Auction'],
     }),
-    getBidHistory: builder.query<[], number>({
+    getBidHistory: builder.query<BidHistoryRow[], number>({
       query: (auctionId) => `auctions?action=GetBidHistory&auctionId=${auctionId}`,
       providesTags: ['AuctionState'],
     }),

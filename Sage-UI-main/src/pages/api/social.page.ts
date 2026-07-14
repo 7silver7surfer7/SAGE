@@ -351,19 +351,37 @@ async function attachDropTiming(serialized: any[]): Promise<any[]> {
     where: { id: { in: dropIds } },
     select: {
       id: true,
-      Auctions: { select: { id: true, endTime: true }, take: 1 },
-      OpenEditions: { select: { endTime: true }, take: 1 },
+      Auctions: { select: { id: true, endTime: true, contractAddress: true }, take: 1 },
+      OpenEditions: { select: { endTime: true, contractAddress: true }, take: 1 },
+      Lotteries: { select: { contractAddress: true }, take: 1 },
+      CollectionMints: { select: { contractAddress: true }, take: 1 },
     },
   });
   const byId = new Map(drops.map((d) => [d.id, d]));
   for (const p of serialized) {
-    const d = p.dropId ? byId.get(p.dropId) : null;
-    if (!d) continue;
-    p.dropAuctionId = d.Auctions[0]?.id ?? null;
+    if (!p.dropId) continue;
+    const d = byId.get(p.dropId);
+    // The drop was deleted, or its self-serve deploy never finished (an
+    // aborted launch can leave the FEED POST behind even though the drop
+    // itself has no live game) — strip the drop fields so the card renders
+    // as a plain post instead of a CTA that 404s.
+    const hasDeployedGame =
+      !!d &&
+      (!!d.Auctions[0]?.contractAddress ||
+        !!d.OpenEditions[0]?.contractAddress ||
+        !!d.Lotteries[0]?.contractAddress ||
+        !!d.CollectionMints[0]?.contractAddress);
+    if (!hasDeployedGame) {
+      p.dropId = null;
+      p.dropKind = null;
+      p.dropPrice = null;
+      continue;
+    }
+    p.dropAuctionId = d!.Auctions[0]?.id ?? null;
     p.dropEndTime =
       p.dropKind === 'auction'
-        ? d.Auctions[0]?.endTime ?? null
-        : d.OpenEditions[0]?.endTime ?? null;
+        ? d!.Auctions[0]?.endTime ?? null
+        : d!.OpenEditions[0]?.endTime ?? null;
   }
   return serialized;
 }

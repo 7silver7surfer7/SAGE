@@ -35,6 +35,12 @@ model Drop {
   // "ETH" (native). Chosen at creation, baked into the game contracts at
   // deploy (on-chain: address(0) = SAGE, the 0xEeee..EEeE sentinel = ETH).
   currency                         String      @default("SAGE")
+  // True for drops created through the SAGE Social self-serve launcher
+  // (storage:'filebase' at creation) — distinguishes them from admin-curated
+  // marketplace drops so their primary-sale split can differ (99% artist /
+  // 1% platform vs the marketplace default) without touching the shared
+  // SageConfig dial that marketplace drops still use.
+  isSocial                          Boolean     @default(false)
   // Allowlist gating: when enabled, only wallets in AllowlistEntries may
   // mint/bid/buy (on-chain via a per-drop SageWhitelist contract for open
   // editions + lotteries; UI-gate for auctions). Editable pre- and post-deploy.

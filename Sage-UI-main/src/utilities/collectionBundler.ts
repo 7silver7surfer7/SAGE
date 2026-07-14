@@ -119,7 +119,7 @@ function naturalCompare(a: string, b: string): number {
  * RAM) — unzipper reads the central directory, then streams one entry at a
  * time on demand.
  */
-async function openZipFromUrl(zipUrl: string) {
+export async function openZipFromUrl(zipUrl: string) {
   const head = await fetch(zipUrl, { method: 'HEAD' });
   if (!head.ok) throw new Error(`staged zip not readable (HTTP ${head.status})`);
   const totalSize = Number(head.headers.get('content-length') || 0);

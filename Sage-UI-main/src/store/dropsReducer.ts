@@ -23,6 +23,13 @@ import { uploadFileToS3 } from '@/utilities/awsS3-client';
 import { dropProgress } from '@/utilities/dropProgress';
 import { isVideoSrc } from '@/utilities/media';
 
+// SAGE Social's primary-sale split: 99% artist / 1% platform — distinct from
+// the shared marketplace SageConfig dial (default 80/20). Applied to a
+// social drop's game(s) right after creation via each contract's admin
+// setArtistShare-style setter (Auction/OpenEdition/SageCollection all share
+// this frozen-per-game-with-admin-override pattern).
+const SOCIAL_ARTIST_SHARE_BPS = 9900;
+
 export type ArtworkSaleType = 'auction' | 'lottery' | 'openEdition';
 
 export interface NewDropArtwork {
@@ -190,6 +197,7 @@ export const dropsApi = baseApi.injectEndpoints({
                 royaltyPercentage: req.royaltyPercentage,
                 currency: req.currency || 'SAGE',
                 ipGateEnabled: !!req.ipGateEnabled,
+                storage: req.storage || 'arweave',
               },
             })
           );
@@ -1167,6 +1175,14 @@ async function deployCollectionMints(
       `drops?action=UpdateCollectionContractAddress&id=${cm.id}&address=${parameters.COLLECTION_ADDRESS}`
     );
     if ((updated as any)?.error) throw new Error((updated as any).error);
+    if ((drop as any).isSocial) {
+      try {
+        const stx = await contract.setCollectionArtistShare(cm.id, SOCIAL_ARTIST_SHARE_BPS);
+        await stx.wait();
+      } catch (e) {
+        console.warn(`deployCollectionMints() :: could not apply the social rate to collection ${cm.id} — it keeps the marketplace default`, e);
+      }
+    }
   }
 }
 
@@ -1564,6 +1580,20 @@ async function deployAuctions(
       const params = `id=${auctionId}&address=${auctionContract.address}`;
       await fetchWithBQ(`drops?action=UpdateAuctionContractAddress&${params}`);
     }
+    // Social launches get the platform's social rate (99% artist / 1%
+    // platform) instead of the shared marketplace default — stamped
+    // per-auction right after creation so a later change to the marketplace
+    // dial can never drift a social creator's split.
+    if ((drop as any).isSocial) {
+      for (const { auctionId } of createParams) {
+        try {
+          const tx = await auctionContract.setAuctionArtistShare(auctionId, SOCIAL_ARTIST_SHARE_BPS);
+          await tx.wait();
+        } catch (e) {
+          console.warn(`deployAuctions() :: could not apply the social rate to auction ${auctionId} — it keeps the marketplace default`, e);
+        }
+      }
+    }
   }
 }
 
@@ -1672,6 +1702,14 @@ async function deployOpenEditions(
     await tx.wait();
     const params = `id=${oe.id}&address=${openEditionContract.address}`;
     await fetchWithBQ(`drops?action=UpdateOpenEditionContractAddress&${params}`);
+    if ((drop as any).isSocial) {
+      try {
+        const stx = await openEditionContract.setEditionArtistShare(oe.id, SOCIAL_ARTIST_SHARE_BPS);
+        await stx.wait();
+      } catch (e) {
+        console.warn(`deployOpenEditions() :: could not apply the social rate to edition ${oe.id} — it keeps the marketplace default`, e);
+      }
+    }
   }
 }
 

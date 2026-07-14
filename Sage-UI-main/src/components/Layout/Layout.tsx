@@ -45,11 +45,14 @@ export default function Layout({ children, router }: Props) {
       pushToHome();
     }
   }, [isSignedIn, sessionData, walletAddress, isWalletConnected]);
+  // must start CLOSED — this modal is the full-screen mobile nav, and
+  // useModal(true) here made it render open-and-covering-the-page on every
+  // single load at mobile widths (the "gradient covering the screen" reports)
   const {
     closeModal: closeMobileMenu,
     isOpen: isMobileMenuOpen,
     toggleModal: toggleMobileMenu,
-  } = useModal(true);
+  } = useModal(false);
 
   return (
     <React.Fragment>

@@ -4366,7 +4366,7 @@ body:has([class*='__overlay']) .layout {
   border-radius: 50%;
   overflow: hidden;
   flex: 0 0 18px;
-  > div {
+  > span {
     width: 100% !important;
     height: 100% !important;
   }

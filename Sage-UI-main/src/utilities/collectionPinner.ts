@@ -1,6 +1,5 @@
 import sharp from 'sharp';
-import * as unzipper from 'unzipper';
-import { tokenNameFor, PathMap, CollectionProgress } from './collectionBundler';
+import { tokenNameFor, openZipFromUrl, PathMap, CollectionProgress } from './collectionBundler';
 import { uploadBufferToFilebase, uploadJsonToFilebase } from './serverWallet';
 
 /**
@@ -23,7 +22,6 @@ const IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
 const DISPLAY_DIM = 1600;
 const SHARP_MAX_INPUT_PIXELS = 12000 * 12000;
 export const FILEBASE_COLLECTION_MAX_IMAGES = 1000;
-export const FILEBASE_COLLECTION_MAX_ZIP_BYTES = 400 * 1024 * 1024;
 
 export interface PinResult {
   baseUri: string;
@@ -42,13 +40,10 @@ export async function processCollectionZipToFilebase(args: {
 }): Promise<PinResult> {
   const { zipUrl, collectionMintId, dropName, description, siteUrl, onProgress } = args;
 
-  const zipRes = await fetch(zipUrl);
-  if (!zipRes.ok) throw new Error(`staged zip not readable (HTTP ${zipRes.status})`);
-  const zipBuf = Buffer.from(await zipRes.arrayBuffer());
-  if (zipBuf.length > FILEBASE_COLLECTION_MAX_ZIP_BYTES)
-    throw new Error(`zip is ${(zipBuf.length / 1048576).toFixed(0)}MB — Filebase drops cap at 400MB`);
-
-  const dir = await unzipper.Open.buffer(zipBuf);
+  // random-access over the staged S3 zip (HTTP Range requests) — the zip is
+  // NEVER buffered whole, so an 860MB collection processes in constant RAM;
+  // the shared source enforces the 1GB ceiling
+  const dir = await openZipFromUrl(zipUrl);
   const entries = dir.files
     .filter((f) => f.type === 'File' && IMG_EXT.test(f.path) && !f.path.startsWith('__MACOSX'))
     .sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' }));

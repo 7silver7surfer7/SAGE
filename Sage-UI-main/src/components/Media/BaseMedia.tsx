@@ -3,7 +3,7 @@ import DEFAULT_PFP from '@/public/branding/sage-icon.svg';
 import Image, { ImageProps } from 'next/image';
 import Zoom from 'react-medium-image-zoom';
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, CSSProperties } from 'react';
 import { arweaveProxySrc, isVideoSrc, videoPlaybackSrc, videoPosterSrc } from '@/utilities/media';
 // video.js is ~200 kB minified; load it only when a video actually renders
 const VideoJS = dynamic(() => import('./VideoJS'), { ssr: false });
@@ -178,20 +178,38 @@ interface PfpImageProps {
 
 function PfpImage({ src, className }: PfpImageProps) {
   const retryable = useRetryableSrc(arweaveProxySrc(src));
+  // next/image's legacy layout='fill' renders the <img> as position:absolute;
+  // inset:0 with NO wrapper of its own — it relies on the nearest POSITIONED
+  // ancestor to size it. Every call site across the app is expected to
+  // remember `position: relative` on its container, and several didn't (the
+  // pump.fun token cards, bid history rows) — the image then escaped to the
+  // page's static root and rendered full-viewport-sized (the "gradient
+  // covering the whole screen" reports: it was a DiceBear avatar blown up).
+  // Wrapping here guarantees a sized positioning context always exists,
+  // regardless of what the caller's CSS does.
+  const wrapperStyle: CSSProperties = {
+    position: 'relative',
+    width: '100%',
+    height: '100%',
+    display: 'block',
+  };
   if (!src) {
-    // return <Image src={DEFAULT_PROFILE_PICTURE} className={className || 'default-pfp-src'} layout='fill' objectFit='cover' />;
     return (
-      <DEFAULT_PFP className={className || 'default-pfp-src'} layout='fill' objectfit='cover' />
+      <span style={wrapperStyle}>
+        <DEFAULT_PFP className={className || 'default-pfp-src'} layout='fill' objectfit='cover' />
+      </span>
     );
   }
   return (
-    <Image
-      src={retryable.src}
-      onError={retryable.onError}
-      layout='fill'
-      className={className}
-      objectFit='cover'
-    />
+    <span style={wrapperStyle}>
+      <Image
+        src={retryable.src}
+        onError={retryable.onError}
+        layout='fill'
+        className={className}
+        objectFit='cover'
+      />
+    </span>
   );
 }
 

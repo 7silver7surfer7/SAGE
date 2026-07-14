@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import prisma from '@/prisma/client';
 import { getRequester } from '@/utilities/apiAuth';
 import { getUnclaimedAuctionWinner } from '@/utilities/contracts';
+import { isEthCurrency } from '@/constants/config';
 import { Auction_include_Nft, GamePrize, User, Drop } from '@/prisma/types';
 
 interface FlattenArgs {
@@ -84,17 +85,25 @@ async function getBidHistory(auctionId: number, response: NextApiResponse) {
     response.status(500);
   } else {
     const bids = [];
-    const result = await prisma.bidHistory.findMany({
-      where: { auctionId },
-      include: { Bidder: true },
-      orderBy: [{ blockTimestamp: 'desc' }],
-    });
+    const [result, auction] = await Promise.all([
+      prisma.bidHistory.findMany({
+        where: { auctionId },
+        include: { Bidder: true },
+        orderBy: [{ blockTimestamp: 'desc' }],
+      }),
+      prisma.auction.findUnique({ where: { id: auctionId }, include: { Drop: true } }),
+    ]);
+    // the drop's own priced currency — the row was hardcoded to "SAGE"
+    // regardless, so ETH-currency auctions showed the wrong unit
+    const currency = auction && isEthCurrency((auction.Drop as any).currency) ? 'ETH' : 'SAGE';
     for (const row of result) {
       bids.push({
         amount: row.amount,
         bidderAddress: row.bidderAddress,
         bidderUsername: row.Bidder.username,
+        bidderProfilePicture: row.Bidder.profilePicture,
         blockTimestamp: row.blockTimestamp,
+        currency,
       });
     }
     response.json(bids);

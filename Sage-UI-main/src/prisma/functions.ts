@@ -6,6 +6,18 @@ import { BigNumber } from 'ethers';
 // A drop is publicly visible once approved AND its go-live timer (if any) has
 // passed. Must be a function so `new Date()` is evaluated per query, not once
 // at module load.
+// A drop is only showable once at least one of its games actually deployed
+// on-chain — an approved-but-gameless row (an aborted self-serve launch) used
+// to render an UNKNOWN tile that 404'd on click.
+const FilterDropHasDeployedGame: Prisma.DropWhereInput = {
+  OR: [
+    { Auctions: { some: { contractAddress: { not: null } } } },
+    { Lotteries: { some: { contractAddress: { not: null } } } },
+    { OpenEditions: { some: { contractAddress: { not: null } } } },
+    { CollectionMints: { some: { contractAddress: { not: null } } } },
+  ],
+};
+
 function filterDropApprovedOnly(): Prisma.DropWhereInput {
   return {
     approvedAt: { not: null },
@@ -60,7 +72,7 @@ export async function getHomePageData(prisma: PrismaClient) {
     CollectionMints: true as const,
   };
   let drops: Drop_include_GamesAndArtist[] = await prisma.drop.findMany({
-    where: { ...filterDropApprovedOnly() },
+    where: { ...filterDropApprovedOnly(), ...FilterDropHasDeployedGame },
     include: dropIncludes,
     orderBy: { approvedAt: 'desc' },
     take: 8,
@@ -77,7 +89,7 @@ export async function getHomePageData(prisma: PrismaClient) {
   });
 
   const newDrops = await prisma.drop.findMany({
-    where: { ...filterDropApprovedOnly() },
+    where: { ...filterDropApprovedOnly(), ...FilterDropHasDeployedGame },
     select: {
       NftContract: { select: { Artist: { select: { username: true, profilePicture: true } } } },
       Auctions: { select: { Nft: { select: { s3PathOptimized: true, name: true } } } },
@@ -132,6 +144,7 @@ export async function getDropsPageData(prisma: PrismaClient) {
     where: {
       ...FilterDropContractValidation,
       ...filterDropApprovedOnly(),
+      ...FilterDropHasDeployedGame,
     },
     take: 10,
   });
