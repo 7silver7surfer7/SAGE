@@ -42,6 +42,16 @@
   // vertically centers when shorter than the viewport, collapses to 0 when
   // taller so the top stays reachable by scrolling (see .modal__container)
   margin: auto 0;
+  // border-box (this app has no global reset — content-box is the default
+  // everywhere else) so the 40px padding below is INCLUDED in height: 100%
+  // rather than added on top of an already viewport-tall box. Content-box
+  // sizing made the panel render 80px taller than its own fixed-position
+  // container on mobile — a second, independent scroll region stacked on
+  // top of the modal content's own scroll (e.g. .games-modal), which is
+  // exactly the kind of nested-scroll setup that behaves inconsistently on
+  // real mobile Safari even when it looks fine in a desktop-emulated
+  // viewport.
+  box-sizing: border-box;
   @include m.theme() {
     position: relative;
     display: flex;
