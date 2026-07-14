@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { useSigner } from 'wagmi';
-import { burnSage } from '@/utilities/tip';
+import { sendEth } from '@/utilities/tip';
+import { humanWalletError } from '@/utilities/walletError';
 import { useGetBoostInfoQuery, useBoostPostMutation } from '@/store/socialReducer';
 import VerificationModal from './VerificationModal';
 
 /**
  * Twitter-style "Boost post": pick a daily budget and a duration; total =
- * daily × days, burned in SAGE. The boost is SOFT — a sustained lift in the
+ * daily × days in USD, paid in ETH to the SAGE treasury (Uniswap rate). The
+ * boost is SOFT — a sustained lift in the
  * ranked feed that fades over the campaign, not a pin. Higher daily budget =
  * stronger lift; more days = longer campaign.
  */
@@ -21,7 +23,7 @@ export default function BoostModal({ postId, onClose }: { postId: number; onClos
   const [needVerify, setNeedVerify] = useState(false);
 
   const totalUsd = daily * days;
-  const totalSage = info ? Math.ceil(totalUsd * info.sagePerUsd) : 0;
+  const totalEth = info ? Math.ceil((totalUsd / info.ethUsd) * 1e6) / 1e6 : 0;
   // rough reach heuristic for the estimate line — scales with total spend
   const reachLo = Math.round(totalUsd * 20);
   const reachHi = Math.round(totalUsd * 55);
@@ -33,9 +35,9 @@ export default function BoostModal({ postId, onClose }: { postId: number; onClos
     }
     if (!info) return;
     setBusy(true);
-    const t = toast.loading(`Burning ${totalSage} SAGE to boost…`);
+    const t = toast.loading(`Sending ${totalEth} ETH to boost…`);
     try {
-      const txHash = await burnSage(totalSage, signer as any);
+      const txHash = await sendEth(info.treasury, totalEth, signer as any);
       await boostPost({ postId, txHash, dailyUsd: daily, days }).unwrap();
       toast.update(t, {
         render: `Boosted 🔥 — ${days}-day campaign, surging up the feed`,
@@ -50,10 +52,10 @@ export default function BoostModal({ postId, onClose }: { postId: number; onClos
         toast.dismiss(t);
       } else {
         toast.update(t, {
-          render: err?.data?.error || err?.message?.slice(0, 90) || 'Boost failed',
+          render: err?.data?.error || `Boost failed — ${humanWalletError(err, totalEth)}`,
           type: 'error',
           isLoading: false,
-          autoClose: 6000,
+          autoClose: 7000,
         });
       }
     } finally {
@@ -114,17 +116,17 @@ export default function BoostModal({ postId, onClose }: { postId: number; onClos
               {reachLo.toLocaleString()}–{reachHi.toLocaleString()}
             </b>{' '}
             <span className='social-boost__muted'>
-              ${totalUsd} total · {totalSage} SAGE
+              ${totalUsd} total · {totalEth} ETH
             </span>
           </span>
         </div>
 
         <button className='social-boost__cta' disabled={busy || !info} onClick={go}>
-          {busy ? 'Boosting…' : `Boost — burn ${totalSage} SAGE`}
+          {busy ? 'Boosting…' : `Boost — ${totalEth} ETH ($${totalUsd})`}
         </button>
         <p className='social-verify__fine'>
-          Burned SAGE is gone forever. The boost competes in the ranked feed — genuinely popular
-          posts can still out-rank it.
+          Paid to the SAGE treasury at the live Uniswap ETH rate. The boost competes in the
+          ranked feed — genuinely popular posts can still out-rank it.
         </p>
       </div>
     </div>

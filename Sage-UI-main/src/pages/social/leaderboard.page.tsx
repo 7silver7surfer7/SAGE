@@ -12,7 +12,7 @@ const BOARDS = [
   ['topPoints', 'Top points', 'net pixels — earned holding SAGE, spent/earned collecting posts'],
   ['topEarners', 'Top earners', 'SAGE tipped to their posts'],
   ['topTippers', 'Top tippers', 'SAGE they tipped to others'],
-  ['topBurners', 'Top burners', 'SAGE burned boosting posts'],
+  ['topBurners', 'Top boosters', 'ETH spent boosting posts'],
   ['mostFollowed', 'Most followed', 'followers'],
 ] as const;
 

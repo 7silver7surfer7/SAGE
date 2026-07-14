@@ -421,7 +421,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
           <span className='social-post__dot'>·</span>
           <span className='social-post__time'>{timeAgo(post.createdAt)}</span>
           {post.isBoosted && (
-            <span className='social-post__boosted-chip' title={`${post.boostBurned} SAGE burned`}>
+            <span className='social-post__boosted-chip' title={`${post.boostBurned} ETH spent boosting`}>
               <FlameIcon /> Boosted
             </span>
           )}
@@ -555,7 +555,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             className='social-post__action social-post__action--boost'
             onClick={onBoost}
             disabled={busy}
-            title='Burn SAGE to boost'
+            title='Boost this post (ETH)'
           >
             <FlameIcon />
             {post.boostBurned > 0 && <span>{post.boostBurned}</span>}

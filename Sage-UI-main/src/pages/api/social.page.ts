@@ -940,13 +940,28 @@ async function boostSagePerUsd(): Promise<number> {
   return rate;
 }
 
+// ETH/USD from Uniswap (5-min cache) — boosts are priced in dollars, paid in ETH
+let boostEthUsdCache: { rate: number; at: number } | null = null;
+async function boostEthUsd(): Promise<number> {
+  if (boostEthUsdCache && Date.now() - boostEthUsdCache.at < 300_000) return boostEthUsdCache.rate;
+  let rate = 3500; // fallback if every feed is down
+  try {
+    rate = await (await import('@/utilities/sagePrice')).getEthUsd();
+  } catch {
+    /* keep fallback */
+  }
+  boostEthUsdCache = { rate, at: Date.now() };
+  return rate;
+}
+
 async function getBoostInfo(res: NextApiResponse) {
   res.json({
     dailyMinUsd: BOOST_DAILY_MIN_USD,
     dailyMaxUsd: BOOST_DAILY_MAX_USD,
     daysMin: BOOST_DAYS_MIN,
     daysMax: BOOST_DAYS_MAX,
-    sagePerUsd: await boostSagePerUsd(),
+    ethUsd: await boostEthUsd(),
+    treasury: TREASURY_ADDRESS,
   });
 }
 
@@ -964,14 +979,15 @@ async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletA
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
 
-  // total = daily × days, burned in SAGE (5% price-drift tolerance)
+  // total = daily × days in USD, PAID IN ETH to the treasury (Uniswap rate,
+  // 5% price-drift tolerance)
   const totalUsd = daily * nDays;
-  const requiredSage = totalUsd * (await boostSagePerUsd());
+  const requiredEth = totalUsd / (await boostEthUsd());
   let amount: number;
   try {
-    amount = await verifySageTransfer(txHash, r.walletAddress, DEAD_ADDRESS, requiredSage * 0.95);
+    amount = await verifyPayment(txHash, r.walletAddress, TREASURY_ADDRESS, requiredEth * 0.95, 'ETH');
   } catch (e: any) {
-    return res.status(400).json({ error: `burn not verified: ${e.message}` });
+    return res.status(400).json({ error: `payment not verified: ${e.message}` });
   }
 
   // strength scales with the DAILY budget (how strong), window with the
@@ -993,7 +1009,7 @@ async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletA
       }),
     ]);
   } catch {
-    return res.status(400).json({ error: 'this burn was already credited' });
+    return res.status(400).json({ error: 'this payment was already credited' });
   }
   res.json({ ok: true, amount, boostedUntil, days: nDays });
 }

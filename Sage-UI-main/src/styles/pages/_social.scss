@@ -3574,7 +3574,8 @@ body:has([class*='__overlay']) .layout {
   flex-wrap: wrap;
 }
 
-/* keep header-row actions (＋ New message) clear of the fixed hamburger */
+/* keep header-row actions (＋ New message, 🚀 Launch yours) clear of the
+   fixed hamburger (.mobile-menu__toggle sits ~40px from the right edge) */
 .social__header--row {
-  padding-right: 64px;
+  padding-right: 96px;
 }

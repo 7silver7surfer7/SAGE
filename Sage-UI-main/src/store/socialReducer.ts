@@ -283,7 +283,14 @@ const socialApi = baseApi.injectEndpoints({
       query: () => ({ url: 'social?action=GetVerificationInfo' }),
     }),
     getBoostInfo: builder.query<
-      { dailyMinUsd: number; dailyMaxUsd: number; daysMin: number; daysMax: number; sagePerUsd: number },
+      {
+        dailyMinUsd: number;
+        dailyMaxUsd: number;
+        daysMin: number;
+        daysMax: number;
+        ethUsd: number;
+        treasury: string;
+      },
       void
     >({
       query: () => ({ url: 'social?action=GetBoostInfo' }),
