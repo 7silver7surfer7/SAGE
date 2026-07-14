@@ -1922,11 +1922,26 @@ body:has([class*='__overlay']) .layout {
     gap: 10px;
     margin: 6px 0 18px;
   }
+  &__input-wrap {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+  }
+  &__bar-icon {
+    position: absolute;
+    left: 16px;
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+    opacity: 0.45;
+  }
   &__input {
     flex: 1;
+    width: 100%;
     background: transparent;
     border-radius: 999px;
-    padding: 10px 18px;
+    padding: 10px 18px 10px 42px;
     font-family: inherit;
     font-size: 0.95rem;
     outline: none;
@@ -4310,8 +4325,10 @@ body:has([class*='__overlay']) .layout {
     border: 1px solid rgba(m.t(contrast), 0.12);
   }
   &__icon {
+    display: flex;
+    align-items: center;
     opacity: 0.5;
-    font-size: 0.9rem;
+    @include m.theme() { color: m.t(contrast); }
   }
   input {
     flex: 1;

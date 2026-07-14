@@ -621,7 +621,7 @@ async function getUserPosts(address: string, req: NextApiRequest, res: NextApiRe
   const viewer = canon((await getRequester(req))?.walletAddress);
   const [posts, author] = await Promise.all([
     prisma.socialPost.findMany({
-      where: { authorAddress: addr, replyToId: null, deletedAt: null },
+      where: { authorAddress: addr, replyToId: null, deletedAt: null, Author: { bannedAt: null } },
       include: postInclude(viewer),
       orderBy: { id: 'desc' },
       take: 40,
@@ -1782,6 +1782,24 @@ async function inviteImage(code: string, res: NextApiResponse) {
 
 // ─────────────────────────── leaderboard / activity / mints ───────────────────────────
 
+/** Drop rows belonging to banned wallets — leaderboards/tickers read from
+ * aggregate/groupBy queries over raw address columns (no User relation to
+ * filter through directly), so this runs as a post-pass against the small
+ * candidate set instead. */
+async function excludeBanned<T>(rows: T[], addressOf: (r: T) => string): Promise<T[]> {
+  const addrs = Array.from(new Set(rows.map(addressOf)));
+  if (!addrs.length) return rows;
+  const banned = new Set(
+    (
+      await prisma.user.findMany({
+        where: { walletAddress: { in: addrs }, bannedAt: { not: null } },
+        select: { walletAddress: true },
+      })
+    ).map((u) => u.walletAddress)
+  );
+  return banned.size ? rows.filter((r) => !banned.has(addressOf(r))) : rows;
+}
+
 async function userCards(addresses: string[]) {
   const users = await prisma.user.findMany({
     where: { walletAddress: { in: addresses } },
@@ -1860,6 +1878,7 @@ async function getLeaderboardBoard(req: NextApiRequest, res: NextApiResponse) {
   } else {
     return res.status(400).json({ error: 'unknown board' });
   }
+  rows = await excludeBanned(rows, (r) => r.address);
   const cards = await userCards(rows.map((r) => r.address));
   res.json({
     rows: rows.map((r) => ({
@@ -1902,23 +1921,30 @@ async function getLeaderboard(res: NextApiResponse) {
     prisma.socialCollect.aggregate({ _sum: { amount: true }, where: { currency: 'ETH' } }),
     prisma.socialCollect.aggregate({ _sum: { pointsSpent: true } }),
   ]);
+  const [tippedOk, tippersOk, burnersOk, followedOk, pointsPoolOk] = await Promise.all([
+    excludeBanned(tipped, (t) => t.toAddress),
+    excludeBanned(tippers, (t) => t.fromAddress),
+    excludeBanned(burners, (b) => b.fromAddress),
+    excludeBanned(followed, (f) => f.followingAddress),
+    excludeBanned(pointsPool, (p) => p.address),
+  ]);
   const cards = await userCards([
-    ...pointsPool.map((p) => p.address),
-    ...tipped.map((t) => t.toAddress),
-    ...tippers.map((t) => t.fromAddress),
-    ...burners.map((b) => b.fromAddress),
-    ...followed.map((f) => f.followingAddress),
+    ...pointsPoolOk.map((p) => p.address),
+    ...tippedOk.map((t) => t.toAddress),
+    ...tippersOk.map((t) => t.fromAddress),
+    ...burnersOk.map((b) => b.fromAddress),
+    ...followedOk.map((f) => f.followingAddress),
   ]);
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
   res.json({
-    topEarners: tipped.map((t) => ({ user: cards[t.toAddress], sage: t._sum.amount || 0 })),
-    topTippers: tippers.map((t) => ({ user: cards[t.fromAddress], sage: t._sum.amount || 0 })),
-    topBurners: burners.map((b) => ({ user: cards[b.fromAddress], sage: b._sum.amount || 0 })),
-    mostFollowed: followed.map((f) => ({
+    topEarners: tippedOk.map((t) => ({ user: cards[t.toAddress], sage: t._sum.amount || 0 })),
+    topTippers: tippersOk.map((t) => ({ user: cards[t.fromAddress], sage: t._sum.amount || 0 })),
+    topBurners: burnersOk.map((b) => ({ user: cards[b.fromAddress], sage: b._sum.amount || 0 })),
+    mostFollowed: followedOk.map((f) => ({
       user: cards[f.followingAddress],
       count: f._count._all,
     })),
-    topPoints: pointsPool.map((p) => ({ user: cards[p.address], count: Number(p.net) })),
+    topPoints: pointsPoolOk.map((p) => ({ user: cards[p.address], count: Number(p.net) })),
     stats: {
       totalUsers,
       tokenVolumeEth: tokenVol._sum.ethAmount || 0,
@@ -2200,6 +2226,7 @@ async function search(q: string, req: NextApiRequest, res: NextApiResponse) {
   const [users, posts] = await Promise.all([
     prisma.user.findMany({
       where: {
+        bannedAt: null,
         OR: [
           { username: { contains: query, mode: 'insensitive' } },
           { walletAddress: { startsWith: query, mode: 'insensitive' } },
@@ -2209,7 +2236,7 @@ async function search(q: string, req: NextApiRequest, res: NextApiResponse) {
       take: 10,
     }),
     prisma.socialPost.findMany({
-      where: { text: { contains: query, mode: 'insensitive' }, deletedAt: null },
+      where: { text: { contains: query, mode: 'insensitive' }, deletedAt: null, Author: { bannedAt: null } },
       include: postInclude(viewer),
       orderBy: { id: 'desc' },
       take: 20,
@@ -2255,13 +2282,27 @@ async function getGlobalActivity(res: NextApiResponse) {
     currency?: string;
     createdAt: Date;
   };
-  const events: Ev[] = [
+  const rawEvents: Ev[] = [
     ...tips.map((t) => ({ type: 'tip', actor: t.fromAddress, target: t.toAddress, postId: t.postId, amount: t.amount, currency: t.currency, createdAt: t.createdAt })),
     ...collects.map((c) => ({ type: 'collect', actor: c.collectorAddress, target: c.Post.authorAddress, postId: c.postId, amount: c.amount, currency: c.currency, createdAt: c.createdAt })),
     ...boosts.map((b) => ({ type: 'boost', actor: b.fromAddress, postId: b.postId, amount: b.amount, currency: 'SAGE', createdAt: b.createdAt })),
     ...follows.map((f) => ({ type: 'follow', actor: f.followerAddress, target: f.followingAddress, createdAt: f.createdAt })),
     ...posts.map((p) => ({ type: 'post', actor: p.authorAddress, postId: p.id, createdAt: p.createdAt })),
-  ]
+  ];
+  // these tables store bare wallet addresses, not a User relation — filter
+  // out banned actors/targets against the candidate set before slicing to 20,
+  // so a ban doesn't just get backfilled by whichever event ranks 21st
+  const involved = Array.from(new Set(rawEvents.flatMap((e) => [e.actor, e.target]).filter(Boolean))) as string[];
+  const banned = new Set(
+    (
+      await prisma.user.findMany({
+        where: { walletAddress: { in: involved }, bannedAt: { not: null } },
+        select: { walletAddress: true },
+      })
+    ).map((u) => u.walletAddress)
+  );
+  const events: Ev[] = rawEvents
+    .filter((e) => !banned.has(e.actor) && !(e.target && banned.has(e.target)))
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
     .slice(0, 20);
   const cards = await userCards([

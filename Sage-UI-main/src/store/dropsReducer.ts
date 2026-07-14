@@ -1210,12 +1210,34 @@ async function verifyDropMediaRetrievable(drop: DropFull) {
   // the on-chain tokenURI depends on Arweave — so the gate stays strict.
   for (const cm of drop.CollectionMints ?? []) {
     if (cm.contractAddress) continue; // already deployed in a previous run
-    if (cm.status !== 'done' || !cm.manifestId || !cm.pathMap) {
+    // Filebase collections (isSocial) never get a manifestId — that's an
+    // Arweave-bundle concept, and processCollectionZipToFilebase() only ever
+    // sets baseUri/pathMap. Requiring it here made every healthy, fully-"done"
+    // Filebase ZIP collection look unprocessed and block the deploy forever.
+    const isFilebase = !!(drop as any).isSocial;
+    if (cm.status !== 'done' || !cm.pathMap || (!isFilebase && !cm.manifestId)) {
       throw new Error(
         `Collection #${cm.id} hasn't finished processing (status: ${cm.status}) — nothing was minted on-chain.`
       );
     }
     const map = JSON.parse(cm.pathMap);
+    if (isFilebase) {
+      // Filebase pins are immediately retrievable (no Arweave-style gateway
+      // propagation lag) — a HEAD on the preview image is enough of a sanity
+      // check; the txid-oriented verifier below doesn't apply to IPFS URLs.
+      await dropProgress.track(`Verifying collection pinned to Filebase`, async () => {
+        const firstImg = map['1']?.img;
+        if (!firstImg) return;
+        const res = await fetch(firstImg, { method: 'HEAD' }).catch(() => null);
+        if (!res || !res.ok) {
+          throw new Error(
+            `The first image isn't retrievable from Filebase yet (${res ? `HTTP ${res.status}` : 'network error'}). ` +
+              `Nothing was minted on-chain — re-approve in a moment.`
+          );
+        }
+      });
+      continue;
+    }
     const checks = [
       { label: 'collection manifest', txid: cm.manifestId },
       { label: 'first token metadata', txid: map['1']?.json },

@@ -247,10 +247,20 @@
 
 .games-modal__countdown--float {
   @include countdown;
-  background: transparent;
+  // Sits over arbitrary artwork, not app chrome — a themed background could
+  // land invisible against a light painting (the bug report: it looked like
+  // it was floating disconnected at the bottom). A dark chip pinned to the
+  // top corner reads as a clear "time left" badge over any image.
   position: absolute;
-  bottom: 50px;
-  right: 20px;
+  top: 16px;
+  right: 16px;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 20px;
+  backdrop-filter: blur(2px);
 }
 
 .games-modal__countdown-label {

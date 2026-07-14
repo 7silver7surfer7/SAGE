@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import LoaderDots from '@/components/LoaderDots';
 import SocialShell from '@/components/Social/SocialShell';
+import SearchIcon from '@/components/Icons/SearchIcon';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
@@ -82,7 +83,7 @@ export default function TokensPage() {
           </button>
         </header>
         <div className='pump-search'>
-          <span className='pump-search__icon'>🔍</span>
+          <span className='pump-search__icon'><SearchIcon size={15} /></span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}

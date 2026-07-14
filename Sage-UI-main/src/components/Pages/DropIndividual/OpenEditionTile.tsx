@@ -3,6 +3,7 @@ import useCountdown from '@/hooks/useCountdown';
 import useModal from '@/hooks/useModal';
 import MintOpenEditionModal from '@/components/Modals/Games/MintOpenEditionModal';
 import { OpenEdition_include_Nft, User } from '@/prisma/types';
+import shortenAddress from '@/utilities/shortenAddress';
 import Media from './Media';
 
 interface Props {
@@ -47,7 +48,7 @@ export default function OpenEditionTile({ artist, dropName, openEdition, classNa
       <div className='drop-page__grid-item-info'>
         <div className='drop-page__grid-item-info-left'>
           <h1 className='drop-page__grid-item-info-drop-name'>
-            {dropName} by {artist.username}
+            {dropName} by {artist.username || shortenAddress(artist.walletAddress)}
           </h1>
           <h1 className='drop-page__grid-item-info-game-name'>{openEdition.Nft.name}</h1>
         </div>

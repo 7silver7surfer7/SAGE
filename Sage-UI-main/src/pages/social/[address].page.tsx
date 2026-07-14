@@ -382,9 +382,7 @@ export default function SocialProfilePage() {
             <b>{profile.followGatedDrops.map((d) => d.name).join(', ')}</b>
           </div>
         )}
-        <TokenPanel address={profile.address} isSelf={profile.isSelf} followers={[]} />
         <EditionPanel address={profile.address} isSelf={profile.isSelf} />
-        {profile.isSelf && <ReferCard />}
         {profile.isSelf && profile.myDrops.length > 0 && (
           <div className='social-profile__gates'>
             <h4>Follow-to-allowlist</h4>

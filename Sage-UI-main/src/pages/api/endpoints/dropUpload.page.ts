@@ -1135,11 +1135,15 @@ async function deleteNft(nftId: number, request: NextApiRequest, response: NextA
     response.status(401).end('Not Authenticated');
     return;
   }
+  // Prisma treats `undefined` as "omit this filter," not "match null" — this
+  // guard is meant to restrict deletion to un-minted placeholder rows only,
+  // so it must be an explicit `null` or it silently deletes ANY row by id,
+  // including ones a collector already owns.
   await prisma.nft.deleteMany({
     where: {
       id: nftId,
       artistAddress: walletAddress as string,
-      ownerAddress: undefined,
+      ownerAddress: null,
     },
   });
 }

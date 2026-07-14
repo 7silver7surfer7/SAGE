@@ -688,7 +688,10 @@ const socialApi = baseApi.injectEndpoints({
     // postId omitted → unpin
     pinPost: builder.mutation<{ ok: boolean; pinnedPostId: number | null }, { postId?: number }>({
       query: (body) => ({ url: 'social?action=PinPost', method: 'POST', body }),
-      invalidatesTags: ['SocialProfile'],
+      // 'SocialFeed' covers getUserPosts (the per-post isPinned flag the
+      // profile actually renders) — 'SocialProfile' alone only refreshes the
+      // header (pinnedPostId), leaving the stale badge until a manual reload.
+      invalidatesTags: ['SocialProfile', 'SocialFeed'],
     }),
     // admin-only platform takedown/restore — see banUser() in social.page.ts
     banUser: builder.mutation<

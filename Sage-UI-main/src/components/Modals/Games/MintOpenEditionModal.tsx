@@ -10,6 +10,7 @@ import MinusSVG from '@/public/icons/minus.svg';
 import SageFullLogo from '@/public/branding/sage-full-logo.svg';
 import CloseSVG from '@/public/interactive/close.svg';
 import { OpenEdition_include_Nft, User } from '@/prisma/types';
+import shortenAddress from '@/utilities/shortenAddress';
 import { parameters } from '@/constants/config';
 import { useGetEarnedPointsQuery } from '@/store/pointsReducer';
 import { dropsApi, useGetOpenEditionMintCountQuery } from '@/store/dropsReducer';
@@ -223,7 +224,7 @@ export default function MintOpenEditionModal({
             </div>
             <div className='games-modal__main-content'>
               <span className='games-modal__drop-name'>
-                {dropName} by {artist.username}
+                {dropName} by {artist.username || shortenAddress(artist.walletAddress)}
                 <span className='games-modal__editions-tag--mobile'>{mintedCount} minted</span>
               </span>
               <p className='games-modal__game-name'>{openEdition.Nft.name}</p>

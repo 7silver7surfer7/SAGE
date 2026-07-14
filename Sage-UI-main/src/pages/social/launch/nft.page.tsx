@@ -74,6 +74,28 @@ export default function LaunchNftPage() {
 
   const isZip = kind === 'zip';
 
+  /** A real teaser — what it is, what it costs, when it ends — not a vague "watch this space." */
+  const teaseDraft = () => {
+    const priceLine =
+      Number(price) > 0
+        ? kind === 'auction'
+          ? `reserve ${price} ETH`
+          : `${price} ETH each`
+        : 'free mint';
+    const formatLine =
+      kind === 'auction'
+        ? `🔨 Auction — ${priceLine}, ${durationHours}h once the first bid lands.`
+        : kind === 'openEdition'
+        ? `◎ Open edition — ${priceLine}${Number(maxPerUser) > 0 ? `, ${maxPerUser} per wallet` : ''}, live ${durationHours}h.`
+        : `🗂 Collection — ${priceLine}, open until it sells out.`;
+    const link = liveDropId && typeof window !== 'undefined' ? `${window.location.origin}/drops/${liveDropId}` : '';
+    return (
+      `"${title}" is live 🎨\n${formatLine}` +
+      (followersOnly ? '\nFollow me to get on the allowlist.' : '') +
+      (link ? `\n${link}` : '')
+    );
+  };
+
   const submitDrop = async () => {
     if (!addr) {
       toast.info('Connect your wallet first');
@@ -200,13 +222,7 @@ export default function LaunchNftPage() {
               <button
                 className='social-verify__buy'
                 onClick={() =>
-                  router.push(
-                    `/social/compose?draft=${encodeURIComponent(
-                      `Something new is coming: “${title}” 🎨 ${
-                        followersOnly ? 'Follow me to get on the allowlist — ' : ''
-                      }watch this space.`
-                    )}`
-                  )
+                  router.push(`/social/compose?draft=${encodeURIComponent(teaseDraft())}`)
                 }
               >
                 Tease it on your feed

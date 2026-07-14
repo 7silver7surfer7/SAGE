@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import LoaderDots from '@/components/LoaderDots';
 import SocialShell from '@/components/Social/SocialShell';
+import SearchIcon from '@/components/Icons/SearchIcon';
 import PostCard from '@/components/Social/PostCard';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
@@ -23,16 +24,19 @@ export default function SocialSearchPage() {
           <p className='social__subtitle'>find wallets, artists and posts</p>
         </header>
         <div className='social-search__bar'>
-          <input
-            className='social-search__input'
-            placeholder='Search usernames, addresses, posts…'
-            value={input}
-            autoFocus
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') setQuery(input.trim());
-            }}
-          />
+          <div className='social-search__input-wrap'>
+            <span className='social-search__bar-icon'><SearchIcon size={16} /></span>
+            <input
+              className='social-search__input'
+              placeholder='Search usernames, addresses, posts…'
+              value={input}
+              autoFocus
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') setQuery(input.trim());
+              }}
+            />
+          </div>
           <button
             className='social-composer__submit'
             disabled={input.trim().length < 2}
