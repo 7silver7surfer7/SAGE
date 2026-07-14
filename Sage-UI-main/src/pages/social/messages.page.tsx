@@ -116,7 +116,7 @@ export default function MessagesPage() {
   const router = useRouter();
   const { isSignedIn, userData } = useSAGEAccount();
   const viewerVerified =
-    !!(userData as any)?.verifiedAt || (userData as any)?.role === 'ADMIN';
+    !!(userData as any)?.verifiedAt;
   const [composeOpen, setComposeOpen] = useState(false);
   const [showVerify, setShowVerify] = useState(false);
   const { data, isFetching } = useGetConversationsQuery(undefined, {

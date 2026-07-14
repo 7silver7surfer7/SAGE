@@ -35,7 +35,7 @@ export default function TokenDetailPage() {
   const provider = useProvider();
   const { data, isFetching } = useGetTokenDetailQuery(address, {
     skip: !address,
-    pollingInterval: 8_000,
+    pollingInterval: 1_000, // live like pump.fun — every second
   });
   const [recordTrade] = useRecordTradeMutation();
   const [createPost] = useCreatePostMutation();

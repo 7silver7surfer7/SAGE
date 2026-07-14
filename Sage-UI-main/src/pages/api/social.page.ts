@@ -377,7 +377,9 @@ async function requireVerified(wallet: string, res: NextApiResponse): Promise<bo
     where: { walletAddress: wallet },
     select: { role: true, verifiedAt: true },
   });
-  if (u && (u.verifiedAt || u.role === Role.ADMIN)) return true;
+  // no admin free-ride: the checkmark is PAID for, full stop — admins see the
+  // same paywall as everyone (per founder: 'I should be prompted to verify')
+  if (u?.verifiedAt) return true;
   res.status(403).json({
     error: 'This is a premium feature — get verified to unlock it',
     needsVerification: true,
@@ -2425,7 +2427,8 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
   const INITIAL_REAL = 793_100_000; // pump.fun-shaped initial real reserves
   const soldPct = curve ? Math.min(100, ((INITIAL_REAL - curve.realTokenReserves) / INITIAL_REAL) * 100) : 0;
 
-  res.setHeader('Cache-Control', 'public, s-maxage=15, stale-while-revalidate=60');
+  // live trading view (1s client poll) — a CDN cache here would freeze the tape
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     token: {
       tokenAddress: launch.tokenAddress,

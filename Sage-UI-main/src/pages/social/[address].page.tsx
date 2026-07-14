@@ -129,7 +129,7 @@ export default function SocialProfilePage() {
   const address = (router.query.address as string) || '';
   const { isSignedIn, userData } = useSAGEAccount();
   const viewerVerified =
-    !!(userData as any)?.verifiedAt || (userData as any)?.role === 'ADMIN';
+    !!(userData as any)?.verifiedAt;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);

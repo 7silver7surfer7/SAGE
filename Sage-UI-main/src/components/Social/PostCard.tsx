@@ -168,7 +168,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const authorLc = post.author.address.toLowerCase();
   const myAddress = (walletAddress || (userData as any)?.walletAddress || '').toLowerCase();
   const isOwnPost = !!myAddress && myAddress === authorLc;
-  const viewerVerified = !!(userData as any)?.verifiedAt || (userData as any)?.role === 'ADMIN';
+  const viewerVerified = !!(userData as any)?.verifiedAt;
 
   const requireAuth = () => {
     if (!isSignedIn) {
