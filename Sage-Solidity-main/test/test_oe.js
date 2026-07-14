@@ -69,6 +69,10 @@ describe("OpenEdition Contract", function() {
             ethers.utils.solidityKeccak256(["string"], ["role.minter"]),
             openEdition.address
         );
+        // codehash reference for onlyAdminOrArtist's artist branch — nft
+        // (deployed via NFTFactory above) is a genuine SageNFT, so it's a
+        // valid stand-in regardless of which artist it belongs to
+        await openEdition.setTrustedNftReference(nftContractAddress);
         await sageStorage.revokeRole('0x0000000000000000000000000000000000000000000000000000000000000000', owner.address);
 
         Whitelist = await ethers.getContractFactory("Whitelist");
@@ -258,6 +262,15 @@ describe("OpenEdition Contract", function() {
         // artist === addr1 in this suite's fixture
         const info = { ...openEditionInfo, id: 99 };
         await expect(openEdition.connect(artist).createOpenEdition(info)).to.not.be.reverted;
+    });
+
+    it("Should reject a fake NFT contract even when msg.sender matches its own artist()", async function() {
+        const FakeNft = await ethers.getContractFactory("MockFakeNft");
+        const fake = await FakeNft.deploy(addr2.address);
+        const info = { ...openEditionInfo, id: 98, nftContract: fake.address };
+        await expect(
+            openEdition.connect(addr2).createOpenEdition(info)
+        ).to.be.revertedWith("Admin or the NFT's artist only");
     });
 
     it("Should still reject overwriting an existing edition id, even from the artist", async function() {

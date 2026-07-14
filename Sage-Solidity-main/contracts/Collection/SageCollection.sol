@@ -81,16 +81,49 @@ contract SageCollection is Pausable {
         _;
     }
 
+    // Any already-verified, genuinely-deployed SageNFT instance — used only
+    // as a codehash reference (see _isTrustedNft), never called into. Works
+    // equally well for collection drops' STANDALONE per-drop NFT contracts
+    // (not registered in NFTFactory) since it's a pure bytecode comparison,
+    // not a factory-registry lookup.
+    address public trustedNftReference;
+
+    /** Set once (or updated) by an admin to any real, previously-deployed
+     *  SageNFT — including one deployed for a totally unrelated artist.
+     *  Only its runtime CODE matters here, not its data. */
+    function setTrustedNftReference(address _ref) external onlyAdmin {
+        trustedNftReference = _ref;
+    }
+
+    /** True only if `_c` is a REAL SageNFT deployment — checked by comparing
+     *  runtime bytecode against a known-good reference, not by calling into
+     *  `_c` (an attacker's contract can return whatever it wants from its
+     *  own functions, including a spoofed artist()/interface, but it cannot
+     *  fake having SageNFT's exact compiled code). SageNFT's only immutable
+     *  is `sageStorage`, which every legitimate deployment sets to the same
+     *  shared platform address — so genuine deployments share one codehash
+     *  regardless of which artist or drop they belong to. */
+    function _isTrustedNft(address _c) internal view returns (bool) {
+        return
+            trustedNftReference != address(0) &&
+            _c.code.length > 0 &&
+            _c.codehash == trustedNftReference.codehash;
+    }
+
     /** Lets the self-serve social launcher register a game against the
      *  caller's OWN NFT contract without needing on-chain admin rights —
      *  admins can still create on anyone's behalf (the curated dashboard
      *  flow). Safe because the collection's payout/mint target IS the same
      *  nftContract being checked here: nothing lets a caller register a
-     *  game that pays out or mints anywhere but their own contract. */
+     *  game that pays out or mints anywhere but their own contract.
+     *  _isTrustedNft() is required in the artist branch — without it,
+     *  anyone could deploy a two-line contract whose artist() returns
+     *  themselves and pass this check trivially. */
     modifier onlyAdminOrArtist(INFT _nftContract) {
         require(
             sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
-                msg.sender == _nftContract.artist(),
+                (_isTrustedNft(address(_nftContract)) &&
+                    msg.sender == _nftContract.artist()),
             "Admin or the NFT's artist only"
         );
         _;

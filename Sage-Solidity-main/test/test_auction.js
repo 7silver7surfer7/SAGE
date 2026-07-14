@@ -46,6 +46,10 @@ describe("Auction Contract", function() {
             ethers.utils.solidityKeccak256(["string"], ["role.minter"]),
             auction.address
         );
+        // codehash reference for onlyAdminOrArtist's artist branch — nft
+        // (deployed via NFTFactory above) is a genuine SageNFT, so it's a
+        // valid stand-in regardless of which artist it belongs to
+        await auction.setTrustedNftReference(nft.address);
         await sageStorage.revokeRole('0x0000000000000000000000000000000000000000000000000000000000000000', owner.address);
 
         // ContractBidder = await ethers.getContractFactory('MockAuctionBidder');
@@ -132,6 +136,18 @@ describe("Auction Contract", function() {
         await expect(auction.connect(artist).createAuction(info)).to.not.be.reverted;
         const created = await auction.getAuction(99);
         expect(created.nftContract).to.equal(nftContractAddress);
+    });
+
+    it("Should reject a fake NFT contract even when msg.sender matches its own artist()", async function() {
+        // addr1 deploys a contract that claims addr1 IS its artist — proves
+        // the check can't be beaten just by controlling the nftContract's
+        // own artist() response; it must actually be real SageNFT bytecode
+        const FakeNft = await ethers.getContractFactory("MockFakeNft");
+        const fake = await FakeNft.deploy(addr1.address);
+        const info = { ...auctionInfo, auctionId: 98, nftContract: fake.address };
+        await expect(
+            auction.connect(addr1).createAuction(info)
+        ).to.be.revertedWith("Admin or the NFT's artist only");
     });
 
     it("Should still reject overwriting an existing auction id, even from the artist", async function() {

@@ -33,6 +33,10 @@ describe("SageCollection Contract", function () {
             ethers.utils.solidityKeccak256(["string"], ["role.minter"]),
             collection.address
         );
+        // codehash reference for onlyAdminOrArtist's artist branch — nft
+        // (deployed via NFTFactory above) is a genuine SageNFT, so it's a
+        // valid stand-in regardless of which artist it belongs to
+        await collection.setTrustedNftReference(nftContractAddress);
 
         blockNum = await ethers.provider.getBlockNumber();
         block = await ethers.provider.getBlock(blockNum);
@@ -260,6 +264,14 @@ describe("SageCollection Contract", function () {
         await expect(
             collection.connect(artist).createCollection({ ...collectionInfo, id: 6 })
         ).to.not.be.reverted;
+    });
+
+    it("Should reject a fake NFT contract even when msg.sender matches its own artist()", async function () {
+        const FakeNft = await ethers.getContractFactory("MockFakeNft");
+        const fake = await FakeNft.deploy(addr2.address);
+        await expect(
+            collection.connect(addr2).createCollection({ ...collectionInfo, id: 6, nftContract: fake.address })
+        ).to.be.revertedWith("Admin or the NFT's artist only");
     });
 
     it("Should still reject overwriting an existing collection id, even from the artist", async function () {
