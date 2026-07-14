@@ -19,6 +19,7 @@ import {
 } from '@rainbow-me/rainbowkit';
 import { metaMaskWallet, coinbaseWallet, braveWallet } from '@rainbow-me/rainbowkit/wallets';
 import { useEffect, useState } from 'react';
+import { trackPageview } from '@/utilities/analyticsBeacon';
 import { SearchContext } from '@/store/searchContext';
 import LandingPage from '@/components/Pages/Landing';
 import { robinhood, robinhoodTestnet } from '@/constants/chains';
@@ -108,6 +109,15 @@ function App({ Component, pageProps, router }: AppProps) {
     const onRouteError = (err: any) => recoverFromChunkError(err);
     router.events.on('routeChangeError', onRouteError);
     return () => router.events.off('routeChangeError', onRouteError);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // first-party visitor analytics: one beacon on load + one per route change
+  useEffect(() => {
+    trackPageview(window.location.pathname);
+    const onRoute = (url: string) => trackPageview(url);
+    router.events.on('routeChangeComplete', onRoute);
+    return () => router.events.off('routeChangeComplete', onRoute);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

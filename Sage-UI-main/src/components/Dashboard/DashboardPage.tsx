@@ -9,6 +9,7 @@ import { AllowlistsPanel } from './AllowlistsPanel';
 import { ConfigPanel } from './ConfigPanel';
 import PresetDropsPanel from './PresetDropsPanel';
 import CreateDropPanel from './CreateDropPanel';
+import { AnalyticsPanel } from './AnalyticsPanel';
 import { Role } from '@prisma/client';
 import { useGetUserQuery } from '@/store/usersReducer';
 import LoaderDots from '@/components/LoaderDots';
@@ -63,6 +64,9 @@ export function DashBoardPage() {
               Users
             </Tab>
             <Tab className='dashboard-page__tab' selectedClassName='dashboard-page__tab--selected'>
+              Analytics
+            </Tab>
+            <Tab className='dashboard-page__tab' selectedClassName='dashboard-page__tab--selected'>
               Config
             </Tab>
             <Tab className='dashboard-page__tab' selectedClassName='dashboard-page__tab--selected'>
@@ -88,6 +92,9 @@ export function DashBoardPage() {
           </TabPanel>
           <TabPanel className='dashboard-panel'>
             <UsersPanel />
+          </TabPanel>
+          <TabPanel className='dashboard-panel'>
+            <AnalyticsPanel />
           </TabPanel>
           <TabPanel className='dashboard-panel'>
             <ConfigPanel />

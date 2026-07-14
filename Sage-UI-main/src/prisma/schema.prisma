@@ -59,6 +59,28 @@ model Drop {
   AllowlistEntries                 DropAllowlistEntry[]
 }
 
+// First-party visitor analytics: one row per pageview beacon. Privacy-sane —
+// visitorId/sessionId are random client-side ids (no fingerprinting), IPs are
+// stored only as salted hashes (same pattern as MintIpClaim), and rows are
+// pruned after ~90 days. walletAddress links a visit to a signed-in user,
+// which powers the visitor→wallet conversion funnel in the admin portal.
+model SiteVisit {
+  id            Int      @id @default(autoincrement())
+  visitorId     String   @db.Char(36)
+  sessionId     String   @db.Char(36)
+  walletAddress String?  @db.Char(42)
+  path          String   @db.VarChar(120)
+  referrer      String?  @db.VarChar(120) // host only, never full URLs
+  country       String?  @db.Char(2)      // from Cloudflare's cf-ipcountry on prod
+  device        String   @db.VarChar(10)  // mobile | tablet | desktop
+  ipHash        String?  @db.Char(64)
+  createdAt     DateTime @default(now())
+  @@index([createdAt])
+  @@index([visitorId, createdAt])
+  @@index([path])
+  @@index([walletAddress])
+}
+
 // One row per (drop, network) mint-spot claim for IP-gated drops. The IP is
 // stored as a salted hash — never raw. A network gets ONE wallet per drop;
 // a wallet gets ONE claim per drop.
