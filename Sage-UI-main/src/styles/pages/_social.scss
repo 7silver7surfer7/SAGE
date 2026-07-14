@@ -3190,3 +3190,243 @@ body:has([class*='__overlay']) .layout {
   height: 300px;
   margin: 14px 0;
 }
+
+/* ── "New message" — Twitter-style DM compose ── */
+.social-newdm {
+  width: min(560px, 92vw);
+  border-radius: 18px;
+  padding: 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+  @include m.theme() {
+    background: m.t(base2);
+    border: 1px solid rgba(m.t(contrast), 0.15);
+    color: m.t(contrast);
+  }
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px 12px;
+    h3 {
+      font-family: 'Space Grotesk', 'Inter', sans-serif;
+      font-size: 1.15rem;
+      @include m.theme() {
+        color: m.t(contrast);
+      }
+    }
+  }
+  &__to {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 18px;
+    @include m.theme() {
+      border-top: 1px solid rgba(m.t(contrast), 0.1);
+      border-bottom: 1px solid rgba(m.t(contrast), 0.1);
+    }
+  }
+  &__to-label {
+    font-weight: 700;
+    font-size: 0.9rem;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.55);
+    }
+  }
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    @include m.theme() {
+      background: rgba(m.t(accent), 0.16);
+      color: m.t(contrast);
+      border: 1px solid rgba(m.t(accent), 0.4);
+    }
+    button {
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 0.7rem;
+      line-height: 1;
+      padding: 0;
+      @include m.theme() {
+        color: rgba(m.t(contrast), 0.6);
+      }
+    }
+  }
+  &__search {
+    flex: 1;
+    min-width: 140px;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.95rem;
+    padding: 4px 0;
+    @include m.theme() {
+      color: m.t(contrast);
+      &::placeholder {
+        color: rgba(m.t(contrast), 0.4);
+      }
+    }
+  }
+  &__results {
+    min-height: 120px;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  &__hint {
+    padding: 18px;
+    font-size: 0.88rem;
+    text-align: center;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.45);
+    }
+  }
+  &__result {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 18px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    &:hover {
+      @include m.theme() {
+        background: rgba(m.t(contrast), 0.05);
+      }
+    }
+  }
+  &__result-avatar {
+    position: relative;
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    border-radius: 50%;
+    overflow: hidden;
+    @include m.theme() {
+      background: m.t(base);
+    }
+  }
+  &__result-name {
+    font-weight: 700;
+    font-size: 0.92rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  &__result-addr {
+    margin-left: auto;
+    font-size: 0.78rem;
+    font-family: ui-monospace, monospace;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.4);
+    }
+  }
+  &__composer {
+    @include m.theme() {
+      border-top: 1px solid rgba(m.t(contrast), 0.1);
+    }
+    textarea {
+      width: 100%;
+      border: none;
+      background: transparent;
+      outline: none;
+      resize: none;
+      font-family: inherit;
+      font-size: 0.95rem;
+      line-height: 1.4;
+      padding: 14px 18px 4px;
+      box-sizing: border-box;
+      @include m.theme() {
+        color: m.t(contrast);
+        &::placeholder {
+          color: rgba(m.t(contrast), 0.4);
+        }
+      }
+    }
+  }
+  &__foot {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 6px 18px 14px;
+  }
+  &__count {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.4);
+    }
+  }
+  &__send {
+    border: none;
+    border-radius: 999px;
+    padding: 9px 26px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    @include m.theme() {
+      background: m.t(accent);
+      color: m.t(base);
+    }
+    &:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+  }
+}
+
+// input with a fixed unit suffix (ETH) so the currency is always visible
+.social-unit-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  border-radius: 999px;
+  padding: 0 16px;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(contrast), 0.2);
+  }
+  &:focus-within {
+    @include m.theme() {
+      border-color: m.t(accent);
+    }
+  }
+  input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.95rem;
+    padding: 10px 0;
+    @include m.theme() {
+      color: m.t(contrast);
+      &::placeholder {
+        color: rgba(m.t(contrast), 0.4);
+      }
+    }
+  }
+  span {
+    font-weight: 800;
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    @include m.theme() {
+      color: m.t(accent);
+    }
+  }
+}

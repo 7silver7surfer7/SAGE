@@ -67,73 +67,85 @@ export default function ComposeMessageModal({
 
   return (
     <div className='social-verify__overlay' onClick={onClose}>
-      <div className='social-verify social-verify--launch' onClick={(e) => e.stopPropagation()}>
-        <div className='social-verify__head'>
+      <div className='social-newdm' onClick={(e) => e.stopPropagation()}>
+        <div className='social-newdm__head'>
           <h3>New message</h3>
           <button className='social-verify__close' onClick={onClose}>
             ✕
           </button>
         </div>
 
-        {picked.length > 0 && (
-          <div className='social-compose__chips'>
-            {picked.map((u) => (
-              <span key={u.address} className='social-compose__chip'>
-                {nameOf(u)}
-                <button onClick={() => remove(u.address)} aria-label='remove'>
-                  ✕
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        {/* Twitter-style To: row — chips inline with the search input */}
+        <div className='social-newdm__to'>
+          <span className='social-newdm__to-label'>To:</span>
+          {picked.map((u) => (
+            <span key={u.address} className='social-newdm__chip'>
+              {nameOf(u)}
+              <button onClick={() => remove(u.address)} aria-label='remove'>
+                ✕
+              </button>
+            </span>
+          ))}
+          <input
+            className='social-newdm__search'
+            placeholder={picked.length ? 'add another…' : 'search people'}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            // backspace on the empty input pops the last chip, like Twitter
+            onKeyDown={(e) => {
+              if (e.key === 'Backspace' && !q && picked.length)
+                remove(picked[picked.length - 1].address);
+            }}
+            autoFocus
+          />
+        </div>
 
-        <input
-          className='social-search__input'
-          placeholder='To: search people by name or handle'
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          style={{ marginBottom: 8 }}
-        />
-
-        {q.trim().length >= 2 && (
-          <div className='social-compose__results'>
-            {isFetching && !data ? (
-              <p className='social__empty'>Searching…</p>
+        <div className='social-newdm__results'>
+          {q.trim().length >= 2 ? (
+            isFetching && !data ? (
+              <p className='social-newdm__hint'>Searching…</p>
             ) : results.length ? (
               results.slice(0, 8).map((u) => (
-                <button key={u.address} className='social-compose__result' onClick={() => add(u)}>
-                  <span className='social-compose__result-avatar'>
+                <button key={u.address} className='social-newdm__result' onClick={() => add(u)}>
+                  <span className='social-newdm__result-avatar'>
                     <PfpImage src={u.profilePicture} />
                   </span>
-                  <span className='social-compose__result-name'>
+                  <span className='social-newdm__result-name'>
                     {nameOf(u)}
                     {u.verified && <VerifiedBadge size={12} />}
                   </span>
+                  <span className='social-newdm__result-addr'>{shortenAddress(u.address)}</span>
                 </button>
               ))
             ) : (
-              <p className='social__empty'>No one found.</p>
-            )}
-          </div>
-        )}
+              <p className='social-newdm__hint'>No one found.</p>
+            )
+          ) : (
+            <p className='social-newdm__hint'>
+              {picked.length ? 'Add more people, or write your message below.' : 'Type a name or handle to find people.'}
+            </p>
+          )}
+        </div>
 
-        <textarea
-          className='social-search__input'
-          placeholder='Write a message…'
-          value={text}
-          maxLength={1000}
-          rows={3}
-          onChange={(e) => setText(e.target.value)}
-          style={{ margin: '10px 0 16px', resize: 'vertical', minHeight: 72 }}
-        />
-        <button
-          className='social-verify__buy'
-          disabled={busy || !picked.length || !text.trim()}
-          onClick={send}
-        >
-          {busy ? 'Sending…' : picked.length > 1 ? `Send to ${picked.length}` : 'Send'}
-        </button>
+        <div className='social-newdm__composer'>
+          <textarea
+            placeholder='Write a message…'
+            value={text}
+            maxLength={1000}
+            rows={3}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className='social-newdm__foot'>
+            <span className='social-newdm__count'>{text.length ? `${text.length}/1000` : ''}</span>
+            <button
+              className='social-newdm__send'
+              disabled={busy || !picked.length || !text.trim()}
+              onClick={send}
+            >
+              {busy ? 'Sending…' : picked.length > 1 ? `Send to ${picked.length}` : 'Send'}
+            </button>
+          </div>
+        </div>
       </div>
       {showVerify && <VerificationModal onClose={() => setShowVerify(false)} />}
     </div>

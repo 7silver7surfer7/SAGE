@@ -177,7 +177,10 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
         <input className='social-search__input' placeholder='Name (e.g. Chartreuse Studies)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 8 }} />
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           <input className='social-search__input' placeholder='Ticker' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
-          <input className='social-search__input' placeholder='Price (ETH)' value={price} onChange={(e) => setPrice(e.target.value)} />
+          <div className='social-unit-input'>
+            <input placeholder='Mint price' value={price} onChange={(e) => setPrice(e.target.value)} />
+            <span>ETH</span>
+          </div>
           {mode === 'edition' && (
             <input className='social-search__input' placeholder='Supply' value={supply} onChange={(e) => setSupply(e.target.value)} />
           )}

@@ -72,14 +72,11 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
         </p>
         <input className='social-search__input' placeholder='Coin name (e.g. Chartreuse Gang)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
         <input className='social-search__input' placeholder='Ticker (e.g. CHRT)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 12 }} />
-        <label className='social-edit__label'>Initial buy (ETH) — seeds your chart, makes you holder #1</label>
-        <input
-          className='social-search__input'
-          placeholder='0.01 (0 = skip)'
-          value={initialBuy}
-          onChange={(e) => setInitialBuy(e.target.value)}
-          style={{ marginBottom: 12 }}
-        />
+        <label className='social-edit__label'>Initial buy — seeds your chart, makes you holder #1</label>
+        <div className='social-unit-input' style={{ marginBottom: 12 }}>
+          <input placeholder='0.01 (0 = skip)' value={initialBuy} onChange={(e) => setInitialBuy(e.target.value)} />
+          <span>ETH</span>
+        </div>
         <label className='social-profile__gate-row' style={{ marginBottom: 14 }}>
           <input
             type='checkbox'
