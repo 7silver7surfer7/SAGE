@@ -15,14 +15,32 @@ import {
   useLazyGetOlderMessagesQuery,
   useSendMessageMutation,
   DirectMessage,
+  SocialUserCard,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 
 const nameOf = (u: { username?: string | null; address: string }) =>
   u.username ? transformTitle(u.username) : shortenAddress(u.address);
 
+/** "4h" / "3d" / "5w" — Twitter's compact conversation-list timestamp. */
+function timeAgo(iso: string): string {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  if (s < 604800) return `${Math.floor(s / 86400)}d`;
+  if (s < 31536000) return `${Math.floor(s / 604800)}w`;
+  return new Date(iso).toLocaleDateString();
+}
+const BackIcon = () => (
+  <svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2'>
+    <path d='M19 12H5M12 19l-7-7 7-7' strokeLinecap='round' strokeLinejoin='round' />
+  </svg>
+);
+
 /** 1:1 DM thread (sending is verified-only) with scroll-up infinite history. */
-function DMThread({ partner }: { partner: string }) {
+function DMThread({ partner, partnerCard }: { partner: string; partnerCard?: SocialUserCard }) {
+  const router = useRouter();
   const { data, isFetching } = useGetMessagesQuery(partner, { pollingInterval: 15_000 });
   const [fetchOlder, { isFetching: loadingOlder }] = useLazyGetOlderMessagesQuery();
   const [sendMessage, { isLoading: sending }] = useSendMessageMutation();
@@ -83,6 +101,26 @@ function DMThread({ partner }: { partner: string }) {
   };
   return (
     <div className='social-dm__thread'>
+      <div className='social-dm__thread-header'>
+        <button
+          className='social-dm__back'
+          onClick={() => router.push('/social/messages/')}
+          aria-label='Back to conversations'
+        >
+          <BackIcon />
+        </button>
+        {partnerCard && (
+          <button className='social-dm__thread-who' onClick={() => router.push(`/social/${partner}`)}>
+            <div className='social-dm__row-avatar'>
+              <PfpImage src={partnerCard.profilePicture} />
+            </div>
+            <span className='social-dm__row-name'>
+              {nameOf(partnerCard)}
+              {partnerCard.verified && <VerifiedBadge size={12} />}
+            </span>
+          </button>
+        )}
+      </div>
       <div className='social-dm__scroll' ref={scrollRef} onScroll={onScroll}>
         {isFetching && !data ? (
           <LoaderDots />
@@ -150,7 +188,7 @@ export default function MessagesPage() {
         {!isSignedIn ? (
           <div className='social__empty'>Connect your wallet to see your messages.</div>
         ) : (
-          <div className='social-dm'>
+          <div className='social-dm' data-has-active={!!activeDM}>
             <div className='social-dm__list'>
               {isFetching && !data ? (
                 <LoaderDots />
@@ -168,9 +206,12 @@ export default function MessagesPage() {
                         <PfpImage src={c.partner.profilePicture} />
                       </div>
                       <div className='social-dm__row-main'>
-                        <span className='social-dm__row-name'>
-                          {nameOf(c.partner)}
-                          {c.partner.verified && <VerifiedBadge size={12} />}
+                        <span className='social-dm__row-top'>
+                          <span className='social-dm__row-name'>
+                            {nameOf(c.partner)}
+                            {c.partner.verified && <VerifiedBadge size={12} />}
+                          </span>
+                          <span className='social-dm__row-time'>{timeAgo(c.lastAt)}</span>
                         </span>
                         <span className='social-dm__row-snippet'>{c.lastMessage}</span>
                       </div>
@@ -185,7 +226,12 @@ export default function MessagesPage() {
               )}
             </div>
             {activeDM ? (
-              <DMThread partner={activeDM} />
+              <DMThread
+                partner={activeDM}
+                partnerCard={data?.conversations.find(
+                  (c) => c.partner.address.toLowerCase() === activeDM.toLowerCase()
+                )?.partner}
+              />
             ) : (
               <div className='social-dm__thread social-dm__thread--empty'>
                 <div className='social__empty'>Pick a conversation or start a new one.</div>

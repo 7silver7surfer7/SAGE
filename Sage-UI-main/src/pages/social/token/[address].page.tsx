@@ -511,7 +511,6 @@ export default function TokenDetailPage() {
                       {h.user.username ? transformTitle(h.user.username) : shortenAddress(h.user.address)}
                       {h.user.verified && <VerifiedBadge size={11} />}
                     </span>
-                    <span className='token-page__holder-address'>{h.user.address}</span>
                   </span>
                   <span className='token-page__bal'>
                     {fmt(h.balance)}
@@ -541,7 +540,6 @@ export default function TokenDetailPage() {
                       {tr.user?.username ? transformTitle(tr.user.username) : shortenAddress(tr.trader)}
                       {tr.user?.verified && <VerifiedBadge size={11} />}
                     </span>
-                    <span className='token-page__holder-address'>{tr.trader}</span>
                   </span>
                   <span className='token-page__bal'>{tr.ethAmount.toPrecision(2)} ETH</span>
                   <span className='token-page__ago'>{timeAgo(tr.createdAt)}</span>

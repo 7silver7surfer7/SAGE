@@ -108,10 +108,15 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, c
 
   return (
     <>
-      <div className='drop-page__banner-base'>
-        <BaseMedia src={bannerImgSrc} />
-      </div>
       <div className='drop-page'>
+        {/* a child of .drop-page (position: relative), not a sibling — the
+            app's scroll container (.layout) is position: static, so an
+            absolutely-positioned sibling here has no positioned ancestor
+            and pins to the viewport instead of scrolling with the page,
+            which is what let it "bleed through" the footer on scroll. */}
+        <div className='drop-page__banner-base'>
+          <BaseMedia src={bannerImgSrc} />
+        </div>
         <header className='drop-page__header'>
           <div className='drop-page__header-logotype'>
             <Logotype dataColor='white' />

@@ -446,7 +446,10 @@ const socialApi = baseApi.injectEndpoints({
       forceRefetch: ({ currentArg, previousArg }) =>
         (currentArg as any)?.cursor !== (previousArg as any)?.cursor ||
         (currentArg as any)?.q !== (previousArg as any)?.q,
-      providesTags: ['SocialFeed'],
+      // was tagged 'SocialFeed' — a copy-paste leftover that nothing
+      // matching actually invalidated, so a fresh launch never showed up
+      // on the board without a manual reload
+      providesTags: ['SocialTokenBoard'],
     }),
     getTokenTradesPage: builder.query<
       { trades: TokenTrade[]; nextOffset: number | null },
@@ -720,7 +723,7 @@ const socialApi = baseApi.injectEndpoints({
       }
     >({
       query: (body) => ({ url: 'social?action=RecordTokenLaunch', method: 'POST', body }),
-      invalidatesTags: ['SocialProfile'],
+      invalidatesTags: ['SocialProfile', 'SocialTokenBoard'],
     }),
     recordAirdrop: builder.mutation<{ ok: boolean }, { count: number }>({
       query: (body) => ({ url: 'social?action=RecordAirdrop', method: 'POST', body }),
@@ -779,7 +782,11 @@ const socialApi = baseApi.injectEndpoints({
           patch?.undo();
         }
       },
-      invalidatesTags: (_r, _e, arg) => [{ type: 'SocialProfile', id: `tok-${arg.tokenAddress}` }],
+      // also refresh the board — a trade moves this token's mcap/rank
+      invalidatesTags: (_r, _e, arg) => [
+        { type: 'SocialProfile', id: `tok-${arg.tokenAddress}` },
+        'SocialTokenBoard',
+      ],
     }),
     sendGroupMessage: builder.mutation<{ ok: boolean; id: number }, { owner: string; text: string }>({
       query: (body) => ({ url: 'social?action=SendGroupMessage', method: 'POST', body }),

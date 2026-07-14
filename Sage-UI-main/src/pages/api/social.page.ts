@@ -1994,7 +1994,14 @@ async function getUserMints(address: string, res: NextApiResponse) {
       pointsSpent: c.pointsSpent?.toString() ?? null,
       createdAt: c.createdAt,
       image: null as string | null,
-      title: `SAGE Social #${c.Post.id}`,
+      // the card's own identity, not a generic collection label — the post's
+      // text (what was actually collected), falling back to who posted it
+      // for a pure-media post with no caption
+      title: c.Post.text
+        ? c.Post.text.length > 40
+          ? `${c.Post.text.slice(0, 40)}…`
+          : c.Post.text
+        : `Post by ${c.Post.Author?.username || `${c.Post.authorAddress.slice(0, 6)}…${c.Post.authorAddress.slice(-4)}`}`,
       post: {
         id: c.Post.id,
         text: c.Post.text,
@@ -2413,6 +2420,7 @@ async function recordAirdrop(
 
 /** Followers of a creator — the airdrop recipient list for the launch UI. */
 async function getProfileToken(address: string, res: NextApiResponse) {
+  res.setHeader('Cache-Control', 'no-store');
   const addr = canon(address);
   if (!addr) return res.status(400).json({ error: 'bad address' });
   const [launch, followers, hidden] = await Promise.all([

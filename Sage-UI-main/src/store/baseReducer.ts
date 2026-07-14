@@ -23,6 +23,7 @@ export const baseApi = createApi({
     'SocialMessages',
     'SocialProfile',
     'SocialPost',
+    'SocialTokenBoard',
     'Refunds',
     'TicketCount',
     'User',

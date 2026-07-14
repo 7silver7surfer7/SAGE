@@ -908,7 +908,18 @@ $col-width: 620px;
   grid-template-columns: 1fr;
   gap: 14px;
   @media (min-width: 720px) {
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: 320px 1fr;
+  }
+  // Mobile is one screen at a time, Twitter-style: the list until you tap a
+  // conversation, then the thread takes over (with its own back button) —
+  // not both panes squeezed into a single narrow column at once.
+  @media (max-width: 719px) {
+    &[data-has-active='true'] &__list {
+      display: none;
+    }
+    &[data-has-active='false'] &__thread {
+      display: none;
+    }
   }
   &__list {
     display: flex;
@@ -917,15 +928,17 @@ $col-width: 620px;
   &__row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 8px;
+    gap: 12px;
+    width: 100%;
+    padding: 12px;
     background: none;
     border: none;
-    border-radius: 12px;
+    border-radius: 14px;
     cursor: pointer;
     text-align: left;
     @include m.theme() {
       color: m.t(contrast);
+      border-bottom: 1px solid rgba(m.t(contrast), 0.06);
     }
     &:hover,
     &[data-active='true'] {
@@ -936,9 +949,9 @@ $col-width: 620px;
   }
   &__row-avatar {
     position: relative;
-    width: 38px;
-    height: 38px;
-    min-width: 38px;
+    width: 50px;
+    height: 50px;
+    min-width: 50px;
     border-radius: 50%;
     overflow: hidden;
     @include m.theme() {
@@ -950,16 +963,34 @@ $col-width: 620px;
     flex-direction: column;
     min-width: 0;
     flex: 1;
+    gap: 2px;
+  }
+  &__row-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
   }
   &__row-name {
     font-weight: 700;
-    font-size: 0.88rem;
+    font-size: 0.92rem;
     display: flex;
     align-items: center;
     gap: 4px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  &__row-time {
+    flex: none;
+    font-size: 0.76rem;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.45);
+    }
   }
   &__row-snippet {
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -971,7 +1002,7 @@ $col-width: 620px;
     display: flex;
     flex-direction: column;
     width: 100%;
-    max-width: 420px; // ~iPhone width
+    max-width: 560px;
     min-height: 560px;
     height: 72vh;
     border-radius: 18px;
@@ -980,6 +1011,51 @@ $col-width: 620px;
       border: 1px solid rgba(m.t(contrast), 0.12);
       background: rgba(m.t(contrast), 0.015);
     }
+  }
+  &__thread-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    flex: none;
+    @include m.theme() {
+      border-bottom: 1px solid rgba(m.t(contrast), 0.1);
+    }
+  }
+  &__back {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: none;
+    cursor: pointer;
+    flex: none;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+    &:hover {
+      @include m.theme() { background: rgba(m.t(contrast), 0.08); }
+    }
+    // the list pane already gives desktop users a way back — only mobile's
+    // single-pane view needs an explicit back control
+    @media (max-width: 719px) {
+      display: flex;
+    }
+  }
+  &__thread-who {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px;
+    @include m.theme() { color: m.t(contrast); }
+    .social-dm__row-avatar { width: 34px; height: 34px; min-width: 34px; }
+    .social-dm__row-name { font-size: 0.95rem; }
   }
   &__scroll {
     flex: 1;

@@ -116,7 +116,7 @@ function MintsGrid({ address, isSelf }: { address: string; isSelf: boolean }) {
               <span className='social-mints__token'>#{m.tokenId}</span>
             </div>
             <div className='social-mints__paid'>
-              {m.source === 'owned' ? 'owned' : m.pointsSpent ? `${m.pointsSpent} pixels` : 'collected'}
+              {m.pointsSpent ? `${m.pointsSpent} pixels` : 'collected'}
             </div>
           </div>
         );
