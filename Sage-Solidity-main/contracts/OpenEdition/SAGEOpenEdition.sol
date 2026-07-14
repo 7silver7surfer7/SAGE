@@ -70,6 +70,21 @@ contract SAGEOpenEdition is Pausable {
         _;
     }
 
+    /** Lets the self-serve social launcher register a game against the
+     *  caller's OWN NFT contract without needing on-chain admin rights —
+     *  admins can still create on anyone's behalf (the curated dashboard
+     *  flow). Safe because the edition's payout/mint target IS the same
+     *  nftContract being checked here: nothing lets a caller register a
+     *  game that pays out or mints anywhere but their own contract. */
+    modifier onlyAdminOrArtist(INFT _nftContract) {
+        require(
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
+                msg.sender == _nftContract.artist(),
+            "Admin or the NFT's artist only"
+        );
+        _;
+    }
+
     constructor(
         address _rewardsContract,
         address _admin,
@@ -136,7 +151,10 @@ contract SAGEOpenEdition is Pausable {
         batchMint(_id, _amount);
     }
 
-    function createOpenEdition(OpenEdition calldata oe) public onlyAdmin {
+    function createOpenEdition(OpenEdition calldata oe)
+        public
+        onlyAdminOrArtist(oe.nftContract)
+    {
         require(
             oe.startTime > 0 && oe.closeTime > oe.startTime,
             "Invalid times"
@@ -145,6 +163,10 @@ contract SAGEOpenEdition is Pausable {
             oe.currency == address(0) || oe.currency == NATIVE_CURRENCY,
             "Unsupported currency"
         );
+        // required once non-admins can call this — a self-serve caller could
+        // otherwise pass an existing id + their OWN nftContract and overwrite
+        // someone else's edition (the DB's ids are sequential/guessable)
+        require(openEditions[oe.id].startTime == 0, "Edition already exists");
         openEditions[oe.id] = oe;
         // freeze the platform split for this edition at its creation-time value
         editionArtistShare[oe.id] = _primaryArtistShare();
@@ -152,16 +174,24 @@ contract SAGEOpenEdition is Pausable {
 
     /** Corrective/backfill setter for an edition's frozen artist share.
      *  0 resets the edition to follow the live SageConfig value. */
-    function setEditionArtistShare(uint256 _id, uint256 _shareBps)
-        external
-        onlyAdmin
-    {
-        require(_shareBps <= 10000, "Invalid share");
+    function setEditionArtistShare(uint256 _id, uint256 _shareBps) external {
         require(openEditions[_id].startTime > 0, "Edition doesn't exist");
+        require(
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
+                msg.sender == openEditions[_id].nftContract.artist(),
+            "Admin or the NFT's artist only"
+        );
+        require(_shareBps <= 10000, "Invalid share");
         editionArtistShare[_id] = _shareBps;
     }
 
-    function setWhitelist(uint256 _id, address _whitelist) public onlyAdmin {
+    function setWhitelist(uint256 _id, address _whitelist) public {
+        require(openEditions[_id].startTime > 0, "Edition doesn't exist");
+        require(
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
+                msg.sender == openEditions[_id].nftContract.artist(),
+            "Admin or the NFT's artist only"
+        );
         openEditions[_id].whitelist = IWhitelist(_whitelist);
     }
 

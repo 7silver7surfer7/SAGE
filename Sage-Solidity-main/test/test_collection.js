@@ -250,9 +250,21 @@ describe("SageCollection Contract", function () {
         });
     });
 
-    it("Should gate createCollection to admins", async function () {
+    it("Should gate createCollection to admins or the NFT's artist", async function () {
         await expect(
             collection.connect(addr2).createCollection({ ...collectionInfo, id: 6 })
-        ).to.be.revertedWith("Admin calls only");
+        ).to.be.revertedWith("Admin or the NFT's artist only");
+    });
+
+    it("Should let the NFT's own artist self-serve create, without admin rights", async function () {
+        await expect(
+            collection.connect(artist).createCollection({ ...collectionInfo, id: 6 })
+        ).to.not.be.reverted;
+    });
+
+    it("Should still reject overwriting an existing collection id, even from the artist", async function () {
+        await expect(
+            collection.connect(artist).createCollection(collectionInfo) // id: 1, already exists
+        ).to.be.revertedWith("Collection already exists");
     });
 });

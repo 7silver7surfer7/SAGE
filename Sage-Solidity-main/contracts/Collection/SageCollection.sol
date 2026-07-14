@@ -81,6 +81,21 @@ contract SageCollection is Pausable {
         _;
     }
 
+    /** Lets the self-serve social launcher register a game against the
+     *  caller's OWN NFT contract without needing on-chain admin rights —
+     *  admins can still create on anyone's behalf (the curated dashboard
+     *  flow). Safe because the collection's payout/mint target IS the same
+     *  nftContract being checked here: nothing lets a caller register a
+     *  game that pays out or mints anywhere but their own contract. */
+    modifier onlyAdminOrArtist(INFT _nftContract) {
+        require(
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
+                msg.sender == _nftContract.artist(),
+            "Admin or the NFT's artist only"
+        );
+        _;
+    }
+
     constructor(address _sageStorage, address _token) {
         sageStorage = ISageStorage(_sageStorage);
         token = IERC20(_token);
@@ -103,7 +118,10 @@ contract SageCollection is Pausable {
         }
     }
 
-    function createCollection(Collection calldata c) public onlyAdmin {
+    function createCollection(Collection calldata c)
+        public
+        onlyAdminOrArtist(c.nftContract)
+    {
         require(
             c.startTime > 0 &&
                 (c.closeTime == 0 || c.closeTime > c.startTime),
@@ -115,6 +133,10 @@ contract SageCollection is Pausable {
             c.currency == address(0) || c.currency == NATIVE_CURRENCY,
             "Unsupported currency"
         );
+        // required once non-admins can call this — a self-serve caller could
+        // otherwise pass an existing id + their OWN nftContract and overwrite
+        // someone else's collection (the DB's ids are sequential/guessable)
+        require(collections[c.id].startTime == 0, "Collection already exists");
         collections[c.id] = c;
         // freeze the platform split for this collection at its creation-time value
         collectionArtistShare[c.id] = _primaryArtistShare();
@@ -125,14 +147,24 @@ contract SageCollection is Pausable {
      *  0 resets the collection to follow the live SageConfig value. */
     function setCollectionArtistShare(uint256 _id, uint256 _shareBps)
         external
-        onlyAdmin
     {
-        require(_shareBps <= 10000, "Invalid share");
         require(collections[_id].startTime > 0, "Collection doesn't exist");
+        require(
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
+                msg.sender == collections[_id].nftContract.artist(),
+            "Admin or the NFT's artist only"
+        );
+        require(_shareBps <= 10000, "Invalid share");
         collectionArtistShare[_id] = _shareBps;
     }
 
-    function setWhitelist(uint256 _id, address _whitelist) public onlyAdmin {
+    function setWhitelist(uint256 _id, address _whitelist) public {
+        require(collections[_id].startTime > 0, "Collection doesn't exist");
+        require(
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
+                msg.sender == collections[_id].nftContract.artist(),
+            "Admin or the NFT's artist only"
+        );
         collections[_id].whitelist = IWhitelist(_whitelist);
     }
 

@@ -103,6 +103,21 @@ contract Auction is
         _;
     }
 
+    /** Lets the self-serve social launcher register a game against the
+     *  caller's OWN NFT contract without needing on-chain admin rights —
+     *  admins can still create on anyone's behalf (the curated dashboard
+     *  flow). Safe because the auction's payout/mint target IS the same
+     *  nftContract being checked here: nothing lets a caller register a
+     *  game that pays out or mints anywhere but their own contract. */
+    modifier onlyAdminOrArtist(INFT _nftContract) {
+        require(
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
+                msg.sender == _nftContract.artist(),
+            "Admin or the NFT's artist only"
+        );
+        _;
+    }
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -128,7 +143,10 @@ contract Auction is
         sageStorage = ISageStorage(_storage);
     }
 
-    function createAuction(AuctionInfo calldata _auctionInfo) public onlyAdmin {
+    function createAuction(AuctionInfo calldata _auctionInfo)
+        public
+        onlyAdminOrArtist(_auctionInfo.nftContract)
+    {
         require(
             _auctionInfo.endTime == 0 ||
                 _auctionInfo.endTime > _auctionInfo.startTime,
@@ -154,7 +172,7 @@ contract Auction is
     function createAuctionWithCurrency(
         AuctionInfo calldata _auctionInfo,
         address _currency
-    ) external onlyAdmin {
+    ) external onlyAdminOrArtist(_auctionInfo.nftContract) {
         require(
             _currency == address(0) || _currency == NATIVE_CURRENCY,
             "Unsupported currency"
@@ -195,17 +213,21 @@ contract Auction is
      *  0 resets the game to follow the live SageConfig value. */
     function setAuctionArtistShare(uint256 _auctionId, uint256 _shareBps)
         external
-        onlyAdmin
     {
-        require(_shareBps <= 10000, "Invalid share");
         require(auctions[_auctionId].startTime > 0, "Auction doesn't exist");
+        require(
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
+                msg.sender == auctions[_auctionId].nftContract.artist(),
+            "Admin or the NFT's artist only"
+        );
+        require(_shareBps <= 10000, "Invalid share");
         auctionArtistShare[_auctionId] = _shareBps;
     }
 
-    function createAuctionBatch(AuctionInfo[] calldata _auctions)
-        public
-        onlyAdmin
-    {
+    // per-item auth check happens inside createAuction; a mixed-artist batch
+    // (the admin dashboard's use case) still works since the admin clause
+    // there passes for every item regardless of whose auction it is
+    function createAuctionBatch(AuctionInfo[] calldata _auctions) public {
         uint256 length = _auctions.length;
         for (uint256 i = 0; i < length; ++i) {
             createAuction(_auctions[i]);

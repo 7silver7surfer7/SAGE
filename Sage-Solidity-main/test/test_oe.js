@@ -247,10 +247,24 @@ describe("OpenEdition Contract", function() {
         );
     });
 
-    it("Should not call createopenEdition if not admin", async function() {
+    it("Should revert if creating not being admin or the NFT's artist", async function() {
+        const info = { ...openEditionInfo, id: 99 };
         await expect(
-            openEdition.connect(addr1).createOpenEdition(openEditionInfo)
-        ).to.be.revertedWith("Admin calls only");
+            openEdition.connect(addr2).createOpenEdition(info)
+        ).to.be.revertedWith("Admin or the NFT's artist only");
+    });
+
+    it("Should let the NFT's own artist self-serve create, without admin rights", async function() {
+        // artist === addr1 in this suite's fixture
+        const info = { ...openEditionInfo, id: 99 };
+        await expect(openEdition.connect(artist).createOpenEdition(info)).to.not.be.reverted;
+    });
+
+    it("Should still reject overwriting an existing edition id, even from the artist", async function() {
+        // openEditionInfo (id: 2) was already created in beforeEach
+        await expect(
+            openEdition.connect(artist).createOpenEdition(openEditionInfo)
+        ).to.be.revertedWith("Edition already exists");
     });
 
 

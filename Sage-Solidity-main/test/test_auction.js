@@ -121,10 +121,24 @@ describe("Auction Contract", function() {
         );
     });
 
-    it("Should revert if calling create not being admin", async function() {
+    it("Should revert if calling create not being admin or the NFT's artist", async function() {
         await expect(
             auction.connect(addr1).createAuction(auctionInfo)
-        ).to.be.revertedWith("Admin calls only");
+        ).to.be.revertedWith("Admin or the NFT's artist only");
+    });
+
+    it("Should let the NFT's own artist self-serve create, without admin rights", async function() {
+        const info = { ...auctionInfo, auctionId: 99 };
+        await expect(auction.connect(artist).createAuction(info)).to.not.be.reverted;
+        const created = await auction.getAuction(99);
+        expect(created.nftContract).to.equal(nftContractAddress);
+    });
+
+    it("Should still reject overwriting an existing auction id, even from the artist", async function() {
+        // auctionInfo (auctionId: 2) was already created in beforeEach
+        await expect(
+            auction.connect(artist).createAuction(auctionInfo)
+        ).to.be.revertedWith("Auction already exists");
     });
 
     it("Should revert if calling cancel not being admin", async function() {
