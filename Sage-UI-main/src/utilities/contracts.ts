@@ -202,6 +202,15 @@ export function extractErrorMessage(err: any): string {
   } else if (error.code == 4001 || error.code == 'ACTION_REJECTED') {
     // 4001 = MetaMask Tx Signature: User denied transaction signature.
     var rawMessage = 'User denied transaction signature';
+  } else if (error.code === 'CALL_EXCEPTION') {
+    // A transaction that was MINED but reverted on-chain (tx.wait()
+    // rejects). Ethers v5's own message for this is extremely verbose —
+    // it embeds the full transaction AND receipt inline, BigNumber fields
+    // and all ("transaction failed ... receipt={"gasUsed":{"type":
+    // "BigNumber","hex":"0x.."},...,"blockNumber":123,...}") — exactly the
+    // raw JSON dump users would otherwise see in a toast. error.reason has
+    // the parsed revert string when the node surfaced one.
+    return error.reason || 'Transaction reverted on-chain';
   } else {
     // ethers gas-estimation failures bury the node's revert reason in
     // error.error.message / error.data.message; err.message alone is just
@@ -211,6 +220,15 @@ export function extractErrorMessage(err: any): string {
   var key = 'execution reverted: ';
   if (rawMessage.includes(key)) {
     return rawMessage.substring(rawMessage.indexOf(key) + key.length);
+  }
+  // belt-and-braces: some ethers error shapes not caught by the
+  // CALL_EXCEPTION branch above still embed a full receipt/transaction
+  // object as inline JSON later in the same message string — cut it off at
+  // the first brace instead of ever surfacing raw BigNumber/blockNumber
+  // JSON in a toast.
+  const jsonStart = rawMessage.indexOf('{');
+  if (jsonStart > 0) {
+    return rawMessage.substring(0, jsonStart).trim();
   }
   return rawMessage;
 }

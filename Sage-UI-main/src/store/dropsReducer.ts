@@ -1156,21 +1156,36 @@ async function deployCollectionMints(
       if ((saved as any)?.error) throw new Error((saved as any).error);
       console.log(`deployCollectionMints() :: dedicated NFT contract ${nftContractAddress}`);
     }
-    const tx = await contract.createCollection({
-      startTime: Math.floor(new Date(cm.startTime).getTime() / 1000),
-      // null endTime -> closeTime 0 = no deadline, open until sold out
-      closeTime: cm.endTime ? Math.floor(new Date(cm.endTime).getTime() / 1000) : 0,
-      maxSupply: cm.maxSupply,
-      mintCount: 0,
-      limitPerUser: cm.limitPerUser,
-      baseUri: cm.baseUri,
-      nftContract: nftContractAddress,
-      whitelist: whitelistAddress,
-      costTokens: ethers.utils.parseEther(String(cm.costTokens)),
-      id: cm.id,
-      currency: currencyAddressFor((drop as any).currency),
-    });
-    await tx.wait();
+    // Idempotency check: cm.id (a DB auto-increment id, not scoped per
+    // contract) is reused as the ON-CHAIN collection id on every retry.
+    // createCollection() reverts "Collection already exists" if it's
+    // already registered — which happens whenever the tx itself succeeded
+    // but a LATER step in this same function (recording contractAddress
+    // below, or the artist-share call) threw, leaving contractAddress null
+    // in the DB forever while the on-chain collection is real. Every
+    // subsequent re-approve then retried createCollection blind and hit
+    // the same revert, permanently stranding the drop. Checking on-chain
+    // state first makes a retry pick up where it actually left off instead.
+    const existing = await contract.getCollection(cm.id);
+    if (existing.startTime > 0) {
+      console.log(`deployCollectionMints() :: collection #${cm.id} already exists on-chain, skipping createCollection`);
+    } else {
+      const tx = await contract.createCollection({
+        startTime: Math.floor(new Date(cm.startTime).getTime() / 1000),
+        // null endTime -> closeTime 0 = no deadline, open until sold out
+        closeTime: cm.endTime ? Math.floor(new Date(cm.endTime).getTime() / 1000) : 0,
+        maxSupply: cm.maxSupply,
+        mintCount: 0,
+        limitPerUser: cm.limitPerUser,
+        baseUri: cm.baseUri,
+        nftContract: nftContractAddress,
+        whitelist: whitelistAddress,
+        costTokens: ethers.utils.parseEther(String(cm.costTokens)),
+        id: cm.id,
+        currency: currencyAddressFor((drop as any).currency),
+      });
+      await tx.wait();
+    }
     const { data: updated } = await fetchWithBQ(
       `drops?action=UpdateCollectionContractAddress&id=${cm.id}&address=${parameters.COLLECTION_ADDRESS}`
     );
@@ -1704,24 +1719,36 @@ async function deployOpenEditions(
     const startTime = Math.floor(new Date(oe.startTime).getTime() / 1000);
     const closeTime = Math.floor(new Date(oe.endTime).getTime() / 1000);
     const costTokens = ethers.utils.parseEther(String(oe.costTokens));
-    // on-chain struct id == this row's DB id, so UpdateOpenEditionContractAddress
-    // can set editionId = id (see drops.page.ts)
-    const tx = await openEditionContract.createOpenEdition({
-      id: oe.id,
-      startTime,
-      closeTime,
-      costPoints: oe.costPoints,
-      limitPerUser: oe.maxPerUser,
-      mintCount: 0,
-      nftUri: oe.Nft.metadataPath,
-      nftContract: artistNftContractAddress,
-      // AddressZero = ungated; a gated drop passes its SageWhitelist so the
-      // contract enforces the allowlist on every mint path
-      whitelist: whitelistAddress,
-      costTokens,
-      currency: currencyAddressFor((drop as any).currency),
-    });
-    await tx.wait();
+    // Idempotency check: oe.id (a DB id) is reused as the on-chain edition
+    // id on every retry. createOpenEdition() reverts "Edition already
+    // exists" if it's already registered — which happens whenever the tx
+    // itself succeeded but the UpdateOpenEditionContractAddress call (or
+    // the artist-share call) below threw, leaving contractAddress null in
+    // the DB forever while the on-chain edition is real. See the matching
+    // check in deployCollectionMints for the full story.
+    const existingOe = await openEditionContract.getOpenEdition(oe.id);
+    if (existingOe.startTime > 0) {
+      console.log(`deployOpenEditions() :: edition #${oe.id} already exists on-chain, skipping createOpenEdition`);
+    } else {
+      // on-chain struct id == this row's DB id, so UpdateOpenEditionContractAddress
+      // can set editionId = id (see drops.page.ts)
+      const tx = await openEditionContract.createOpenEdition({
+        id: oe.id,
+        startTime,
+        closeTime,
+        costPoints: oe.costPoints,
+        limitPerUser: oe.maxPerUser,
+        mintCount: 0,
+        nftUri: oe.Nft.metadataPath,
+        nftContract: artistNftContractAddress,
+        // AddressZero = ungated; a gated drop passes its SageWhitelist so the
+        // contract enforces the allowlist on every mint path
+        whitelist: whitelistAddress,
+        costTokens,
+        currency: currencyAddressFor((drop as any).currency),
+      });
+      await tx.wait();
+    }
     const params = `id=${oe.id}&address=${openEditionContract.address}`;
     await fetchWithBQ(`drops?action=UpdateOpenEditionContractAddress&${params}`);
     if ((drop as any).isSocial) {
