@@ -2,9 +2,19 @@
 @use '@/styles/abstracts/breakpoints' as b;
 
 .default-pfp-src {
+  // box-sizing: border-box is required here — width/height: 100% plus
+  // padding: 20% without it pushes the rendered box past its container
+  // (padding adds on top of the 100% instead of being carved out of it),
+  // anchored at the top-left since the wrapping span isn't itself centered.
+  // The result: an oversized, off-center icon wherever a caller's own CSS
+  // doesn't happen to reset box-sizing globally (this used to be patched
+  // per-page instead of at the source — see the social-page override this
+  // replaces).
+  box-sizing: border-box;
+  display: block;
   @include m.theme() {
     width: 100%;
-		padding: 20%;
+    padding: 20%;
     height: 100%;
     color: m.t(base);
     background-color: m.t(contrast);
