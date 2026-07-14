@@ -138,7 +138,7 @@ function DMThread({ partner, partnerCard }: { partner: string; partnerCard?: Soc
         <div ref={endRef} />
       </div>
       <div className='social-dm__composer'>
-        <textarea className='social-dm__input' placeholder='Message… (verified feature)' value={text}
+        <textarea className='social-dm__input' placeholder='Message' value={text}
           maxLength={1000} rows={1} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -166,7 +166,7 @@ export default function MessagesPage() {
 
   return (
     <SocialShell>
-      <div className='social'>
+      <div className='social' data-has-active={!!activeDM}>
         <header className='social__header social__header--row'>
           <div>
             <h1 className='social__title'>MESSAGES</h1>

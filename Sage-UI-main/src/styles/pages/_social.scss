@@ -19,6 +19,24 @@ $col-width: 620px;
   &__header {
     margin-bottom: 14px;
   }
+  // an open DM thread takes over the whole mobile screen (see .social-dm
+  // &__thread below) — the page's own MESSAGES title above it just pushes
+  // the composer further out of reach and adds a scroll that a single-pane
+  // chat view shouldn't need.
+  &[data-has-active='true'] &__header {
+    @media (max-width: 719px) {
+      display: none;
+    }
+  }
+  // this page's own top/bottom padding (24px/120px, sized for the normal
+  // scrolling feed) would undercut .social-dm__thread's calc'd fill-height
+  // the same way the header did — zero it out for the one case that's a
+  // fixed-height chat panel, not a feed.
+  &[data-has-active='true'] {
+    @media (max-width: 719px) {
+      padding: 0;
+    }
+  }
   &__title {
     font-family: 'Space Grotesk', 'Inter', sans-serif;
     font-weight: 800;
@@ -923,6 +941,21 @@ $col-width: 620px;
     }
     &[data-has-active='false'] &__thread {
       display: none;
+    }
+    &[data-has-active='true'] &__thread {
+      // full-bleed: the page's own MESSAGES header (hidden alongside this,
+      // see .social[data-has-active]) no longer eats into the space this
+      // needs, and the card look (border/radius/72vh-or-560px card sizing —
+      // both meant for sitting beside the list on desktop) reads as a
+      // floating box with a big dead gap above the composer once it's the
+      // only thing on a mobile screen.
+      width: 100vw;
+      max-width: none;
+      height: calc(100dvh - 90px); // 90px = .social-shell's own tab-bar reservation
+      min-height: 0;
+      border: none;
+      border-radius: 0;
+      background: none;
     }
   }
   &__list {
