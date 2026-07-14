@@ -5,6 +5,7 @@ import {
   useGetNftByAuctionAndWinnerQuery,
 } from '@/store/auctionsReducer';
 import { transformTitle } from '@/utilities/strings';
+import shortenAddress from '@/utilities/shortenAddress';
 import { useEffect, useMemo } from 'react';
 
 interface Args {
@@ -31,7 +32,9 @@ export default function useAuction({ auction, artist, walletAddress }: Args) {
   const startTime = auction.startTime;
   const endTime = auctionState?.endTime || auction.endTime;
   const nftName = transformTitle(auction.Nft.name);
-  const artistName = transformTitle(artist.username);
+  const artistName =
+    transformTitle(auction.Nft.artistDisplayName || artist.username) ||
+    shortenAddress(artist.walletAddress);
   const editionSize = auction.Nft.numberOfEditions;
   const nftPath = auction.Nft.s3PathOptimized;
   const bidLabel = auction.winnerAddress

@@ -931,7 +931,10 @@ async function optimizeImage(path: string): Promise<string> {
   const inputPathParts = path.split('/');
   const inputFilenameParts = inputPathParts.pop().split('.');
   const dstFolder = inputPathParts.pop();
-  const outputFilename = inputFilenameParts[0] + '_opt.' + inputFilenameParts[1];
+  // Filebase/IPFS gateway paths are bare CIDs with no extension — the output
+  // is always sharp-encoded JPEG anyway, so fall back to 'jpg' instead of
+  // producing a literal "_opt.undefined" filename.
+  const outputFilename = inputFilenameParts[0] + '_opt.' + (inputFilenameParts[1] || 'jpg');
   const s3PathOptimized = await uploadBufferToS3(
     dstFolder,
     outputFilename,

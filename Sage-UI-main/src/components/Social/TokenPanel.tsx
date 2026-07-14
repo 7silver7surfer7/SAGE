@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import { useSigner, useProvider } from 'wagmi';
@@ -34,6 +34,28 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
   const [withAirdrop, setWithAirdrop] = useState(false);
   const [busy, setBusy] = useState(false);
   const [needVerify, setNeedVerify] = useState(false);
+  // pump.fun-style square badge: uploaded up-front so the launch record can
+  // carry the S3 URL (kind=avatar → square 400px cover crop)
+  const [imageUrl, setImageUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const filePick = useRef<HTMLInputElement>(null);
+
+  const onPickImage = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/social-upload/?kind=avatar', { method: 'POST', body: form });
+      const d = await res.json();
+      if (!res.ok || !d.url) throw new Error(d.error || 'upload failed');
+      setImageUrl(d.url);
+    } catch (err: any) {
+      toast.error(err?.message || 'Image upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const go = async () => {
     if (!signer) { toast.info('Connect your wallet'); return; }
@@ -44,7 +66,7 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
     const t = toast.loading(buyEth > 0 ? `Launching + buying ${buyEth} ETH…` : 'Launching your coin… (free — you only pay gas)');
     try {
       const { token, txHash, devBuy } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth);
-      await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop, description: description.trim() || undefined, website: website.trim() || undefined }).unwrap();
+      await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop, description: description.trim() || undefined, website: website.trim() || undefined, imageUrl: imageUrl || undefined }).unwrap();
       if (devBuy) {
         // the dev buy is a real Bought event in the launch tx — record it so
         // the chart, holders and trades all start seeded
@@ -75,8 +97,45 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
           from 0.30% to 0.95% as market cap climbs; after graduation total fees drop with
           size (0.95% → 0.20%) and you keep the majority, claimable any time.
         </p>
-        <input className='social-search__input' placeholder='Coin name (e.g. Chartreuse Gang)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
-        <input className='social-search__input' placeholder='Ticker (e.g. CHRT)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 12 }} />
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 10 }}>
+          <button
+            type='button'
+            className='social-launch-badge'
+            onClick={() => filePick.current?.click()}
+            disabled={uploading}
+            title='Coin image — shown as a square badge, pump.fun style'
+            style={{
+              width: 72,
+              height: 72,
+              flex: '0 0 72px',
+              borderRadius: 12,
+              border: '1px dashed rgba(255,255,255,0.35)',
+              background: imageUrl
+                ? `center / cover no-repeat url(${imageUrl})`
+                : 'rgba(255,255,255,0.06)',
+              color: 'inherit',
+              cursor: 'pointer',
+              fontSize: imageUrl ? 0 : 22,
+              lineHeight: 1,
+            }}
+          >
+            {uploading ? '…' : imageUrl ? '' : '📷'}
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <input className='social-search__input' placeholder='Coin name (e.g. Chartreuse Gang)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10, width: '100%' }} />
+            <input className='social-search__input' placeholder='Ticker (e.g. CHRT)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ width: '100%' }} />
+          </div>
+          <input
+            ref={filePick}
+            type='file'
+            accept='image/*'
+            hidden
+            onChange={(e) => {
+              onPickImage(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
+        </div>
         <textarea
           className='social-search__input'
           placeholder='One-liner about your coin (shown on its page)'

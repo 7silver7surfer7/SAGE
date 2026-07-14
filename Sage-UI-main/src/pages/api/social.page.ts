@@ -2125,7 +2125,9 @@ async function recordTokenLaunch(
         name: String(name).slice(0, 40),
         symbol: String(symbol).slice(0, 12),
         launchTxHash,
-        imageUrl: imageUrl || null,
+        // same own-bucket check as post media — otherwise anyone could brand
+        // their token with an arbitrary external URL we then hotlink site-wide
+        imageUrl: imageUrl && isOwnSocialMediaUrl(imageUrl) ? imageUrl : null,
         description: description ? String(description).slice(0, 300) : null,
         website:
           website && /^https?:\/\//.test(String(website)) ? String(website).slice(0, 120) : null,

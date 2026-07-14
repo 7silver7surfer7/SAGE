@@ -25,7 +25,12 @@ const nextConfig = {
       // SAGE Social uploads (avatars/banners/post media) land here — without
       // this entry next/image REFUSES the host and avatars render blank
       // (in dev it even crashes the tree)
-      'sageart-media-mirror.s3.us-east-2.amazonaws.com'
+      'sageart-media-mirror.s3.us-east-2.amazonaws.com',
+      // Social NFT drops pin artwork/metadata to Filebase (IPFS) — the Nft
+      // rows store gateway URLs, and the drops page SSR-renders them through
+      // next/image. An unlisted host makes next/image THROW during the server
+      // render, 500ing the whole /drops/[id] page (the "Place bid" crash).
+      'ipfs.filebase.io'
     ],
   },
   webpack: (config) => {

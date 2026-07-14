@@ -1,5 +1,8 @@
 // usage: standard string manipulation through entire site for 1) drop names 2) nft names 3) game names, 4) artist names throughout app
-export function transformTitle(title: string) {
+export function transformTitle(title: string | null | undefined) {
+  // Wallet-native social users may have no username at all — a null here
+  // used to 500 every page rendering their drops server-side.
+  if (!title) return '';
   return title.charAt(0).toUpperCase() + title.slice(1);
 }
 

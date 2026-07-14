@@ -1,5 +1,6 @@
 import { Drop, User } from '@prisma/client';
 import { formatDateYYMMddHHmm, transformTitle } from '@/utilities/strings';
+import shortenAddress from '@/utilities/shortenAddress';
 import useSageRoutes from './useSageRoutes';
 import { computeDropStatus } from '@/utilities/status';
 import { Lottery_include_Nft, Auction_include_Nft, OpenEdition_include_Nft } from '@/prisma/types';
@@ -25,7 +26,9 @@ function useDrop({ drop, artist, Lotteries, Auctions, OpenEditions, CollectionMi
     CollectionMints,
   });
   const dropName: string = transformTitle(drop.name);
-  const artistName: string = transformTitle(artist.username);
+  const artistName: string =
+    transformTitle(drop.artistDisplayName || artist.username) ||
+    shortenAddress(artist.walletAddress);
   const bannerImgSrc: string = drop.bannerImageS3Path;
   const dropDescription: string = drop.description;
   // const artistLocation: string = artist.state + ',' + artist.country;

@@ -524,7 +524,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             </span>
           </button>
         )}
-        {post.collectPrice !== null && (
+        {post.collectPrice !== null && !post.dropId && (
           <div className='social-post__collect-row'>
             <button
               className='social-post__collect'
@@ -586,6 +586,9 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             {post.boostBurned > 0 && <span>{post.boostBurned}</span>}
           </button>
           {isOwnPost ? (
+            // Drop posts are storefronts — bids/mints happen through the drop
+            // itself, so the collect-as-NFT controls make no sense on them.
+            post.dropId ? null : (
             <>
               <button
                 className='social-post__action social-post__action--tip'
@@ -632,6 +635,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
                 </>
               )}
             </>
+            )
           ) : (
             <button
               className='social-post__action social-post__action--tip'
