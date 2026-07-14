@@ -37,11 +37,9 @@ interface IWETHMin {
  *
  * Graduated tokens live on a Uniswap v2 pool whose LP is BURNED (liquidity
  * locked forever). This router is the app's trading path for those pools,
- * mirroring PumpSwap's economics on top of Uniswap's own 0.30% LP fee:
- *
- *   0.25% protocol fee on the ETH side of every swap
- *     ├─ 0.05% accrues to the token's CREATOR (claimable any time)
- *     └─ 0.20% goes to the platform treasury instantly
+ * mirroring PumpSwap's DYNAMIC fees on top of Uniswap's own 0.30% LP fee:
+ * the total protocol fee falls as market cap grows (0.95% → 0.50% → 0.20%),
+ * and the CREATOR keeps the majority share at every tier, claimable any time.
  *
  * The pool itself stays permissionless — anyone can bypass the router and
  * trade the pair directly with zero protocol fee. The router is the default
@@ -51,8 +49,14 @@ interface IWETHMin {
  * holder tracking keep working across the graduation boundary unchanged.
  */
 contract SageSwapRouter is ReentrancyGuard {
-    uint16 public constant ROUTER_FEE_BPS = 25; // 0.25% total on the ETH side
-    uint16 public constant CREATOR_FEE_BPS = 5; // of which 0.05% → creator accrual
+    // ── DYNAMIC FEES (pump.fun PumpSwap tiers): total fee falls as market
+    // cap grows; the creator keeps the majority share at every tier.
+    //   mcap < tier1  → 0.95% (0.65% creator / 0.30% treasury)
+    //   tier1..tier2  → 0.50% (0.35% creator / 0.15% treasury)
+    //   ≥ tier2       → 0.20% (0.12% creator / 0.08% treasury)
+    uint256 public feeTier1McapWei;
+    uint256 public feeTier2McapWei;
+    event FeeTiersUpdated(uint256 tier1, uint256 tier2);
 
     ISocialTokenFactoryMin public immutable curveFactory;
     address public immutable weth;
@@ -72,6 +76,33 @@ contract SageSwapRouter is ReentrancyGuard {
         curveFactory = ISocialTokenFactoryMin(_curveFactory);
         weth = _weth;
         treasury = _treasury;
+        feeTier1McapWei = 86 ether; // ≈ $300k at deploy-time ETH price
+        feeTier2McapWei = 286 ether; // ≈ $1M
+    }
+
+    /** Treasury retunes tiers as the ETH price moves — no redeploy. */
+    function setFeeTiers(uint256 tier1, uint256 tier2) external {
+        require(msg.sender == treasury, 'only treasury');
+        require(tier1 < tier2, 'tier order');
+        feeTier1McapWei = tier1;
+        feeTier2McapWei = tier2;
+        emit FeeTiersUpdated(tier1, tier2);
+    }
+
+    /** Pool mcap in wei: pool spot price × 1B supply. */
+    function poolMcapWei(address token) public view returns (uint256) {
+        (uint256 tokenReserve, uint256 wethReserve) = _reserves(_pairFor(token), token);
+        if (tokenReserve == 0) return 0;
+        return (wethReserve * 1_000_000_000 * 1 ether) / tokenReserve;
+    }
+
+    /** (totalBps, creatorBps) at the token's current pool mcap. */
+    function feeBpsFor(address token) public view returns (uint16 totalBps, uint16 creatorBps) {
+        (uint256 tokenReserve, uint256 wethReserve) = _reserves(_pairFor(token), token);
+        uint256 mcap = tokenReserve == 0 ? 0 : (wethReserve * 1_000_000_000 * 1 ether) / tokenReserve;
+        if (mcap >= feeTier2McapWei) return (20, 12);
+        if (mcap >= feeTier1McapWei) return (50, 35);
+        return (95, 65);
     }
 
     receive() external payable {} // WETH withdrawals
@@ -106,7 +137,8 @@ contract SageSwapRouter is ReentrancyGuard {
 
     /** Quote a buy: tokens out for the post-fee ETH input. */
     function quoteBuy(address token, uint256 ethIn) external view returns (uint256) {
-        uint256 fee = (ethIn * ROUTER_FEE_BPS) / 10000;
+        (uint16 totalBps, ) = feeBpsFor(token);
+        uint256 fee = (ethIn * totalBps) / 10000;
         (uint256 tokenReserve, uint256 wethReserve) = _reserves(_pairFor(token), token);
         return _getAmountOut(ethIn - fee, wethReserve, tokenReserve);
     }
@@ -114,8 +146,9 @@ contract SageSwapRouter is ReentrancyGuard {
     function buy(address token, uint256 minTokensOut) external payable nonReentrant {
         require(msg.value > 0, 'no eth');
         address pair = _pairFor(token);
-        uint256 fee = (msg.value * ROUTER_FEE_BPS) / 10000;
-        uint256 creatorFee = (msg.value * CREATOR_FEE_BPS) / 10000;
+        (uint16 totalBps, uint16 creatorBps) = feeBpsFor(token);
+        uint256 fee = (msg.value * totalBps) / 10000;
+        uint256 creatorFee = (msg.value * creatorBps) / 10000;
         uint256 ethIn = msg.value - fee;
 
         creatorFees[token] += creatorFee;
@@ -145,8 +178,9 @@ contract SageSwapRouter is ReentrancyGuard {
         IUniswapV2PairMin(pair).swap(tokenIs0 ? 0 : wethOut, tokenIs0 ? wethOut : 0, address(this), new bytes(0));
         IWETHMin(weth).withdraw(wethOut);
 
-        uint256 fee = (wethOut * ROUTER_FEE_BPS) / 10000;
-        uint256 creatorFee = (wethOut * CREATOR_FEE_BPS) / 10000;
+        (uint16 totalBps, uint16 creatorBps) = feeBpsFor(token);
+        uint256 fee = (wethOut * totalBps) / 10000;
+        uint256 creatorFee = (wethOut * creatorBps) / 10000;
         uint256 ethOut = wethOut - fee;
         require(ethOut >= minEthOut, 'slippage');
 

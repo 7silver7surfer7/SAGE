@@ -55,6 +55,8 @@ export default function TokenDetailPage() {
   const [holdersOffset, setHoldersOffset] = useState(0);
   // creator revenue share (router fees) — claimable any time
   const [creatorFees, setCreatorFees] = useState<{ claimable: number; lifetime: number } | null>(null);
+  // live price straight from the chain-event tape — beats the 10s poll
+  const [livePrice, setLivePrice] = useState<number | null>(null);
   const [tradesOffset, setTradesOffset] = useState(0);
   const { data: holdersPage, isFetching: loadingHolders } = useGetTokenHoldersPageQuery(
     { address, offset: holdersOffset },
@@ -285,10 +287,13 @@ export default function TokenDetailPage() {
         {/* pump.fun-style market header: big mcap + 24h change + ATH bar */}
         {(() => {
           const ethUsd = data?.ethUsd || 0;
-          const mcap = (data?.priceEth || 0) * 1000 * ethUsd;
+          const priceNow = livePrice ?? data?.priceEth ?? 0;
+          const mcap = priceNow * 1000 * ethUsd;
           const mcapAgo = (data?.price24hAgoEth || 0) * 1000 * ethUsd;
           const diff = mcap - mcapAgo;
           const pct = mcapAgo > 0 ? (diff / mcapAgo) * 100 : 0;
+          // ATH holds the peak; the fill tracks the LIVE price so dumps show
+          // instantly (the bar recedes from the record)
           const ath = Math.max((data?.athPriceEth || 0) * 1000 * ethUsd, mcap);
           const fmtUsd = (v: number) =>
             v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(1)}K` : `$${v.toFixed(2)}`;
@@ -316,7 +321,7 @@ export default function TokenDetailPage() {
         })()}
 
         <div className='token-page__stats'>
-          <div><span>Price</span><b>{data?.priceEth ? data.priceEth.toPrecision(3) : '0'} <em>ETH/1M</em></b></div>
+          <div><span>Price</span><b>{(livePrice ?? data?.priceEth) ? (livePrice ?? data!.priceEth).toPrecision(3) : '0'} <em>ETH/1M</em></b></div>
           <div><span>Holders</span><b>{data?.holderCount ?? 0}</b></div>
           <div><span>Trades</span><b>{data?.tradeCount ?? 0}</b></div>
           <div
@@ -363,6 +368,7 @@ export default function TokenDetailPage() {
           // if the price feed is down
           scaleFactor={data?.ethUsd ? 1000 * data.ethUsd : 1}
           pairAddress={data?.uniswapPair || null}
+          onPrice={setLivePrice}
         />
 
         <div className='token-page__curve'>

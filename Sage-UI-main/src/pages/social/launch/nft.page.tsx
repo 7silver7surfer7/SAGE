@@ -48,7 +48,6 @@ export default function LaunchNftPage() {
   const router = useRouter();
   const { walletAddress, userData } = useSAGEAccount();
   const addr = walletAddress || (userData as any)?.walletAddress || '';
-  const viewerVerified = !!(userData as any)?.verifiedAt;
   const [kind, setKind] = useState<LaunchKind>('mint');
 
   // shared drop-form state
@@ -185,14 +184,6 @@ export default function LaunchNftPage() {
 
         {!addr ? (
           <div className='social__empty'>Connect your wallet to launch.</div>
-        ) : !viewerVerified ? (
-          <div className='social-launch__done' style={{ cursor: 'pointer' }} onClick={() => setShowVerify(true)}>
-            <h3>Launching is a verified perk</h3>
-            <p>
-              Get the $10 checkmark to launch mints, open editions, auctions and ZIP collections —
-              your gas, your royalties. Tap to get verified.
-            </p>
-          </div>
         ) : liveDropId ? (
           <div className='social-launch__done'>
             <h3>🎉 “{title}” is in the pipeline</h3>

@@ -91,6 +91,7 @@ export default function CandleChart({
   trades = [],
   tokenAddress,
   onLiveTrade,
+  onPrice,
   bucketS = DEFAULT_BUCKET_S,
   scaleFactor = 1,
   pairAddress = null,
@@ -99,6 +100,9 @@ export default function CandleChart({
   trades?: TradePoint[];
   tokenAddress: string;
   onLiveTrade?: () => void;
+  /** fires with the RAW price (ETH per 1M) every time a trade paints — feeds
+   *  the live mcap header + ATH bar without waiting for the poll */
+  onPrice?: (ethPerMillion: number) => void;
   /** candle width in seconds (60 = 1m, 300 = 5m, …) */
   bucketS?: number;
   /** multiply raw prices (ETH/1M) into the display unit — pass 1000×ethUsd
@@ -211,7 +215,9 @@ export default function CandleChart({
         const spotWei = router
           ? await router.poolPriceWei(tokenAddress)
           : await factory.spotPriceWei(tokenAddress);
-        const price = Number(ethers.utils.formatEther(spotWei.mul(1_000_000))) * scaleFactor;
+        const raw = Number(ethers.utils.formatEther(spotWei.mul(1_000_000)));
+        onPrice?.(raw);
+        const price = raw * scaleFactor;
         const now = (Math.floor(Date.now() / 1000 / bucketS) * bucketS) as UTCTimestamp;
         const last = lastCandleRef.current;
         let candle: Candle;

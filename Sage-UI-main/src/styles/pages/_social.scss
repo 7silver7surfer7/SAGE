@@ -4159,3 +4159,19 @@ body:has([class*='__overlay']) .layout {
     }
   }
 }
+
+// the coin-launch modal: roomier, fields stacked full-width (the compact
+// --launch flex-wrap made description/website jumble side by side)
+.social-launch-modal {
+  width: min(560px, 94vw) !important;
+  display: flex !important;
+  flex-direction: column;
+  flex-wrap: nowrap !important;
+  > input,
+  > textarea,
+  > .social-unit-input,
+  > label {
+    width: 100%;
+    box-sizing: border-box;
+  }
+}

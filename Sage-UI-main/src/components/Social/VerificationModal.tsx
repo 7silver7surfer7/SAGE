@@ -10,8 +10,6 @@ import VerifiedBadge from './VerifiedBadge';
 
 const BENEFITS = [
   ['Verified checkmark', 'Shown next to your name everywhere on SAGE Social'],
-  ['Launch creator coins', 'Your own token on the pump.fun curve — auto-graduates to Uniswap'],
-  ['Launch NFTs', 'Mints, open editions, auctions and ZIP collections — your gas, your royalties'],
   ['Sell posts as NFTs', 'Images sell in ETH; tweets sell in pixels — collectors mint them to their wallet'],
   ['Collect posts', 'Mint other artists’ posts — pay in ETH or pixels'],
   ['Earn pixels holding SAGE', 'Pixels stream to your wallet every second, on-chain'],

@@ -67,8 +67,16 @@ contract SocialTokenFactory is ReentrancyGuard {
     uint256 public constant INITIAL_VIRTUAL_TOKEN_RESERVES = 1_073_000_000 ether;
     uint256 public constant INITIAL_REAL_TOKEN_RESERVES = 793_100_000 ether;
     uint256 public constant AIRDROP_CUT = 20_000_000 ether; // 2%, only when enabled
-    uint16 public constant FEE_BPS = 100; // 1% total trade fee
-    uint16 public constant CREATOR_FEE_BPS = 5; // 0.05% of volume to the creator
+    // ── DYNAMIC FEES (pump.fun Project-Ascend style) ──
+    // Curve trades pay 1.25% total; the creator/treasury split FLIPS toward
+    // the creator once market cap crosses tier1 — early trades fund the
+    // platform, mature tokens fund their creator.
+    uint16 public constant FEE_BPS = 125; // 1.25% total trade fee
+    uint16 public constant CREATOR_FEE_BPS_LOW = 30; // 0.30% creator below tier1
+    uint16 public constant CREATOR_FEE_BPS_HIGH = 95; // 0.95% creator at/above tier1
+    // mcap threshold in wei (price × 1B supply); adjustable by the treasury
+    uint256 public feeTier1McapWei;
+    event FeeTierUpdated(uint256 tier1McapWei);
 
     address public immutable treasury;
     uint256 public immutable initialVirtualEth;
@@ -115,6 +123,26 @@ contract SocialTokenFactory is ReentrancyGuard {
         initialVirtualEth = _initialVirtualEth;
         uniswapFactory = _uniswapFactory;
         weth = _weth;
+        feeTier1McapWei = 86 ether; // ≈ $300k mcap at deploy-time ETH price
+    }
+
+    /** Treasury retunes the fee tier as the ETH price moves — no redeploy. */
+    function setFeeTier(uint256 tier1McapWei) external {
+        require(msg.sender == treasury, 'only treasury');
+        feeTier1McapWei = tier1McapWei;
+        emit FeeTierUpdated(tier1McapWei);
+    }
+
+    /** Current mcap in wei: spot price × 1B supply. */
+    function mcapWei(address token) public view returns (uint256) {
+        Curve storage c = curves[token];
+        if (c.virtualTokenReserves == 0) return 0;
+        return (c.virtualEthReserves * 1 ether * 1_000_000_000) / c.virtualTokenReserves;
+    }
+
+    /** The creator's bps share of FEE_BPS at this token's current mcap. */
+    function creatorFeeBps(address token) public view returns (uint16) {
+        return mcapWei(token) >= feeTier1McapWei ? CREATOR_FEE_BPS_HIGH : CREATOR_FEE_BPS_LOW;
     }
 
     function allTokensLength() external view returns (uint256) {
@@ -215,7 +243,7 @@ contract SocialTokenFactory is ReentrancyGuard {
         require(!c.complete, 'curve complete - sold out');
         require(value > 0, 'no eth');
         uint256 fee = (value * FEE_BPS) / 10000;
-        uint256 creatorFee = (value * CREATOR_FEE_BPS) / 10000;
+        uint256 creatorFee = (value * creatorFeeBps(token)) / 10000;
         uint256 ethIn = value - fee;
         uint256 out = quoteBuy(token, ethIn);
         require(out >= minTokensOut, 'slippage');
@@ -246,7 +274,7 @@ contract SocialTokenFactory is ReentrancyGuard {
         // flooring dust can nudge past real holdings on a full round-trip
         if (ethOut > c.realEthReserves) ethOut = c.realEthReserves;
         uint256 fee = (ethOut * FEE_BPS) / 10000;
-        uint256 creatorFee = (ethOut * CREATOR_FEE_BPS) / 10000;
+        uint256 creatorFee = (ethOut * creatorFeeBps(token)) / 10000;
         require(ethOut - fee >= minEthOut, 'slippage');
         c.virtualTokenReserves += amount;
         c.virtualEthReserves -= ethOut;

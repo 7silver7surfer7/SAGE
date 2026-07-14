@@ -2087,7 +2087,8 @@ async function recordTokenLaunch(
   res: NextApiResponse,
   r: { walletAddress: string }
 ) {
-  if (!(await requireVerified(r.walletAddress, res))) return; // premium: launching is a paid perk
+  if (!(await canParticipate(r.walletAddress)))
+    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
   const { tokenAddress, name, symbol, launchTxHash, imageUrl, airdropEnabled, description, website } = req.body || {};
   const token = canon(tokenAddress);
   if (!token || !launchTxHash || !name || !symbol)
@@ -2421,7 +2422,8 @@ async function recordEditionLaunch(
   res: NextApiResponse,
   r: { walletAddress: string }
 ) {
-  if (!(await requireVerified(r.walletAddress, res))) return; // premium perk
+  if (!(await canParticipate(r.walletAddress)))
+    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
   const { editionAddress, name, symbol, imageUrl, priceEth, maxSupply, launchTxHash } = req.body || {};
   const edition = canon(editionAddress);
   const launcher = parameters.SOCIAL_NFT_LAUNCHER_ADDRESS;

@@ -63,15 +63,17 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
   if (needVerify) return <VerificationModal onClose={onClose} />;
   return (
     <div className='social-verify__overlay' onClick={onClose}>
-      <div className='social-verify social-verify--launch' onClick={(e) => e.stopPropagation()}>
+      <div className='social-verify social-verify--launch social-launch-modal' onClick={(e) => e.stopPropagation()}>
         <div className='social-verify__head'>
           <h3>🚀 Launch your coin</h3>
           <button className='social-verify__close' onClick={onClose}>✕</button>
         </div>
         <p className='social-verify__blurb'>
           The pump.fun bonding curve, ported to ETH: 1B supply, 793.1M sold off the curve,
-          graduation when it sells out. Launching is FREE (gas only). Every trade pays a 1%
-          fee — 0.05% streams back to YOU, the rest to the platform.
+          auto-graduates to a Uniswap pool (LP burned) when it sells out. Launching is FREE
+          (gas only). Fees are DYNAMIC like pump.fun: 1.25% on the curve — your share grows
+          from 0.30% to 0.95% as market cap climbs; after graduation total fees drop with
+          size (0.95% → 0.20%) and you keep the majority, claimable any time.
         </p>
         <input className='social-search__input' placeholder='Coin name (e.g. Chartreuse Gang)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
         <input className='social-search__input' placeholder='Ticker (e.g. CHRT)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 12 }} />
@@ -92,7 +94,7 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
           onChange={(e) => setWebsite(e.target.value)}
           style={{ marginBottom: 12 }}
         />
-        <label className='social-edit__label'>Initial buy — seeds your chart, makes you holder #1</label>
+        <label className='social-edit__label'>Initial buy — makes you holder #1</label>
         <div className='social-unit-input' style={{ marginBottom: 12 }}>
           <input placeholder='0.01 (0 = skip)' value={initialBuy} onChange={(e) => setInitialBuy(e.target.value)} />
           <span>ETH</span>
