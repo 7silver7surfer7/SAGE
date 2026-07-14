@@ -109,15 +109,18 @@ export default function drop({ drop, auctions, artist, drawings, openEditions, c
   return (
     <>
       <div className='drop-page'>
-        {/* a child of .drop-page (position: relative), not a sibling — the
-            app's scroll container (.layout) is position: static, so an
-            absolutely-positioned sibling here has no positioned ancestor
-            and pins to the viewport instead of scrolling with the page,
-            which is what let it "bleed through" the footer on scroll. */}
-        <div className='drop-page__banner-base'>
-          <BaseMedia src={bannerImgSrc} />
-        </div>
         <header className='drop-page__header'>
+          {/* a child of .drop-page__header (position: relative), sized to
+              ITS height, not a flat fixed pixel value — a fixed height taller
+              than a short header's own content overlapped into the games
+              grid below it ("the image is leaning on the banner"); shorter
+              (the old 100vh) bled into the footer instead. Matching the
+              header's own box means it can never do either. Full-bleed width
+              via the left:50%/translateX(-50%) breakout, since the header
+              itself is a standard-width (not full viewport) column. */}
+          <div className='drop-page__banner-base'>
+            <BaseMedia src={bannerImgSrc} />
+          </div>
           <div className='drop-page__header-logotype'>
             <Logotype dataColor='white' />
           </div>

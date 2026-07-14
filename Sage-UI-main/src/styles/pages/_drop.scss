@@ -66,18 +66,26 @@ strong {
   // z-index 0 (NOT -1): a negative z drops this layer BEHIND the layout's
   // background, which is white in light theme — the darkened banner became
   // invisible and left white hero text on a white page. At 0 it paints over
-  // the layout background, and .drop-page (z-index 1) carries the text above.
+  // the layout background, and the header's own text content (lifted to
+  // z-index 1 below) carries above it.
   z-index: 0;
-  // FIXED height, not 100vh: a viewport-relative height ignores the page's
-  // actual content length. On a short drop (little/no games below the hero)
-  // the page is shorter than one viewport, so a 100vh banner reached straight
-  // through the header AND into the footer beneath it — read as "there's a
-  // banner on the footer". A moderate fixed height comfortably covers the
-  // hero (logo/title/description) on every drop without risking bleeding
-  // into whatever follows, however short that drop's own content is.
-  height: 560px;
-  width: 100%;
+  // Sized to the HEADER'S own box (height: 100%, .drop-page__header is the
+  // positioned parent), not a flat pixel value. A fixed height taller than a
+  // short header's own content overlapped into the games grid right below it
+  // ("the tile image leaning on the banner, no gap"); the old 100vh reached
+  // through the footer instead. Tracking the header's real content height
+  // can't do either — the banner is exactly as tall as what it's the
+  // backdrop for, on every drop regardless of title/description length.
+  height: 100%;
   position: absolute;
+  top: 0;
+  // full-bleed width breakout: .drop-page__header itself is a centered,
+  // standard-width column, so 100% here would box the banner in with it —
+  // this classic 50%/-50vw trick re-centers a 100vw box on the viewport
+  // regardless of the (narrower) positioned parent's own width.
+  left: 50%;
+  width: 100vw;
+  transform: translateX(-50%);
   filter: brightness(30%);
   // solid dark backdrop so the WHITE hero text stays readable even when the
   // banner is missing or hasn't loaded (social ZIP drops have no banner until
@@ -135,6 +143,11 @@ strong {
   @include m.standard-width;
   display: flex;
   justify-content: start;
+  // lifted above .drop-page__banner-base (z-index 0, now a sibling here
+  // instead of an ancestor's problem to solve) — z-index needs `position`
+  // to do anything, which this lacked before
+  position: relative;
+  z-index: 1;
 }
 
 //the bottom section below the logo type
@@ -142,7 +155,8 @@ strong {
   display: flex;
   flex: 1;
   color: c.$white;
-  z-index: 99;
+  position: relative;
+  z-index: 1;
   gap: 40px;
   @include m.standard-width;
 }

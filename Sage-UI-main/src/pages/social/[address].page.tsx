@@ -11,7 +11,6 @@ import EditProfileModal from '@/components/Social/EditProfileModal';
 import { InviteGate } from '@/components/Social/Composer';
 import MediaCropModal from '@/components/Social/MediaCropModal';
 import TokenPanel from '@/components/Social/TokenPanel';
-import EditionPanel from '@/components/Social/EditionPanel';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
@@ -392,7 +391,6 @@ export default function SocialProfilePage() {
             <b>{profile.followGatedDrops.map((d) => d.name).join(', ')}</b>
           </div>
         )}
-        <EditionPanel address={profile.address} isSelf={profile.isSelf} />
         {profile.isSelf && profile.myDrops.length > 0 && (
           <div className='social-profile__gates'>
             <h4>Follow-to-allowlist</h4>
