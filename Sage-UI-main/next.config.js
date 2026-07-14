@@ -21,7 +21,11 @@ const nextConfig = {
       'sage-art.s3.us-east-2.amazonaws.com',
       'd2k3k1d7773avn.cloudfront.net',
       // DiceBear: free, CC0 generative art avatars (SAGE Social bot pfps)
-      'api.dicebear.com'
+      'api.dicebear.com',
+      // SAGE Social uploads (avatars/banners/post media) land here — without
+      // this entry next/image REFUSES the host and avatars render blank
+      // (in dev it even crashes the tree)
+      'sageart-media-mirror.s3.us-east-2.amazonaws.com'
     ],
   },
   webpack: (config) => {
