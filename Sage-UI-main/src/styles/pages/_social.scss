@@ -2681,6 +2681,13 @@ body:has([class*='__overlay']) .layout {
     align-items: center;
     gap: 14px;
     margin-bottom: 16px;
+    // Squeezing the description into a narrow column beside a fixed-width
+    // avatar forces a long bio into many short wrapped lines, running it
+    // right up against the market-cap stats below. Stacking on mobile gives
+    // it the full container width instead.
+    @media (max-width: 640px) {
+      flex-wrap: wrap;
+    }
   }
   &__art {
     width: 64px;
@@ -2705,6 +2712,9 @@ body:has([class*='__overlay']) .layout {
       font-size: 1.5rem;
       font-weight: 800;
       @include m.theme() { color: m.t(accent); }
+    }
+    @media (max-width: 640px) {
+      flex-basis: 100%;
     }
   }
   &__name {
