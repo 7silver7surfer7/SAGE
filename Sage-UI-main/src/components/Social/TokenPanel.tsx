@@ -18,7 +18,11 @@ import VerificationModal from './VerificationModal';
 import { useRecordTradeMutation } from '@/store/socialReducer';
 import { humanWalletError } from '@/utilities/walletError';
 
-/** Launch modal — a verified creator mints their coin (pays the launch fee). */
+/**
+ * Launch modal — pump.fun-faithful form: name+ticker row, description,
+ * social links, a big drag-and-drop art upload with the limits printed on
+ * the module, and an optional wide banner for the coin page.
+ */
 function LaunchModal({ onClose }: { onClose: () => void }) {
   const { data: signer } = useSigner();
   const [record] = useRecordTokenLaunchMutation();
@@ -30,43 +34,64 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
   const [initialBuy, setInitialBuy] = useState('0.01');
   const [description, setDescription] = useState('');
   const [website, setWebsite] = useState('');
+  const [linksOpen, setLinksOpen] = useState(false);
   // default OFF: no-dump launches are the norm — opting IN reserves the 2%
   const [withAirdrop, setWithAirdrop] = useState(false);
   const [busy, setBusy] = useState(false);
   const [needVerify, setNeedVerify] = useState(false);
-  // pump.fun-style square badge: uploaded up-front so the launch record can
-  // carry the S3 URL (kind=avatar → square 400px cover crop)
+  // coin art (square) + optional banner, uploaded up-front so the launch
+  // record carries the S3 URLs (kind=avatar → 400² cover; kind=banner → 1500×500)
   const [imageUrl, setImageUrl] = useState('');
-  const [uploading, setUploading] = useState(false);
+  const [bannerUrl, setBannerUrl] = useState('');
+  const [uploading, setUploading] = useState<'' | 'art' | 'banner'>('');
+  const [dragOver, setDragOver] = useState(false);
+  const [bannerOpen, setBannerOpen] = useState(false);
   const filePick = useRef<HTMLInputElement>(null);
+  const bannerPick = useRef<HTMLInputElement>(null);
 
-  const onPickImage = async (file: File | undefined) => {
+  const upload = async (file: File | undefined, kind: 'art' | 'banner') => {
     if (!file) return;
-    setUploading(true);
+    if (!/^image\//.test(file.type)) { toast.error('Images only — jpg, png, webp or gif'); return; }
+    if (file.size > 12 * 1024 * 1024) { toast.error('Images are capped at 12MB'); return; }
+    setUploading(kind);
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch('/api/social-upload/?kind=avatar', { method: 'POST', body: form });
+      const res = await fetch(`/api/social-upload/?kind=${kind === 'art' ? 'avatar' : 'banner'}`, {
+        method: 'POST',
+        body: form,
+      });
       const d = await res.json();
       if (!res.ok || !d.url) throw new Error(d.error || 'upload failed');
-      setImageUrl(d.url);
+      if (kind === 'art') setImageUrl(d.url);
+      else setBannerUrl(d.url);
     } catch (err: any) {
       toast.error(err?.message || 'Image upload failed');
     } finally {
-      setUploading(false);
+      setUploading('');
     }
   };
 
   const go = async () => {
     if (!signer) { toast.info('Connect your wallet'); return; }
-    if (!name.trim() || !symbol.trim()) { toast.error('Name and symbol required'); return; }
+    if (!name.trim() || !symbol.trim()) { toast.error('Name and ticker required'); return; }
     const buyEth = Number(initialBuy) || 0;
     if (buyEth < 0) { toast.error('Initial buy cannot be negative'); return; }
     setBusy(true);
     const t = toast.loading(buyEth > 0 ? `Launching + buying ${buyEth} ETH…` : 'Launching your coin… (free — you only pay gas)');
     try {
       const { token, txHash, devBuy } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth);
-      await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop, description: description.trim() || undefined, website: website.trim() || undefined, imageUrl: imageUrl || undefined }).unwrap();
+      await record({
+        tokenAddress: token,
+        name: name.trim(),
+        symbol: symbol.trim().toUpperCase(),
+        launchTxHash: txHash,
+        airdropEnabled: withAirdrop,
+        description: description.trim() || undefined,
+        website: website.trim() || undefined,
+        imageUrl: imageUrl || undefined,
+        bannerUrl: bannerUrl || undefined,
+      }).unwrap();
       if (devBuy) {
         // the dev buy is a real Bought event in the launch tx — record it so
         // the chart, holders and trades all start seeded
@@ -85,75 +110,142 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
   if (needVerify) return <VerificationModal onClose={onClose} />;
   return (
     <div className='social-verify__overlay' onClick={onClose}>
-      <div className='social-verify social-verify--launch social-launch-modal' onClick={(e) => e.stopPropagation()}>
+      <div className='social-verify social-verify--launch social-launch-modal social-launch-modal--pump' onClick={(e) => e.stopPropagation()}>
         <div className='social-verify__head'>
           <h3>🚀 Launch your coin</h3>
           <button className='social-verify__close' onClick={onClose}>✕</button>
         </div>
-        <p className='social-verify__blurb'>
-          The pump.fun bonding curve, ported to ETH: 1B supply, 793.1M sold off the curve,
-          auto-graduates to a Uniswap pool (LP burned) when it sells out. Launching is FREE
-          (gas only). Fees run pump.fun&apos;s exact schedule: 1.25% on the curve (0.30% yours);
-          after graduation the tiers stagger by market cap — your share peaks at 0.95% past
-          $85k and glides to 0.05% by $20M, claimable any time.
-        </p>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 10 }}>
-          <button
-            type='button'
-            className='social-launch-badge'
-            onClick={() => filePick.current?.click()}
-            disabled={uploading}
-            title='Coin image — shown as a square badge, pump.fun style'
-            style={{
-              width: 72,
-              height: 72,
-              flex: '0 0 72px',
-              borderRadius: 12,
-              border: '1px dashed rgba(255,255,255,0.35)',
-              background: imageUrl
-                ? `center / cover no-repeat url(${imageUrl})`
-                : 'rgba(255,255,255,0.06)',
-              color: 'inherit',
-              cursor: 'pointer',
-              fontSize: imageUrl ? 0 : 22,
-              lineHeight: 1,
-            }}
-          >
-            {uploading ? '…' : imageUrl ? '' : '📷'}
-          </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <input className='social-search__input' placeholder='Coin name (e.g. Chartreuse Gang)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10, width: '100%' }} />
-            <input className='social-search__input' placeholder='Ticker (e.g. CHRT)' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ width: '100%' }} />
+
+        <div className='pump-form__row'>
+          <div className='pump-form__field'>
+            <label>Coin name</label>
+            <input
+              className='social-search__input'
+              placeholder='Name your coin'
+              value={name}
+              maxLength={40}
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
-          <input
-            ref={filePick}
-            type='file'
-            accept='image/*'
-            hidden
-            onChange={(e) => {
-              onPickImage(e.target.files?.[0]);
-              e.target.value = '';
-            }}
+          <div className='pump-form__field'>
+            <label>Ticker</label>
+            <input
+              className='social-search__input'
+              placeholder='Add a coin ticker (e.g. DOGE)'
+              value={symbol}
+              maxLength={12}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            />
+          </div>
+        </div>
+
+        <div className='pump-form__field'>
+          <label>
+            Description <span className='pump-form__optional'>(Optional)</span>
+          </label>
+          <textarea
+            className='social-search__input'
+            placeholder='Write a short description'
+            value={description}
+            maxLength={300}
+            rows={3}
+            onChange={(e) => setDescription(e.target.value)}
           />
         </div>
-        <textarea
-          className='social-search__input'
-          placeholder='One-liner about your coin (shown on its page)'
-          value={description}
-          maxLength={300}
-          rows={2}
-          onChange={(e) => setDescription(e.target.value)}
-          style={{ marginBottom: 12, resize: 'vertical', borderRadius: 16 }}
-        />
+
+        <button className='pump-form__collapse' onClick={() => setLinksOpen((o) => !o)}>
+          🔗 Add social links <span className='pump-form__optional'>(Optional)</span>{' '}
+          <span className='pump-form__chev'>{linksOpen ? '▲' : '▼'}</span>
+        </button>
+        {linksOpen && (
+          <div className='pump-form__field'>
+            <input
+              className='social-search__input'
+              placeholder='Website — https://…'
+              value={website}
+              maxLength={120}
+              onChange={(e) => setWebsite(e.target.value)}
+            />
+          </div>
+        )}
+
+        {/* pump.fun-style dropzone */}
         <input
-          className='social-search__input'
-          placeholder='Website (optional) — https://…'
-          value={website}
-          maxLength={120}
-          onChange={(e) => setWebsite(e.target.value)}
-          style={{ marginBottom: 12 }}
+          ref={filePick}
+          type='file'
+          accept='image/jpeg,image/png,image/webp,image/gif'
+          hidden
+          onChange={(e) => { upload(e.target.files?.[0], 'art'); e.target.value = ''; }}
         />
-        <label className='social-edit__label'>Initial buy — makes you holder #1</label>
+        <div
+          className={`pump-drop ${dragOver ? 'pump-drop--over' : ''}`}
+          onClick={() => filePick.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); upload(e.dataTransfer.files?.[0], 'art'); }}
+        >
+          {imageUrl ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className='pump-drop__preview' src={imageUrl} alt='coin art' />
+              <span className='pump-drop__replace'>Click or drop to replace</span>
+            </>
+          ) : (
+            <>
+              <span className='pump-drop__icon'>🖼</span>
+              <b>{uploading === 'art' ? 'Uploading…' : 'Select an image to upload'}</b>
+              <span className='pump-drop__sub'>or drag and drop it here</span>
+            </>
+          )}
+        </div>
+        <div className='pump-drop__limits'>
+          <div>
+            <b>File size and type</b>
+            <span>Image — max 12MB. .jpg, .png, .webp or .gif</span>
+          </div>
+          <div>
+            <b>Resolution and aspect ratio</b>
+            <span>1:1 square recommended — shown as a 400×400 badge</span>
+          </div>
+        </div>
+
+        {/* optional wide banner for the coin page */}
+        <input
+          ref={bannerPick}
+          type='file'
+          accept='image/jpeg,image/png,image/webp,image/gif'
+          hidden
+          onChange={(e) => { upload(e.target.files?.[0], 'banner'); e.target.value = ''; }}
+        />
+        <button className='pump-form__collapse' onClick={() => setBannerOpen((o) => !o)}>
+          🏞 Add banner <span className='pump-form__optional'>(Optional)</span>{' '}
+          <span className='pump-form__chev'>{bannerOpen ? '▲' : '▼'}</span>
+        </button>
+        {bannerOpen && (
+          <div
+            className='pump-drop pump-drop--banner'
+            onClick={() => bannerPick.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); upload(e.dataTransfer.files?.[0], 'banner'); }}
+          >
+            {bannerUrl ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img className='pump-drop__preview pump-drop__preview--wide' src={bannerUrl} alt='banner' />
+                <span className='pump-drop__replace'>Click or drop to replace</span>
+              </>
+            ) : (
+              <>
+                <b>{uploading === 'banner' ? 'Uploading…' : 'Select a banner image'}</b>
+                <span className='pump-drop__sub'>3:1 wide — cropped to 1500×500, max 12MB</span>
+              </>
+            )}
+          </div>
+        )}
+
+        <label className='social-edit__label' style={{ marginTop: 14 }}>
+          Initial buy — makes you holder #1
+        </label>
         <div className='social-unit-input' style={{ marginBottom: 12 }}>
           <input placeholder='0.01 (0 = skip)' value={initialBuy} onChange={(e) => setInitialBuy(e.target.value)} />
           <span>ETH</span>
@@ -173,9 +265,14 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
             </small>
           </span>
         </label>
-        <button className='social-verify__buy' disabled={busy} onClick={go}>
+        <button className='social-verify__buy' disabled={busy || !!uploading} onClick={go}>
           {busy ? 'Launching…' : 'Launch — free (gas only)'}
         </button>
+        <p className='social-verify__fine'>
+          pump.fun&apos;s exact fee schedule: 1.25% on the curve (0.30% yours); post-graduation
+          tiers stagger by market cap — your share peaks at 0.95% past $85k, gliding to 0.05%
+          by $20M. Claimable any time. 1B supply, auto-graduates to Uniswap (LP burned).
+        </p>
       </div>
     </div>
   );

@@ -201,6 +201,10 @@ export default function TokenDetailPage() {
       <div className='social social--token'>
         <button className='social__back' onClick={() => router.back()}>← back</button>
 
+        {t.bannerUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className='token-page__banner' src={t.bannerUrl} alt='' />
+        )}
         <div className='token-page__head'>
           {t.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -296,7 +300,11 @@ export default function TokenDetailPage() {
           // instantly (the bar recedes from the record)
           const ath = Math.max((data?.athPriceEth || 0) * 1000 * ethUsd, mcap);
           const fmtUsd = (v: number) =>
-            v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(1)}K` : `$${v.toFixed(2)}`;
+            v >= 1e6
+              ? `$${(v / 1e6).toFixed(2)}M`
+              : v >= 1e4
+              ? `$${(v / 1e3).toFixed(2)}K`
+              : `$${Math.round(v).toLocaleString()}`;
           return (
             <div className='token-page__mcap'>
               <span className='token-page__mcap-label'>Market cap</span>
@@ -313,7 +321,14 @@ export default function TokenDetailPage() {
                       style={{ width: `${ath > 0 ? Math.min(100, (mcap / ath) * 100) : 0}%` }}
                     />
                   </div>
-                  <span className='token-page__ath-label'>ATH <b>{fmtUsd(ath)}</b></span>
+                  <span className='token-page__ath-label'>
+                    ATH <b>{fmtUsd(ath)}</b>
+                    {ath > 0 && mcap < ath && (
+                      <em className='token-page__ath-dip'>
+                        −{(100 - (mcap / ath) * 100).toFixed(1)}%
+                      </em>
+                    )}
+                  </span>
                 </div>
               </div>
             </div>
@@ -492,7 +507,9 @@ export default function TokenDetailPage() {
                     {h.user.username ? transformTitle(h.user.username) : shortenAddress(h.user.address)}
                     {h.user.verified && <VerifiedBadge size={11} />}
                   </span>
-                  <span className='token-page__bal'>{fmt(h.balance)}</span>
+                  <span className='token-page__bal' title={`${fmt(h.balance)} tokens`}>
+                    {((h.balance / 1e9) * 100).toFixed(2)}%
+                  </span>
                 </div>
               ))
             ) : (

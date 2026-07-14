@@ -221,7 +221,21 @@ export default function LaunchNftPage() {
                   key={k.key}
                   className='social-launch__kind'
                   data-active={kind === k.key}
-                  onClick={() => setKind(k.key)}
+                  onClick={() => {
+                    if (k.key === kind) return;
+                    setKind(k.key);
+                    // a ZIP is not an artwork and vice versa — switching
+                    // formats starts a fresh form instead of carrying the
+                    // previous upload over
+                    setFile(null);
+                    if (fileRef.current) fileRef.current.value = '';
+                    setTitle('');
+                    setDescription('');
+                    setPrice('0.01');
+                    setDurationHours('24');
+                    setMaxPerUser('0');
+                    setFollowersOnly(false);
+                  }}
                 >
                   <span className='social-launch__kind-icon'>{k.icon}</span>
                   <b>{k.title}</b>

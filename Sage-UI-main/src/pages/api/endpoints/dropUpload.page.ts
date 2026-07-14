@@ -38,19 +38,24 @@ const ACTION_ROLES: Record<string, Role[]> = {
   // upload-time mirror write failed (see src/utilities/s3Mirror.ts)
   EnsureS3Mirror: [Role.ADMIN],
   UploadNftMetadataToArweave: [Role.ARTIST, Role.ADMIN],
-  InsertDrop: [Role.ADMIN],
-  InsertAuction: [Role.ADMIN],
-  InsertOpenEdition: [Role.ADMIN],
+  // ── Self-serve social launches: creation actions are open to any signed-in
+  // wallet, but NON-ADMINS are hard-scoped in the handler — InsertDrop forces
+  // artistWallet to the requester, and every game/collection insert must
+  // target a drop the requester created. The admin dashboard is unchanged.
+  InsertDrop: [Role.USER, Role.ARTIST, Role.ADMIN],
+  InsertAuction: [Role.USER, Role.ARTIST, Role.ADMIN],
+  InsertOpenEdition: [Role.USER, Role.ARTIST, Role.ADMIN],
   InsertDrawing: [Role.ADMIN],
   // Draft editing: fix names/prices, remove an artwork, or add media to a
   // saved (unapproved) drop WITHOUT deleting and re-uploading everything —
   // media already on Arweave is paid for and stays; only new files cost AR.
   UpdateDraftArtwork: [Role.ADMIN],
   DeleteDraftArtwork: [Role.ADMIN],
-  // Collection drops (ZIP → bulk sequential mint)
-  InsertCollectionMint: [Role.ADMIN],
-  ProcessCollectionZip: [Role.ADMIN],
-  GetCollectionStatus: [Role.ADMIN],
+  // Collection drops (ZIP → bulk sequential mint) — owner-scoped for
+  // self-serve social ZIP drops, see the handler guard
+  InsertCollectionMint: [Role.USER, Role.ARTIST, Role.ADMIN],
+  ProcessCollectionZip: [Role.USER, Role.ARTIST, Role.ADMIN],
+  GetCollectionStatus: [Role.USER, Role.ARTIST, Role.ADMIN],
   RegisterCollectionMint: [Role.USER, Role.ARTIST, Role.ADMIN], // ownership verified on-chain below
   InsertNft: [Role.ARTIST, Role.ADMIN],
   DeleteNft: [Role.ARTIST, Role.ADMIN], // additionally scoped to own NFTs below
@@ -77,6 +82,37 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
     response.end();
     return;
   }
+
+  // ── Ownership scope for self-serve launches (non-admins only) ──
+  if (requester.role !== Role.ADMIN) {
+    if (action === 'InsertDrop') {
+      // a creator can only create drops under their OWN wallet
+      request.body.artistWallet = requester.walletAddress;
+    }
+    const dropScoped = ['InsertAuction', 'InsertOpenEdition', 'InsertCollectionMint'];
+    const cmScoped = ['ProcessCollectionZip', 'GetCollectionStatus'];
+    if (dropScoped.includes(String(action))) {
+      const drop = await prisma.drop.findUnique({
+        where: { id: Number(request.body?.dropId) || 0 },
+        select: { artistAddress: true },
+      });
+      if (drop?.artistAddress?.toLowerCase() !== requester.walletAddress.toLowerCase()) {
+        response.status(403).json({ error: 'not your drop' });
+        return;
+      }
+    }
+    if (cmScoped.includes(String(action))) {
+      const cm = await prisma.collectionMint.findUnique({
+        where: { id: Number(request.query.id) || 0 },
+        select: { Drop: { select: { artistAddress: true } } },
+      });
+      if (cm?.Drop?.artistAddress?.toLowerCase() !== requester.walletAddress.toLowerCase()) {
+        response.status(403).json({ error: 'not your drop' });
+        return;
+      }
+    }
+  }
+
   switch (action) {
     case 'GetArtistNftContractAddress':
       await getArtistNftContractAddress(String(request.query.artistAddress), response);

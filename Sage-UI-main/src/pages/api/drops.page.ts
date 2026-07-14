@@ -27,27 +27,32 @@ import { OPTIMIZED_IMAGE_WIDTH, parameters } from '@/constants/config';
 const ACTION_ROLES: Record<string, Role[]> = {
   GetApprovedDrops: [Role.USER, Role.ARTIST, Role.ADMIN],
   GetFullDrop: [Role.USER, Role.ARTIST, Role.ADMIN],
-  GetNftContractAddress: [Role.ARTIST, Role.ADMIN],
+  GetNftContractAddress: [Role.USER, Role.ARTIST, Role.ADMIN],
   GetDropsPendingApproval: [Role.ADMIN],
   GetPresetDrops: [Role.ADMIN],
   FindSplitterAddress: [Role.ADMIN],
-  OptimizeDropImages: [Role.ADMIN],
-  UpdateNftContractAddress: [Role.ADMIN],
+  // ── Self-serve social launches: the deploy-time actions below are open to
+  // any signed-in wallet, but NON-ADMINS are hard-scoped (see requireDropOwner
+  // in the handler) to drops whose artistAddress is their own wallet — the
+  // admin dashboard's reach is unchanged, a creator can only touch their own.
+  OptimizeDropImages: [Role.USER, Role.ARTIST, Role.ADMIN],
+  UpdateNftContractAddress: [Role.USER, Role.ARTIST, Role.ADMIN],
   UpdateSplitterAddress: [Role.ADMIN],
-  UpdateAuctionContractAddress: [Role.ADMIN],
+  UpdateAuctionContractAddress: [Role.USER, Role.ARTIST, Role.ADMIN],
   UpdateLotteryContractAddress: [Role.ADMIN],
-  UpdateOpenEditionContractAddress: [Role.ADMIN],
-  UpdateCollectionContractAddress: [Role.ADMIN],
-  UpdateCollectionNftContract: [Role.ADMIN],
-  UpdateApprovedDateAndIsLiveFlags: [Role.ADMIN],
+  UpdateOpenEditionContractAddress: [Role.USER, Role.ARTIST, Role.ADMIN],
+  UpdateCollectionContractAddress: [Role.USER, Role.ARTIST, Role.ADMIN],
+  UpdateCollectionNftContract: [Role.USER, Role.ARTIST, Role.ADMIN],
+  UpdateApprovedDateAndIsLiveFlags: [Role.USER, Role.ARTIST, Role.ADMIN],
   DeleteDrop: [Role.ADMIN],
   DeleteDrops: [Role.ADMIN],
   // Per-drop allowlist gating. Admin manages the list; CheckDropAllowlist is
   // broad because every signed-in visitor needs to learn "am I allowed to buy"
   // (the wallet is taken from the JWT, never from the query — not spoofable).
-  GetDropAllowlist: [Role.ADMIN],
+  // Get/Mark are drop-owner-scoped for the followers-only gate deploy sync.
+  GetDropAllowlist: [Role.USER, Role.ARTIST, Role.ADMIN],
   SaveDropAllowlist: [Role.ADMIN],
-  MarkAllowlistSynced: [Role.ADMIN],
+  MarkAllowlistSynced: [Role.USER, Role.ARTIST, Role.ADMIN],
   CheckDropAllowlist: [Role.USER, Role.ARTIST, Role.ADMIN],
   // IP-gated minting: ClaimMintSpot is how a signed-in minter gets onto the
   // drop's on-chain whitelist — the server enforces one claim per network
@@ -72,6 +77,71 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
     return;
   }
   const walletAddress = requester.walletAddress;
+
+  // ── Ownership scope for the self-serve deploy actions ──
+  // Non-admins may only operate on drops they created. Each action's `id`
+  // means something different (drop / auction / OE / collection-mint), so
+  // resolve it to the owning drop's artistAddress before dispatching.
+  if (requester.role !== Role.ADMIN) {
+    const idNum = Number(id);
+    let dropArtist: string | null | undefined;
+    switch (action) {
+      case 'OptimizeDropImages':
+      case 'UpdateApprovedDateAndIsLiveFlags':
+      case 'GetDropAllowlist':
+        dropArtist = (
+          await prisma.drop.findUnique({ where: { id: idNum }, select: { artistAddress: true } })
+        )?.artistAddress;
+        break;
+      case 'MarkAllowlistSynced':
+        dropArtist = (
+          await prisma.drop.findUnique({
+            where: { id: Number(request.body?.dropId) || 0 },
+            select: { artistAddress: true },
+          })
+        )?.artistAddress;
+        break;
+      case 'UpdateAuctionContractAddress':
+        dropArtist = (
+          await prisma.auction.findUnique({
+            where: { id: idNum },
+            select: { Drop: { select: { artistAddress: true } } },
+          })
+        )?.Drop?.artistAddress;
+        break;
+      case 'UpdateOpenEditionContractAddress':
+        dropArtist = (
+          await prisma.openEdition.findUnique({
+            where: { id: idNum },
+            select: { Drop: { select: { artistAddress: true } } },
+          })
+        )?.Drop?.artistAddress;
+        break;
+      case 'UpdateCollectionContractAddress':
+      case 'UpdateCollectionNftContract':
+        dropArtist = (
+          await prisma.collectionMint.findUnique({
+            where: { id: idNum },
+            select: { Drop: { select: { artistAddress: true } } },
+          })
+        )?.Drop?.artistAddress;
+        break;
+      case 'UpdateNftContractAddress':
+        // a creator may only (re)bind THEIR OWN artist contract record
+        dropArtist = String(request.query.artistAddress || '');
+        break;
+      default:
+        dropArtist = undefined; // action not ownership-scoped
+    }
+    if (
+      dropArtist !== undefined &&
+      (dropArtist || '').toLowerCase() !== walletAddress.toLowerCase()
+    ) {
+      response.status(403).json({ error: 'not your drop' });
+      return;
+    }
+  }
+
   switch (action) {
     case 'GetApprovedDrops':
       await getApprovedDrops(response);

@@ -116,7 +116,7 @@ export default async function handler(request: NextApiRequest, response: NextApi
       case 'GetTokenDetail':
         return await getTokenDetail(String(request.query.address || ''), response);
       case 'GetTokens':
-        return await getTokens(response);
+        return await getTokens(request, response);
       case 'HaltEdition':
         return await withAuth(request, response, (r) => haltEdition(request, response, r));
       case 'GetProfileEditions':
@@ -2168,7 +2168,7 @@ async function recordTokenLaunch(
 ) {
   if (!(await canParticipate(r.walletAddress)))
     return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
-  const { tokenAddress, name, symbol, launchTxHash, imageUrl, airdropEnabled, description, website } = req.body || {};
+  const { tokenAddress, name, symbol, launchTxHash, imageUrl, bannerUrl, airdropEnabled, description, website } = req.body || {};
   const token = canon(tokenAddress);
   if (!token || !launchTxHash || !name || !symbol)
     return res.status(400).json({ error: 'tokenAddress, name, symbol, launchTxHash required' });
@@ -2207,6 +2207,7 @@ async function recordTokenLaunch(
         // same own-bucket check as post media — otherwise anyone could brand
         // their token with an arbitrary external URL we then hotlink site-wide
         imageUrl: imageUrl && isOwnSocialMediaUrl(imageUrl) ? imageUrl : null,
+        bannerUrl: bannerUrl && isOwnSocialMediaUrl(bannerUrl) ? bannerUrl : null,
         description: description ? String(description).slice(0, 300) : null,
         website:
           website && /^https?:\/\//.test(String(website)) ? String(website).slice(0, 120) : null,
@@ -2279,27 +2280,59 @@ async function getProfileToken(address: string, res: NextApiResponse) {
   });
 }
 
-async function getTokens(res: NextApiResponse) {
+/**
+ * The token board, pump.fun-style: sorted by MARKET CAP (descending) with
+ * offset pagination for infinite scroll — scroll far enough and you reach the
+ * cheap end of the board. Mcap = each token's latest recorded trade price
+ * (ETH per 1M tokens × 1000 = full 1B supply); tokens with no trades yet sit
+ * at the curve's initial price.
+ */
+async function getTokens(req: NextApiRequest, res: NextApiResponse) {
+  const offset = Math.max(0, Number(req.query.cursor) || 0);
+  const PAGE = 24;
   const launches = await prisma.socialTokenLaunch.findMany({
-    orderBy: { createdAt: 'desc' },
-    take: 50,
     include: { Creator: { select: { username: true, profilePicture: true, verifiedAt: true } } },
   });
+  // one latest trade per token (max id), fetched in a single pass
+  const maxIds = await prisma.socialTokenTrade.groupBy({
+    by: ['tokenAddress'],
+    _max: { id: true },
+  });
+  const lastTrades = maxIds.length
+    ? await prisma.socialTokenTrade.findMany({
+        where: { id: { in: maxIds.map((m) => m._max.id!).filter(Boolean) } },
+        select: { tokenAddress: true, priceEth: true },
+      })
+    : [];
+  const priceMap = new Map(lastTrades.map((t) => [t.tokenAddress.toLowerCase(), t.priceEth]));
+  const ethUsd = await boostEthUsd().catch(() => 3500);
+  const INITIAL_PRICE_ETH_PER_M = (2 * 1e6) / 1.073e9; // fresh curve spot
+  const rows = launches
+    .map((l) => {
+      const priceEthPerM = priceMap.get(l.tokenAddress.toLowerCase()) ?? INITIAL_PRICE_ETH_PER_M;
+      const mcapEth = priceEthPerM * 1000; // ×1B supply / 1M unit
+      return {
+        tokenAddress: l.tokenAddress,
+        name: l.name,
+        symbol: l.symbol,
+        imageUrl: l.imageUrl,
+        description: l.description || null,
+        createdAt: l.createdAt,
+        mcapUsd: mcapEth * ethUsd,
+        creator: {
+          address: l.creatorAddress,
+          username: l.Creator?.username || null,
+          profilePicture: l.Creator?.profilePicture || null,
+          verified: !!l.Creator?.verifiedAt,
+        },
+      };
+    })
+    .sort((a, b) => b.mcapUsd - a.mcapUsd);
+  const page = rows.slice(offset, offset + PAGE);
   res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
   res.json({
-    tokens: launches.map((l) => ({
-      tokenAddress: l.tokenAddress,
-      name: l.name,
-      symbol: l.symbol,
-      imageUrl: l.imageUrl,
-      description: l.description || null,
-      creator: {
-        address: l.creatorAddress,
-        username: l.Creator?.username || null,
-        profilePicture: l.Creator?.profilePicture || null,
-        verified: !!l.Creator?.verifiedAt,
-      },
-    })),
+    tokens: page,
+    nextCursor: offset + PAGE < rows.length ? offset + PAGE : null,
   });
 }
 
@@ -2805,6 +2838,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
       name: launch.name,
       symbol: launch.symbol,
       imageUrl: launch.imageUrl,
+      bannerUrl: launch.bannerUrl || null,
       description: launch.description || null,
       website: launch.website || null,
       airdropEnabled: launch.airdropEnabled,

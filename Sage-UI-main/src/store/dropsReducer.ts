@@ -172,7 +172,9 @@ export const dropsApi = baseApi.injectEndpoints({
             );
             artistProfilePicture = optimizedUrl || url;
           }
-          const { data: dropResult } = await dropProgress.track('Creating drop record', async () =>
+          const { data: dropResult, error: dropError } = await dropProgress.track(
+            'Creating drop record',
+            async () =>
             fetchWithBQ({
               url: 'endpoints/dropUpload?action=InsertDrop',
               method: 'POST',
@@ -192,6 +194,15 @@ export const dropsApi = baseApi.injectEndpoints({
             })
           );
           if ((dropResult as any)?.error) throw new Error((dropResult as any).error);
+          // fetchWithBQ signals HTTP-level failures (401/403/500) via `error`
+          // with NO data — reading .dropId off undefined was the old crash
+          if (dropError || !(dropResult as any)?.dropId) {
+            throw new Error(
+              (dropError as any)?.data?.error ||
+                (dropError as any)?.error ||
+                'creating the drop record failed — are you signed in?'
+            );
+          }
           const dropId = (dropResult as any).dropId as number;
           createdDropId = dropId;
           if (req.allowlist?.enabled && req.allowlist.addresses.length > 0) {

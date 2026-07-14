@@ -114,6 +114,8 @@ export interface TokenListItem {
   symbol: string;
   imageUrl: string | null;
   description: string | null;
+  createdAt: string;
+  mcapUsd: number;
   creator: SocialUserCard;
 }
 
@@ -234,6 +236,7 @@ export interface TokenDetail {
     name: string;
     symbol: string;
     imageUrl: string | null;
+    bannerUrl: string | null;
     description: string | null;
     website: string | null;
     airdropEnabled: boolean;
@@ -413,8 +416,24 @@ const socialApi = baseApi.injectEndpoints({
       query: (address) => ({ url: `social?action=GetProfileToken&address=${address}` }),
       providesTags: (_r, _e, address) => [{ type: 'SocialProfile', id: address }],
     }),
-    getTokens: builder.query<{ tokens: TokenListItem[] }, void>({
-      query: () => ({ url: 'social?action=GetTokens' }),
+    // mcap-sorted board with infinite scroll: one cache entry, pages merge in
+    getTokens: builder.query<
+      { tokens: TokenListItem[]; nextCursor: number | null },
+      { cursor?: number } | void
+    >({
+      query: (args) => ({
+        url: `social?action=GetTokens${(args as any)?.cursor ? `&cursor=${(args as any).cursor}` : ''}`,
+      }),
+      serializeQueryArgs: () => 'tokens-board',
+      merge: (current, incoming, { arg }) => {
+        if (!(arg as any)?.cursor) return incoming;
+        const seen = new Set(current.tokens.map((t) => t.tokenAddress));
+        current.tokens.push(...incoming.tokens.filter((t) => !seen.has(t.tokenAddress)));
+        current.nextCursor = incoming.nextCursor;
+        return current;
+      },
+      forceRefetch: ({ currentArg, previousArg }) =>
+        (currentArg as any)?.cursor !== (previousArg as any)?.cursor,
       providesTags: ['SocialFeed'],
     }),
     getTokenTradesPage: builder.query<
@@ -666,6 +685,7 @@ const socialApi = baseApi.injectEndpoints({
         symbol: string;
         launchTxHash: string;
         imageUrl?: string;
+        bannerUrl?: string;
         airdropEnabled?: boolean;
         description?: string;
         website?: string;
