@@ -3441,3 +3441,140 @@ body:has([class*='__overlay']) .layout {
     color: rgba(m.t(contrast), 0.45);
   }
 }
+
+/* ── unified NFT launcher (Twitter-card format picker + clean form) ── */
+.social-launch__kinds {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.social-launch__kind {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  cursor: pointer;
+  text-align: left;
+  background: none;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(contrast), 0.14);
+    color: m.t(contrast);
+  }
+  &:hover {
+    @include m.theme() {
+      border-color: rgba(m.t(accent), 0.6);
+    }
+  }
+  &[data-active='true'] {
+    @include m.theme() {
+      border-color: m.t(accent);
+      background: rgba(m.t(accent), 0.08);
+    }
+  }
+  b {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 0.98rem;
+  }
+}
+.social-launch__kind-icon {
+  font-size: 1.2rem;
+}
+.social-launch__kind-blurb {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.55);
+  }
+}
+.social-launch__form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 620px;
+}
+.social-launch__desc {
+  resize: vertical;
+  min-height: 72px;
+  border-radius: 16px !important;
+}
+.social-launch__file {
+  width: 100%;
+}
+.social-launch__row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.social-launch__gate {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 14px;
+  cursor: pointer;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(contrast), 0.14);
+  }
+  input {
+    margin-top: 3px;
+    accent-color: #d4fc52;
+  }
+  b {
+    display: block;
+    font-size: 0.92rem;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  small {
+    font-size: 0.78rem;
+    line-height: 1.35;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.55);
+    }
+  }
+}
+.social-launch__note,
+.social-launch__fine {
+  font-size: 0.8rem;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.5);
+  }
+}
+.social-launch__done {
+  max-width: 560px;
+  padding: 24px;
+  border-radius: 18px;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(accent), 0.5);
+    background: rgba(m.t(accent), 0.06);
+  }
+  h3 {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    margin-bottom: 8px;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  p {
+    font-size: 0.9rem;
+    line-height: 1.45;
+    margin-bottom: 16px;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.7);
+    }
+  }
+}
+.social-launch__done-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* keep header-row actions (＋ New message) clear of the fixed hamburger */
+.social__header--row {
+  padding-right: 64px;
+}
