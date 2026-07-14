@@ -51,6 +51,7 @@ const configuration: Configuration = {
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x86203521Cfa9fF2d1C918c40F08aAc0c8c196E2a', // v4: multi-launch
+    SAGE_POINTS_ADDRESS: '0x2CbBc5f92B1b0bc7Dea43b894C94B59B3a8e2d36', // streaming pixels
     SOCIAL_COLLECT_MINTER_ADDRESS: '0x802F87090FAdf9Cb8Af06fB079fa159Ebf58e554',
     SOCIAL_NFT_LAUNCHER_ADDRESS: '0x2D3369CbD7a79C3E681A7E598F67Ad3937659161', // SAGE Social (testnet, 2026-07-13)
     APP_URL: 'http://localhost:3005/',
@@ -72,6 +73,7 @@ const configuration: Configuration = {
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x86203521Cfa9fF2d1C918c40F08aAc0c8c196E2a', // v4: multi-launch
+    SAGE_POINTS_ADDRESS: '0x2CbBc5f92B1b0bc7Dea43b894C94B59B3a8e2d36', // streaming pixels
     SOCIAL_COLLECT_MINTER_ADDRESS: '0x802F87090FAdf9Cb8Af06fB079fa159Ebf58e554',
     SOCIAL_NFT_LAUNCHER_ADDRESS: '0x2D3369CbD7a79C3E681A7E598F67Ad3937659161', // SAGE Social (testnet, 2026-07-13)
     APP_URL: 'https://sage-dev.vercel.app/',
@@ -93,6 +95,7 @@ const configuration: Configuration = {
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x86203521Cfa9fF2d1C918c40F08aAc0c8c196E2a', // v4: multi-launch
+    SAGE_POINTS_ADDRESS: '0x2CbBc5f92B1b0bc7Dea43b894C94B59B3a8e2d36', // streaming pixels
     SOCIAL_COLLECT_MINTER_ADDRESS: '0x802F87090FAdf9Cb8Af06fB079fa159Ebf58e554',
     SOCIAL_NFT_LAUNCHER_ADDRESS: '0x2D3369CbD7a79C3E681A7E598F67Ad3937659161', // SAGE Social (testnet, 2026-07-13)
     APP_URL: 'https://sage-staging.vercel.app/',
@@ -116,6 +119,7 @@ const configuration: Configuration = {
     ASHTOKEN_ADDRESS: '0x08deaa8250beAeD65366fbbde0088E76261637bA', // SAGE token (live on Robinhood mainnet)
     SOCIAL_COLLECTS_ADDRESS: '',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '',
+    SAGE_POINTS_ADDRESS: '',
     SOCIAL_COLLECT_MINTER_ADDRESS: '',
     SOCIAL_NFT_LAUNCHER_ADDRESS: '', // set after the SAGE Social collects contract deploys
     APP_URL: 'https://sageart.xyz/',

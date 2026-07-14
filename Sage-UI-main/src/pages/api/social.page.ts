@@ -15,6 +15,8 @@ import {
   uploadJsonToFilebase,
   signCollectVoucher,
   DEAD_ADDRESS,
+  pixelsOf,
+  transferPixelsOnChain,
 } from '@/utilities/serverWallet';
 
 /**
@@ -232,10 +234,10 @@ function rateLimited(wallet: string, action: string, max: number, windowMs = 60_
 }
 
 /**
- * Debit pixels atomically: balance check + the two ledger rows (buyer debit,
- * seller credit) run in ONE Serializable transaction, so N concurrent
- * collects can't all pass the same balance check and overdraw (the old
- * read-then-write pattern let a 100-pixel wallet "spend" 100 pixels N times).
+ * Debit pixels via the SagePoints contract: buyer→seller in ONE on-chain tx
+ * (transferPoints), signed by the platform controller. The contract streams
+ * accrual from live SAGE balances and enforces spendability atomically, so
+ * concurrent collects can't overdraw — the chain serializes them.
  * Throws Error('not enough pixels …') or Error('pixels-conflict').
  */
 async function debitPixelsAtomic(
@@ -245,43 +247,28 @@ async function debitPixelsAtomic(
   pointsPrice: bigint
 ): Promise<void> {
   try {
-    await prisma.$transaction(
-      async (tx) => {
-        const [earned, spent] = await Promise.all([
-          tx.earnedPoints.findUnique({ where: { address: collector } }),
-          tx.socialPointsSpend.aggregate({ where: { address: collector }, _sum: { amount: true } }),
-        ]);
-        const available =
-          (earned?.totalPointsEarned ?? BigInt(0)) - (spent._sum.amount ?? BigInt(0));
-        if (available < pointsPrice)
-          throw new Error(`not enough pixels (need ${pointsPrice}, have ${available})`);
-        await tx.socialPointsSpend.create({
-          data: { address: collector, amount: pointsPrice, reason: `collect:${postId}` },
-        });
-        // the SELLER earns the points: a negative row is a credit against
-        // their spend ledger (available = oracle-earned − Σledger)
-        await tx.socialPointsSpend.create({
-          data: { address: seller, amount: -pointsPrice, reason: `sale:${postId}` },
-        });
-      },
-      { isolationLevel: 'Serializable' }
-    );
+    await transferPixelsOnChain(collector, seller, pointsPrice, `collect:${postId}`);
   } catch (e: any) {
-    if (/not enough pixels/.test(e?.message || '')) throw e;
+    const msg = String(e?.error?.message || e?.reason || e?.message || '');
+    if (/insufficient pixels/i.test(msg)) {
+      const have = await pixelsOf(collector).catch(() => null);
+      throw new Error(
+        `not enough pixels (need ${pointsPrice}${have !== null ? `, have ${have}` : ''})`
+      );
+    }
+    console.error('pixels transfer failed', msg.slice(0, 200));
     throw new Error('pixels-conflict');
   }
 }
 
 /** Compensate a debit if the step after it (mint/sign) fails. */
-async function refundPixels(collector: string, seller: string, postId: number): Promise<void> {
-  await prisma.socialPointsSpend.deleteMany({
-    where: {
-      OR: [
-        { address: collector, reason: `collect:${postId}` },
-        { address: seller, reason: `sale:${postId}` },
-      ],
-    },
-  });
+async function refundPixels(
+  collector: string,
+  seller: string,
+  postId: number,
+  amount: bigint
+): Promise<void> {
+  await transferPixelsOnChain(seller, collector, amount, `refund:${postId}`);
 }
 
 /**
@@ -1069,7 +1056,7 @@ async function collectPost(
     mint = await mintSocialCollectServerSide(r.walletAddress, tokenUri);
   } catch (e: any) {
     // the debit already happened — put the pixels back before failing
-    if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id).catch(() => {});
+    if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id, pointsSpent).catch(() => {});
     return res.status(500).json({ error: `mint failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
   }
 
@@ -1161,8 +1148,9 @@ async function getPostMetadata(id: number, res: NextApiResponse) {
 function postCardSvgDataUri(text: string, author: string, createdAt: Date, postId?: number): string {
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  // heavy display setting: ~18 chars/line, up to 7 lines
-  const words = text.toUpperCase().split(/\s+/);
+  // heavy display setting: ~18 chars/line, up to 7 lines. The text keeps the
+  // TWEET'S OWN casing — the card frames the post, it doesn't shout over it.
+  const words = text.split(/\s+/);
   const lines: string[] = [];
   let line = '';
   for (const w of words) {
@@ -1432,8 +1420,29 @@ async function userCards(addresses: string[]) {
   return map;
 }
 
+// Pixels leaderboard is contract-based: batch pointsOf() over the user base
+// (bounded + cached — one RPC sweep per minute at most).
+let pixelsBoardCache: { rows: { address: string; net: bigint }[]; at: number } | null = null;
+async function pixelsLeaderboard(): Promise<{ address: string; net: bigint }[]> {
+  if (pixelsBoardCache && Date.now() - pixelsBoardCache.at < 60_000) return pixelsBoardCache.rows;
+  if (!parameters.SAGE_POINTS_ADDRESS) return [];
+  const users = await prisma.user.findMany({ select: { walletAddress: true }, take: 300 });
+  const rows: { address: string; net: bigint }[] = [];
+  // chunked so we don't blast the RPC with 300 parallel calls
+  for (let i = 0; i < users.length; i += 25) {
+    const chunk = users.slice(i, i + 25);
+    const balances = await Promise.all(
+      chunk.map((u) => pixelsOf(u.walletAddress).catch(() => BigInt(0)))
+    );
+    chunk.forEach((u, j) => rows.push({ address: u.walletAddress, net: balances[j] }));
+  }
+  rows.sort((a, b) => (b.net > a.net ? 1 : b.net < a.net ? -1 : 0));
+  pixelsBoardCache = { rows: rows.slice(0, 10), at: Date.now() };
+  return pixelsBoardCache.rows;
+}
+
 async function getLeaderboard(res: NextApiResponse) {
-  const [tipped, tippers, burners, followed, pointsRows, ledger] = await Promise.all([
+  const [tipped, tippers, burners, followed, pointsPool] = await Promise.all([
     prisma.socialTip.groupBy({
       by: ['toAddress'],
       _sum: { amount: true },
@@ -1458,28 +1467,8 @@ async function getLeaderboard(res: NextApiResponse) {
       orderBy: { _count: { followerAddress: 'desc' } },
       take: 10,
     }),
-    prisma.earnedPoints.findMany({
-      orderBy: { totalPointsEarned: 'desc' },
-      take: 50,
-      select: { address: true, totalPointsEarned: true },
-    }),
-    prisma.socialPointsSpend.groupBy({ by: ['address'], _sum: { amount: true } }),
+    pixelsLeaderboard(),
   ]);
-  // net pixels = oracle-earned − ledger (sales are negative rows, i.e. credits)
-  const ledgerMap = new Map(ledger.map((l) => [l.address, l._sum.amount ?? BigInt(0)]));
-  const seenPts = new Set(pointsRows.map((p) => p.address));
-  // ledger-only users (sold posts without oracle accrual) still rank
-  const pointsPool = [
-    ...pointsRows.map((p) => ({
-      address: p.address,
-      net: p.totalPointsEarned - (ledgerMap.get(p.address) ?? BigInt(0)),
-    })),
-    ...ledger
-      .filter((l) => !seenPts.has(l.address) && (l._sum.amount ?? BigInt(0)) < BigInt(0))
-      .map((l) => ({ address: l.address, net: -(l._sum.amount ?? BigInt(0)) })),
-  ]
-    .sort((a, b) => (b.net > a.net ? 1 : -1))
-    .slice(0, 10);
   const cards = await userCards([
     ...pointsPool.map((p) => p.address),
     ...tipped.map((t) => t.toAddress),
@@ -2048,7 +2037,7 @@ async function requestCollectVoucher(
     signature = await signCollectVoucher(minterAddress, chainId, id, r.walletAddress, uri);
   } catch (e: any) {
     // debit already happened — put the pixels back before failing
-    if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id).catch(() => {});
+    if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id, pointsSpent).catch(() => {});
     return res.status(500).json({ error: `voucher signing failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
   }
 

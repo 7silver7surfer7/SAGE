@@ -291,3 +291,55 @@ export async function setCollectionWhitelistOnChain(
   await tx.wait();
   return tx.hash;
 }
+
+// ───────────────────────── SagePoints (streaming pixels) ─────────────────────────
+
+const SAGE_POINTS_ABI = [
+  'function pointsOf(address) view returns (uint256)',
+  'function dailyRateOf(address) view returns (uint256)',
+  'function spendFrom(address from, uint256 amount, string reason)',
+  'function creditTo(address to, uint256 amount, string reason)',
+  'function transferPoints(address from, address to, uint256 amount, string reason)',
+];
+
+function pointsContract(signer?: ethers.Signer) {
+  const addr = parameters.SAGE_POINTS_ADDRESS;
+  if (!addr) throw new Error('SAGE_POINTS_ADDRESS is not configured');
+  return new ethers.Contract(addr, SAGE_POINTS_ABI, signer || getProvider());
+}
+
+/** Live streamed pixel balance for a wallet (integer pixels). */
+export async function pixelsOf(address: string): Promise<bigint> {
+  const bal = await pointsContract().pointsOf(address);
+  return BigInt(bal.toString());
+}
+
+/** Pixels/day the wallet currently earns from its SAGE balance. */
+export async function pixelsDailyRate(address: string): Promise<bigint> {
+  const rate = await pointsContract().dailyRateOf(address);
+  return BigInt(rate.toString());
+}
+
+/**
+ * Buyer pays seller in pixels — one on-chain tx via the controller wallet.
+ * Reverts (throws) with "insufficient pixels" when the buyer can't cover it,
+ * so the contract is the single source of truth for spendability.
+ */
+export async function transferPixelsOnChain(
+  from: string,
+  to: string,
+  amount: bigint,
+  reason: string
+): Promise<string> {
+  const c = pointsContract(getServerSigner());
+  const tx = await c.transferPoints(from, to, amount, reason);
+  await tx.wait();
+  return tx.hash;
+}
+
+export async function creditPixelsOnChain(to: string, amount: bigint, reason: string): Promise<string> {
+  const c = pointsContract(getServerSigner());
+  const tx = await c.creditTo(to, amount, reason);
+  await tx.wait();
+  return tx.hash;
+}
