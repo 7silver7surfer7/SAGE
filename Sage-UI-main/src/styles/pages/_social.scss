@@ -312,6 +312,7 @@ $col-width: 620px;
 /* ── post card ── */
 .social-post {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 16px 4px;
   cursor: pointer;
@@ -2682,8 +2683,25 @@ body:has([class*='__overlay']) .layout {
     font-weight: 700;
     @include m.theme() { color: m.t(contrast2); }
   }
-  &__holder {
+  &__row-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex: 0 0 22px;
+    > span {
+      width: 100% !important;
+      height: 100% !important;
+    }
+  }
+  &__holder-id {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  &__holder {
     min-width: 0;
     display: inline-flex;
     align-items: center;
@@ -2691,6 +2709,14 @@ body:has([class*='__overlay']) .layout {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  &__holder-address {
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    @include m.theme() { color: rgba(m.t(contrast), 0.45); }
   }
   &__bal {
     font-variant-numeric: tabular-nums;
@@ -4380,6 +4406,64 @@ body:has([class*='__overlay']) .layout {
   display: flex;
   justify-content: center;
   padding: 12px 0;
+}
+
+.media-crop {
+  width: min(560px, 94vw);
+  border-radius: 18px;
+  overflow: hidden;
+  @include m.theme() {
+    background: m.t(base2);
+    color: m.t(contrast);
+  }
+}
+.media-crop__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  @include m.theme() { border-bottom: 1px solid rgba(m.t(contrast), 0.1); }
+  h3 { font-size: 1.05rem; font-weight: 800; }
+}
+.media-crop__back,
+.media-crop__apply {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.95rem;
+  @include m.theme() { color: m.t(contrast); }
+}
+.media-crop__apply {
+  border-radius: 999px;
+  padding: 8px 18px;
+  @include m.theme() { background: m.t(accent); color: m.t(base); }
+}
+.media-crop__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  @include m.theme() { background: rgba(m.t(contrast), 0.04); }
+  canvas { max-width: 100%; touch-action: none; }
+}
+.media-crop__zoom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 24px 22px;
+  font-size: 1.1rem;
+  opacity: 0.7;
+  input[type='range'] { flex: 1; }
+}
+
+.social-post__pinned {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding-left: 44px; // aligns with the name, past the avatar column
+  margin-bottom: -4px;
+  @include m.theme() { color: rgba(m.t(contrast), 0.55); }
 }
 
 /* ── pump.fun-faithful launch form ── */

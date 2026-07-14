@@ -503,9 +503,15 @@ export default function TokenDetailPage() {
               (holdersPage?.holders || data?.holders || []).map((h, i) => (
                 <div key={h.user.address} className='token-page__row' onClick={() => router.push(`/social/${h.user.address}`)}>
                   <span className='token-page__rank'>{i + 1}</span>
-                  <span className='token-page__holder'>
-                    {h.user.username ? transformTitle(h.user.username) : shortenAddress(h.user.address)}
-                    {h.user.verified && <VerifiedBadge size={11} />}
+                  <span className='token-page__row-avatar'>
+                    <PfpImage src={h.user.profilePicture} />
+                  </span>
+                  <span className='token-page__holder-id'>
+                    <span className='token-page__holder'>
+                      {h.user.username ? transformTitle(h.user.username) : shortenAddress(h.user.address)}
+                      {h.user.verified && <VerifiedBadge size={11} />}
+                    </span>
+                    <span className='token-page__holder-address'>{h.user.address}</span>
                   </span>
                   <span className='token-page__bal'>
                     {fmt(h.balance)}
@@ -525,9 +531,18 @@ export default function TokenDetailPage() {
             <h4>Trades</h4>
             {(tradesPage?.trades || data?.trades || []).length ? (
               (tradesPage?.trades || data?.trades || []).map((tr, i) => (
-                <div key={i} className='token-page__row'>
+                <div key={i} className='token-page__row' onClick={() => router.push(`/social/${tr.trader}`)}>
                   <span className={`token-page__side token-page__side--${tr.side}`}>{tr.side}</span>
-                  <span className='token-page__holder'>{shortenAddress(tr.trader)}</span>
+                  <span className='token-page__row-avatar'>
+                    <PfpImage src={tr.user?.profilePicture} />
+                  </span>
+                  <span className='token-page__holder-id'>
+                    <span className='token-page__holder'>
+                      {tr.user?.username ? transformTitle(tr.user.username) : shortenAddress(tr.trader)}
+                      {tr.user?.verified && <VerifiedBadge size={11} />}
+                    </span>
+                    <span className='token-page__holder-address'>{tr.trader}</span>
+                  </span>
                   <span className='token-page__bal'>{tr.ethAmount.toPrecision(2)} ETH</span>
                   <span className='token-page__ago'>{timeAgo(tr.createdAt)}</span>
                 </div>

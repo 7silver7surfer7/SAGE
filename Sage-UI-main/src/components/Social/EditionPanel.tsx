@@ -213,7 +213,16 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-export default function EditionPanel({ address, isSelf }: { address: string; isSelf: boolean }) {
+interface EditionPanelProps {
+  address: string;
+  isSelf: boolean;
+  // The "Launch artwork" CTA + empty state — only the dedicated NFT launcher
+  // page wants it. Embedded on a regular profile it's redundant promotion:
+  // launching happens from the launcher, and posts already carry the reach.
+  showLaunchCta?: boolean;
+}
+
+export default function EditionPanel({ address, isSelf, showLaunchCta }: EditionPanelProps) {
   const { data } = useGetProfileEditionsQuery(address, { skip: !address });
   const [haltEdition] = useHaltEditionMutation();
   const { data: signer } = useSigner();
@@ -237,7 +246,7 @@ export default function EditionPanel({ address, isSelf }: { address: string; isS
   }, [data?.editions, provider]);
 
   if (!data?.launcher) return null;
-  if (!data.editions.length && !isSelf) return null;
+  if (!data.editions.length && (!isSelf || !showLaunchCta)) return null;
 
   const mint = async (e: EditionRow) => {
     if (!signer) { toast.info('Connect your wallet'); return; }
@@ -258,7 +267,7 @@ export default function EditionPanel({ address, isSelf }: { address: string; isS
     <div className='social-token'>
       <div className='social-token__head'>
         <span className='social-token__ticker'>🎨 Editions</span>
-        {isSelf && (
+        {isSelf && showLaunchCta && (
           <button
             className='social-token__airdrop'
             style={{ marginLeft: 'auto' }}

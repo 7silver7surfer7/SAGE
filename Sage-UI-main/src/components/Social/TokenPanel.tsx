@@ -284,9 +284,14 @@ interface Props {
   address: string;
   isSelf: boolean;
   followers: string[];
+  // The "Launch your creator coin" empty-state CTA — only the dedicated
+  // /social/launch/token page wants it. Embedded on a regular profile it's
+  // redundant promotion: launching happens from the Tokens page, and once
+  // live the creator posts about it themselves.
+  showLaunchCta?: boolean;
 }
 
-export default function TokenPanel({ address, isSelf }: Props) {
+export default function TokenPanel({ address, isSelf, showLaunchCta }: Props) {
   const router = useRouter();
   const { data } = useGetProfileTokenQuery(address, { skip: !address });
   const { data: signer } = useSigner();
@@ -319,8 +324,7 @@ export default function TokenPanel({ address, isSelf }: Props) {
   if (!data.factory) return null;
 
   if (!token) {
-    // no coin yet: only the profile owner sees the launch CTA
-    if (!isSelf) return null;
+    if (!isSelf || !showLaunchCta) return null;
     return (
       <div className='social-token'>
         <div className='social-token__empty'>

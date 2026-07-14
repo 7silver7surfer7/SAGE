@@ -21,6 +21,8 @@ import {
   useCollectPostMutation,
   useRequestCollectVoucherMutation,
   useEditPostMutation,
+  usePinPostMutation,
+  useBanUserMutation,
 } from '@/store/socialReducer';
 import { useGetAuctionStateQuery } from '@/store/auctionsReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
@@ -158,6 +160,8 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [collectPost] = useCollectPostMutation();
   const [requestVoucher] = useRequestCollectVoucherMutation();
   const [deletePost] = useDeletePostMutation();
+  const [pinPost] = usePinPostMutation();
+  const [banUser] = useBanUserMutation();
   const [busy, setBusy] = useState(false);
   const [showVerify, setShowVerify] = useState(false);
   // verified-only post editing (Twitter Blue style): the menu item always
@@ -223,6 +227,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const myAddress = (walletAddress || (userData as any)?.walletAddress || '').toLowerCase();
   const isOwnPost = !!myAddress && myAddress === authorLc;
   const viewerVerified = !!(userData as any)?.verifiedAt;
+  const isAdminViewer = (userData as any)?.role === 'ADMIN';
 
   const requireAuth = () => {
     if (!isSignedIn) {
@@ -487,6 +492,9 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
 
   return (
     <article className='social-post' onClick={goToPost} data-boosted={post.isBoosted}>
+      {post.isPinned && (
+        <div className='social-post__pinned'>📌 Pinned</div>
+      )}
       <div
         className='social-post__avatar'
         onClick={goToProfile}
@@ -533,6 +541,27 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
                   <button onClick={onShareCopy}>Copy link</button>
                   <button onClick={onShareX}>Share on 𝕏</button>
                   <button onClick={onHide}>Hide this post</button>
+                  {isAdminViewer && !isOwnPost && (
+                    <button
+                      className='social-post__menu-danger'
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setMenuOpen(false);
+                        const reason = window.prompt(
+                          `Ban ${displayName} (${post.author.address})? Their profile, posts and drops go down immediately. Optional reason:`
+                        );
+                        if (reason === null) return; // cancelled
+                        try {
+                          await banUser({ address: post.author.address, reason: reason || undefined }).unwrap();
+                          toast.success(`${displayName} has been banned`);
+                        } catch (err: any) {
+                          toast.error(err?.data?.error || 'Could not ban user');
+                        }
+                      }}
+                    >
+                      🚫 Ban user
+                    </button>
+                  )}
                   {isOwnPost && !post.dropId && (
                     <button
                       onClick={(e) => {
@@ -541,6 +570,22 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
                       }}
                     >
                       Edit post {!viewerVerified && '✦'}
+                    </button>
+                  )}
+                  {isOwnPost && (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setMenuOpen(false);
+                        try {
+                          await pinPost({ postId: post.isPinned ? undefined : post.id }).unwrap();
+                          toast.success(post.isPinned ? 'Unpinned' : 'Pinned to your profile');
+                        } catch (err: any) {
+                          toast.error(err?.data?.error || 'Could not update pin');
+                        }
+                      }}
+                    >
+                      {post.isPinned ? 'Unpin from profile' : 'Pin to your profile'}
                     </button>
                   )}
                   {isOwnPost && (

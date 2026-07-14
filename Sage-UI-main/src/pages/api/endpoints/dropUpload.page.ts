@@ -16,6 +16,7 @@ import {
   CollectionProgress,
 } from '@/utilities/collectionBundler';
 import { processCollectionZipToFilebase } from '@/utilities/collectionPinner';
+import { cleanPrismaError } from '@/utilities/prismaError';
 import { mirrorToS3, s3MirrorUrl } from '@/utilities/s3Mirror';
 import { getRequester, requireRole, Requester } from '@/utilities/apiAuth';
 import { parameters } from '@/constants/config';
@@ -214,7 +215,7 @@ async function signArweaveTx(data: any, response: NextApiResponse) {
     response.json({ tx, balance });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -421,7 +422,7 @@ async function insertDrop(data: any, response: NextApiResponse) {
     response.json({ dropId: record.id });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -475,7 +476,7 @@ async function insertAuction(data: any, response: NextApiResponse) {
     response.json({ auctionId: record.id, nftId: record.nftId });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -513,7 +514,7 @@ async function insertOpenEdition(data: any, response: NextApiResponse) {
     response.json({ openEditionId: record.id, nftId: record.nftId });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -561,7 +562,7 @@ async function insertNft(data: any, response: NextApiResponse) {
     response.json({ nftId: record.id });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -661,7 +662,7 @@ async function registerOpenEditionMint(
     response.json({ nftId: record.id });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -758,7 +759,7 @@ async function updateDraftArtwork(data: any, response: NextApiResponse) {
     response.json({ updated: true });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -786,7 +787,7 @@ async function deleteDraftArtwork(data: any, response: NextApiResponse) {
     response.json({ deleted: true });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -811,7 +812,7 @@ async function insertCollectionMint(data: any, response: NextApiResponse) {
     response.json({ collectionMintId: record.id });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -1122,7 +1123,7 @@ async function registerCollectionMint(
     response.json({ nftId: record.id });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -1163,7 +1164,7 @@ async function insertDrawing(data: any, response: NextApiResponse) {
     response.json({ drawingId: record.id });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 

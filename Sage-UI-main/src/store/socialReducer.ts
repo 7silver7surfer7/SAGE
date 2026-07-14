@@ -15,6 +15,7 @@ export interface SocialPost {
   mediaType: 'image' | 'video' | null;
   createdAt: string;
   editedAt?: string | null;
+  isPinned?: boolean;
   replyToId: number | null;
   likeCount: number;
   repostCount: number;
@@ -59,6 +60,7 @@ export interface SocialProfile {
   webpage: string | null;
   location: string | null;
   bannerImageS3Path: string | null;
+  pinnedPostId: number | null;
   followers: number;
   following: number;
   postCount: number;
@@ -222,6 +224,7 @@ export interface CollectVoucher {
 export interface TokenTrade {
   side: 'buy' | 'sell';
   trader: string;
+  user: SocialUserCard;
   ethAmount: number;
   tokenAmount: number;
   createdAt: string;
@@ -673,6 +676,19 @@ const socialApi = baseApi.injectEndpoints({
       },
       invalidatesTags: ['SocialProfile'],
     }),
+    // postId omitted → unpin
+    pinPost: builder.mutation<{ ok: boolean; pinnedPostId: number | null }, { postId?: number }>({
+      query: (body) => ({ url: 'social?action=PinPost', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile'],
+    }),
+    // admin-only platform takedown/restore — see banUser() in social.page.ts
+    banUser: builder.mutation<
+      { ok: boolean; banned: boolean },
+      { address: string; reason?: string; unban?: boolean }
+    >({
+      query: (body) => ({ url: 'social?action=BanUser', method: 'POST', body }),
+      invalidatesTags: ['SocialProfile', 'SocialFeed'],
+    }),
     sendMessage: builder.mutation<{ ok: boolean; id: number }, { to: string; text: string }>({
       query: (body) => ({ url: 'social?action=SendMessage', method: 'POST', body }),
       invalidatesTags: ['SocialMessages'],
@@ -734,6 +750,9 @@ const socialApi = baseApi.injectEndpoints({
               draft.trades.unshift({
                 side: arg.side,
                 trader: arg.trader || '',
+                // real user card arrives on the invalidation refetch right
+                // after — this optimistic row just needs the address to show
+                user: { address: arg.trader || '', username: null, profilePicture: null, verified: false },
                 ethAmount: arg.ethAmount || 0,
                 tokenAmount: arg.tokenAmount || 0,
                 createdAt: new Date().toISOString(),
@@ -825,6 +844,8 @@ export const {
   useSearchSocialQuery,
   useDeletePostMutation,
   useEditPostMutation,
+  usePinPostMutation,
+  useBanUserMutation,
   useGetGroupChatQuery,
   useSendGroupMessageMutation,
   useToggleGroupChatMutation,

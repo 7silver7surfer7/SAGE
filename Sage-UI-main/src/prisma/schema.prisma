@@ -354,6 +354,18 @@ model User {
   role                          Role          @default(USER)
   bio                           String?       @db.VarChar(1000)
   location                      String?       @db.VarChar(60) // freeform, Twitter-style
+  // One pinned post shown at the top of the profile, Twitter-style. Must be
+  // one of the user's OWN posts (enforced server-side); null = nothing pinned.
+  pinnedPostId                   Int?          @unique
+  PinnedPost                     SocialPost?   @relation("PinnedPost", fields: [pinnedPostId], references: [id])
+  // Admin moderation: a banned wallet's profile 404s for everyone but admins,
+  // their posts drop out of every feed, and every one of their drops is
+  // delisted (approvedAt cleared) the moment the ban lands. On-chain state
+  // (minted tokens, deployed contracts) is untouched — this is a platform
+  // takedown, not a chain-level action.
+  bannedAt                       DateTime?
+  bannedReason                   String?       @db.VarChar(300)
+  bannedBy                       String?       @db.Char(42)
   ashBalanceAtCreation          String        @default("0")
   profilePicture                String?
   country                       String?
@@ -405,6 +417,7 @@ model SocialPost {
   id           Int            @id @default(autoincrement())
   authorAddress String        @db.Char(42)
   Author       User           @relation("SocialAuthor", fields: [authorAddress], references: [walletAddress])
+  PinnedByUser User?          @relation("PinnedPost")
   text         String         @db.VarChar(500)
   imageUrl     String?        // optional media (S3 URL from /api/social-upload)
   mediaType    String?        // "image" | "video" (null = legacy/image)

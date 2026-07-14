@@ -195,6 +195,10 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => deletePost(request, response, r));
       case 'EditPost':
         return await withAuth(request, response, (r) => editPost(request, response, r));
+      case 'PinPost':
+        return await withAuth(request, response, (r) => pinPost(request, response, r));
+      case 'BanUser':
+        return await withAuth(request, response, (r) => banUser(request, response, r));
       default:
         return response.status(400).json({ error: 'unknown action' });
     }
@@ -549,7 +553,7 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
       return ((h >>> 0) % 10000) / 10000;
     };
     const pool = await prisma.socialPost.findMany({
-      where: { replyToId: null, deletedAt: null },
+      where: { replyToId: null, deletedAt: null, Author: { bannedAt: null } },
       include: postInclude(viewer),
       orderBy: { id: 'desc' },
       take: FEED_POOL,
@@ -599,7 +603,7 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
     authorFilter = { authorAddress: { in: following.map((f) => f.followingAddress) } };
   }
   const posts = await prisma.socialPost.findMany({
-    where: { replyToId: null, deletedAt: null, ...authorFilter },
+    where: { replyToId: null, deletedAt: null, Author: { bannedAt: null }, ...authorFilter },
     include: postInclude(viewer),
     orderBy: { id: 'desc' },
     take: 21,
@@ -615,14 +619,36 @@ async function getUserPosts(address: string, req: NextApiRequest, res: NextApiRe
   const addr = canon(address);
   if (!addr) return res.status(400).json({ error: 'bad address' });
   const viewer = canon((await getRequester(req))?.walletAddress);
-  const posts = await prisma.socialPost.findMany({
-    where: { authorAddress: addr, replyToId: null, deletedAt: null },
-    include: postInclude(viewer),
-    orderBy: { id: 'desc' },
-    take: 40,
-  });
-  const verified = await pfpVerifiedMap(posts);
-  res.json({ posts: await attachDropTiming(posts.map((p) => serializePost(p, viewer, verified))) });
+  const [posts, author] = await Promise.all([
+    prisma.socialPost.findMany({
+      where: { authorAddress: addr, replyToId: null, deletedAt: null },
+      include: postInclude(viewer),
+      orderBy: { id: 'desc' },
+      take: 40,
+    }),
+    prisma.user.findUnique({ where: { walletAddress: addr }, select: { pinnedPostId: true } }),
+  ]);
+  const pinnedId = author?.pinnedPostId ?? null;
+  // pinned post floats to the top, Twitter-style — fetch it separately if it
+  // fell outside the 40-post window (an old pin on a since-buried post)
+  let pinnedPost = pinnedId ? posts.find((p) => p.id === pinnedId) : undefined;
+  if (pinnedId && !pinnedPost) {
+    pinnedPost =
+      (await prisma.socialPost.findFirst({
+        where: { id: pinnedId, deletedAt: null },
+        include: postInclude(viewer),
+      })) || undefined;
+  }
+  const ordered = pinnedPost
+    ? [pinnedPost, ...posts.filter((p) => p.id !== pinnedId)]
+    : posts;
+  const verified = await pfpVerifiedMap(ordered);
+  const serialized = await attachDropTiming(ordered.map((p) => serializePost(p, viewer, verified)));
+  if (pinnedId) {
+    const pinned = serialized.find((p) => p.id === pinnedId);
+    if (pinned) (pinned as any).isPinned = true;
+  }
+  res.json({ posts: serialized });
 }
 
 async function getPost(id: number, req: NextApiRequest, res: NextApiResponse) {
@@ -646,8 +672,19 @@ async function getPost(id: number, req: NextApiRequest, res: NextApiResponse) {
 async function getProfile(address: string, req: NextApiRequest, res: NextApiResponse) {
   const addr = canon(address);
   if (!addr) return res.status(400).json({ error: 'bad address' });
-  const viewer = canon((await getRequester(req))?.walletAddress);
+  const requester = await getRequester(req);
+  const viewer = canon(requester?.walletAddress);
   const isSelf = viewer === addr;
+
+  // Banned wallets 404 for everyone except an admin (who needs to see the
+  // profile to manage/unban it).
+  const banCheck = await prisma.user.findUnique({
+    where: { walletAddress: addr },
+    select: { bannedAt: true, bannedReason: true },
+  });
+  if (banCheck?.bannedAt && requester?.role !== Role.ADMIN) {
+    return res.status(404).json({ error: 'banned', banned: true });
+  }
   const [user, followers, following, postCount, followsViewer, followGatedDrops, myDrops] =
     await Promise.all([
       prisma.user.findUnique({
@@ -664,6 +701,7 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
           verifiedAt: true,
           role: true,
           invitedByCode: true,
+          pinnedPostId: true,
         },
       }),
       prisma.socialFollow.count({ where: { followingAddress: addr } }),
@@ -726,6 +764,7 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
     webpage: (user as any)?.webpage || null,
     location: (user as any)?.location || null,
     bannerImageS3Path: user?.bannerImageS3Path || null,
+    pinnedPostId: (user as any)?.pinnedPostId || null,
     followers,
     following,
     postCount,
@@ -836,6 +875,63 @@ async function editPost(req: NextApiRequest, res: NextApiResponse, r: { walletAd
   });
   const verified = await pfpVerifiedMap([post]);
   res.json({ post: serializePost(post, r.walletAddress, verified) });
+}
+
+/**
+ * Pin/unpin ONE of your own posts to the top of your profile, Twitter-style.
+ * postId omitted/0 = unpin. No verification gate — pinning is free, like
+ * posting itself; only editing and NFT features are paid perks.
+ */
+async function pinPost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  const postId = Number(req.body?.postId) || 0;
+  if (!postId) {
+    await prisma.user.update({ where: { walletAddress: r.walletAddress }, data: { pinnedPostId: null } });
+    return res.json({ ok: true, pinnedPostId: null });
+  }
+  const post = await prisma.socialPost.findUnique({ where: { id: postId } });
+  if (!post || post.deletedAt) return res.status(404).json({ error: 'post not found' });
+  if (post.authorAddress.toLowerCase() !== r.walletAddress.toLowerCase())
+    return res.status(403).json({ error: 'you can only pin your own posts' });
+  await prisma.user.update({ where: { walletAddress: r.walletAddress }, data: { pinnedPostId: postId } });
+  res.json({ ok: true, pinnedPostId: postId });
+}
+
+/**
+ * Admin-only platform takedown. Bans (or unbans, `unban: true`) a wallet:
+ * the profile 404s for everyone but admins, their posts drop out of every
+ * feed (see the bannedAt filters in getFeed/getUserPosts/getGlobalActivity),
+ * and every one of their drops is delisted (approvedAt cleared — matches the
+ * FilterDropContractValidation/filterDropApprovedOnly gates every public
+ * listing already uses). On-chain state is untouched; this is reversible.
+ */
+async function banUser(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string; role: Role }) {
+  if (r.role !== Role.ADMIN) return res.status(403).json({ error: 'admin only' });
+  const target = canon(req.body?.address);
+  if (!target) return res.status(400).json({ error: 'bad address' });
+  if (target.toLowerCase() === r.walletAddress.toLowerCase())
+    return res.status(400).json({ error: "you can't ban yourself" });
+  const unban = req.body?.unban === true;
+  if (unban) {
+    await prisma.user.update({
+      where: { walletAddress: target },
+      data: { bannedAt: null, bannedReason: null, bannedBy: null },
+    });
+    // NOTE: delisted drops are NOT auto-restored — an admin re-approves them
+    // from the dashboard, same as any other drop coming back into review.
+    return res.json({ ok: true, banned: false });
+  }
+  const reason = req.body?.reason ? String(req.body.reason).slice(0, 300) : null;
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { walletAddress: target },
+      data: { bannedAt: new Date(), bannedReason: reason, bannedBy: r.walletAddress },
+    }),
+    prisma.drop.updateMany({
+      where: { artistAddress: target, approvedAt: { not: null } },
+      data: { approvedAt: null },
+    }),
+  ]);
+  res.json({ ok: true, banned: true });
 }
 
 /** Pin ERC-721 metadata JSON to Filebase (IPFS) — used by the social NFT
@@ -2732,11 +2828,13 @@ async function getTokenTradesPage(req: NextApiRequest, res: NextApiResponse) {
     skip: offset,
     take: limit,
   });
+  const cards = await userCards(Array.from(new Set(rows.map((t) => t.trader))));
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     trades: rows.map((t) => ({
       side: t.side,
       trader: t.trader,
+      user: cards[t.trader] || { address: t.trader, username: null, profilePicture: null, verified: false },
       ethAmount: t.ethAmount,
       tokenAmount: t.tokenAmount,
       createdAt: t.createdAt,
@@ -2879,16 +2977,18 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
     holderCount: holders.length,
     tradeCount: trades.length,
     series: trades.map((t) => ({ t: t.createdAt, price: t.priceEth })),
-    trades: trades
-      .slice(-30)
-      .reverse()
-      .map((t) => ({
+    trades: await (async () => {
+      const recent = trades.slice(-30).reverse();
+      const traderCards = await userCards(Array.from(new Set(recent.map((t) => t.trader))));
+      return recent.map((t) => ({
         side: t.side,
         trader: t.trader,
+        user: traderCards[t.trader] || { address: t.trader, username: null, profilePicture: null, verified: false },
         ethAmount: t.ethAmount,
         tokenAmount: t.tokenAmount,
         createdAt: t.createdAt,
-      })),
+      }));
+    })(),
     holders: holders.map(([addr, bal]) => ({
       user: holderCards[addr] || { address: addr, username: null, verified: false },
       balance: bal,

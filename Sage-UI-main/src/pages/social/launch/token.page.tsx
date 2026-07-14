@@ -17,7 +17,7 @@ export default function LaunchTokenPage() {
           </p>
         </header>
         {addr ? (
-          <TokenPanel address={addr} isSelf followers={[]} />
+          <TokenPanel address={addr} isSelf followers={[]} showLaunchCta />
         ) : (
           <div className='social__empty'>Connect your wallet to launch a token.</div>
         )}

@@ -3,6 +3,7 @@ import { toast } from 'react-toastify';
 import { useUpdateUserMutation, useGetUserQuery } from '@/store/usersReducer';
 import { useSetProfileImageMutation } from '@/store/socialReducer';
 import { PfpImage } from '@/components/Media/BaseMedia';
+import MediaCropModal from './MediaCropModal';
 
 /**
  * Twitter-style "Edit profile": banner + avatar with camera overlays at the
@@ -39,6 +40,9 @@ export default function EditProfileModal({
   const [busy, setBusy] = useState(false);
   const avatarRef = useRef<HTMLInputElement>(null);
   const bannerRef = useRef<HTMLInputElement>(null);
+  // Twitter-style crop step: the picked file waits here while the user
+  // repositions/zooms; onImage only runs once they hit Apply.
+  const [cropping, setCropping] = useState<{ kind: 'avatar' | 'banner'; file: File } | null>(null);
 
   const onImage = async (kind: 'avatar' | 'banner', file?: File) => {
     if (!file) return;
@@ -147,15 +151,35 @@ export default function EditProfileModal({
           type='file'
           accept='image/jpeg,image/png,image/webp'
           style={{ display: 'none' }}
-          onChange={(e) => onImage('avatar', e.target.files?.[0])}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) setCropping({ kind: 'avatar', file: f });
+            e.target.value = '';
+          }}
         />
         <input
           ref={bannerRef}
           type='file'
           accept='image/jpeg,image/png,image/webp'
           style={{ display: 'none' }}
-          onChange={(e) => onImage('banner', e.target.files?.[0])}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) setCropping({ kind: 'banner', file: f });
+            e.target.value = '';
+          }}
         />
+        {cropping && (
+          <MediaCropModal
+            file={cropping.file}
+            kind={cropping.kind}
+            onCancel={() => setCropping(null)}
+            onApply={(cropped) => {
+              const kind = cropping.kind;
+              setCropping(null);
+              onImage(kind, cropped);
+            }}
+          />
+        )}
 
         <div className='social-editx__fields'>
           {field('Name', username, setUsername, { max: 40, placeholder: 'Your name' })}

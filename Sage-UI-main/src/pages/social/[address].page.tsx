@@ -8,6 +8,7 @@ import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import ReferCard from '@/components/Social/ReferCard';
 import EditProfileModal from '@/components/Social/EditProfileModal';
+import MediaCropModal from '@/components/Social/MediaCropModal';
 import TokenPanel from '@/components/Social/TokenPanel';
 import EditionPanel from '@/components/Social/EditionPanel';
 import { PfpImage } from '@/components/Media/BaseMedia';
@@ -140,7 +141,7 @@ export default function SocialProfilePage() {
     const q = router.query.tab;
     if (q === 'mints' || q === 'posts') setTab(q);
   }, [router.query.tab]);
-  const { data: profile, isFetching: loadingProfile, refetch: refetchProfile } =
+  const { data: profile, isFetching: loadingProfile, error: profileError, refetch: refetchProfile } =
     useGetSocialProfileQuery(address, { skip: !address });
   const { data: postsData, isFetching: loadingPosts } = useGetUserPostsQuery(address, {
     skip: !address,
@@ -150,6 +151,7 @@ export default function SocialProfilePage() {
   const [setProfileImage] = useSetProfileImageMutation();
   const avatarFileRef = useRef<HTMLInputElement>(null);
   const bannerFileRef = useRef<HTMLInputElement>(null);
+  const [cropping, setCropping] = useState<{ kind: 'avatar' | 'banner'; file: File } | null>(null);
 
   // upload + compress (server-side crop per kind), then attach to the profile
   const onImageFile = async (kind: 'avatar' | 'banner', file?: File) => {
@@ -181,6 +183,14 @@ export default function SocialProfilePage() {
       });
     }
   };
+
+  if ((profileError as any)?.data?.banned) {
+    return (
+      <SocialShell>
+        <div className='social__empty'>🚫 This account has been suspended.</div>
+      </SocialShell>
+    );
+  }
 
   if (loadingProfile || !profile)
     return (
@@ -238,15 +248,35 @@ export default function SocialProfilePage() {
         type='file'
         accept='image/jpeg,image/png,image/webp'
         style={{ display: 'none' }}
-        onChange={(e) => onImageFile('banner', e.target.files?.[0])}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) setCropping({ kind: 'banner', file: f });
+          e.target.value = '';
+        }}
       />
       <input
         ref={avatarFileRef}
         type='file'
         accept='image/jpeg,image/png,image/webp'
         style={{ display: 'none' }}
-        onChange={(e) => onImageFile('avatar', e.target.files?.[0])}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) setCropping({ kind: 'avatar', file: f });
+          e.target.value = '';
+        }}
       />
+      {cropping && (
+        <MediaCropModal
+          file={cropping.file}
+          kind={cropping.kind}
+          onCancel={() => setCropping(null)}
+          onApply={(cropped) => {
+            const kind = cropping.kind;
+            setCropping(null);
+            onImageFile(kind, cropped);
+          }}
+        />
+      )}
       <div className='social-profile__head'>
         <div className='social-profile__avatar' data-verified={profile.pfpVerified}>
           <PfpImage src={profile.profilePicture} />
@@ -320,14 +350,9 @@ export default function SocialProfilePage() {
           {shortenAddress(profile.address)} ⧉
         </button>
         {profile.bio && <p className='social-profile__bio'>{profile.bio}</p>}
-        {(profile.location || profile.webpage) && (
+        {profile.location && (
           <p className='social-profile__meta'>
-            {profile.location && <span>📍 {profile.location}</span>}
-            {profile.webpage && (
-              <a href={profile.webpage} target='_blank' rel='noreferrer noopener'>
-                🔗 {profile.webpage.replace(/^https?:\/\/(www\.)?/, '').slice(0, 30)}
-              </a>
-            )}
+            <span>📍 {profile.location}</span>
           </p>
         )}
         {profile.webpage && (

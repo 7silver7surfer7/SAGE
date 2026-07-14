@@ -68,7 +68,14 @@ strong {
   // invisible and left white hero text on a white page. At 0 it paints over
   // the layout background, and .drop-page (z-index 1) carries the text above.
   z-index: 0;
-  height: 100vh;
+  // FIXED height, not 100vh: a viewport-relative height ignores the page's
+  // actual content length. On a short drop (little/no games below the hero)
+  // the page is shorter than one viewport, so a 100vh banner reached straight
+  // through the header AND into the footer beneath it — read as "there's a
+  // banner on the footer". A moderate fixed height comfortably covers the
+  // hero (logo/title/description) on every drop without risking bleeding
+  // into whatever follows, however short that drop's own content is.
+  height: 560px;
   width: 100%;
   position: absolute;
   filter: brightness(30%);

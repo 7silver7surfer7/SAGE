@@ -58,7 +58,7 @@ export default function LaunchNftPage() {
   const [bannerFile, setBannerFile] = useState<File | null>(null);
   const [price, setPrice] = useState('0.01'); // reserve (auction) / mint price (OE, zip)
   const [durationHours, setDurationHours] = useState('24');
-  const [maxPerUser, setMaxPerUser] = useState('0');
+  const [maxPerUser, setMaxPerUser] = useState('1');
   const [followersOnly, setFollowersOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [liveDropId, setLiveDropId] = useState<number | null>(null);
@@ -239,7 +239,7 @@ export default function LaunchNftPage() {
                     setDescription('');
                     setPrice('0.01');
                     setDurationHours('24');
-                    setMaxPerUser('0');
+                    setMaxPerUser('1');
                     setFollowersOnly(false);
                   }}
                 >
@@ -255,7 +255,7 @@ export default function LaunchNftPage() {
                 <p className='social-launch__note'>
                   Mint editions are self-serve and live the moment you sign — no curation queue.
                 </p>
-                <EditionPanel address={addr} isSelf />
+                <EditionPanel address={addr} isSelf showLaunchCta />
               </div>
             ) : (
               <div className='social-launch__form'>
