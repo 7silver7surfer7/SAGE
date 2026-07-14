@@ -458,6 +458,19 @@ export default function TokenPanel({ address, isSelf, showLaunchCta }: Props) {
           </button>
         </div>
       )}
+      {/* Creators can launch MANY tokens — this one is just the first/profile
+          token. Only on the dedicated launcher page (showLaunchCta): a plain
+          "no token yet" viewer of this profile never sees a launch prompt. */}
+      {isSelf && showLaunchCta && (
+        <button
+          className='social-token__airdrop'
+          style={{ marginTop: 10 }}
+          onClick={() => setLaunchOpen(true)}
+        >
+          🚀 Launch another coin
+        </button>
+      )}
+      {launchOpen && <LaunchModal onClose={() => setLaunchOpen(false)} />}
     </div>
   );
 }

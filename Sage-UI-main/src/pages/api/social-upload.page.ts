@@ -26,6 +26,24 @@ const MAX_GIF_BYTES = 8 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 const IMAGE_MAX_DIM = 1600;
 const SHARP_MAX_INPUT_PIXELS = 12000 * 12000;
+// NFT drop artwork gets its OWN pipeline: it's sold and collected, not
+// scrolled past in a feed, so it's tuned for fidelity per byte rather than
+// minimum bandwidth. 2560px (vs. the 1600px feed cap) keeps real detail
+// (brushwork, fine linework) legible when a collector zooms in; q90 + max
+// encode effort spends more CPU per upload to buy back quality at a given
+// size instead of just cranking the compression ratio up.
+const NFT_MAX_DIM = 2560;
+const NFT_WEBP_QUALITY = 90;
+
+async function optimizeNftArtwork(buffer: Buffer): Promise<Buffer> {
+  // withoutEnlargement means a smaller source is never upscaled — "good
+  // compression" isn't "invent detail that wasn't there"
+  return sharp(buffer, { limitInputPixels: SHARP_MAX_INPUT_PIXELS })
+    .rotate()
+    .resize({ width: NFT_MAX_DIM, height: NFT_MAX_DIM, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: NFT_WEBP_QUALITY, effort: 6, smartSubsample: true })
+    .toBuffer();
+}
 
 interface RequestWithFile extends NextApiRequest {
   file?: any;
@@ -127,8 +145,15 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
       if (buffer.length > MAX_IMAGE_BYTES)
         return res.status(400).json({ error: 'images are capped at 12MB' });
       // kind steers the crop: avatars are square-cover 400px, banners 1500×500
-      // cover, posts fit inside 1600px
+      // cover, posts fit inside 1600px. NFT drop art gets its OWN path below —
+      // it's sold/collected, not scrolled past in a feed, so it's tuned for
+      // fidelity rather than feed bandwidth.
       const kind = String(req.query.kind || 'post');
+      if (kind === 'nft') {
+        const nft = await optimizeNftArtwork(buffer);
+        const url = await toUrl(`${stamp}-nft.webp`, 'image/webp', nft);
+        return res.json({ url, mediaType: 'image', bytes: nft.length });
+      }
       let pipeline = sharp(buffer, { limitInputPixels: SHARP_MAX_INPUT_PIXELS }).rotate();
       if (kind === 'avatar') {
         pipeline = pipeline.resize({ width: 400, height: 400, fit: 'cover' });

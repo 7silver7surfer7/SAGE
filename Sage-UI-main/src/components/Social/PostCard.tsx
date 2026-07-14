@@ -143,6 +143,12 @@ const HexIcon = ({ filled }: { filled?: boolean }) => (
     <path d='M12 2l8.5 5v10L12 22l-8.5-5V7L12 2z' />
   </svg>
 );
+// Twitter's own "pinned" glyph: a pushpin, same thin-outline style as the rest
+const PinIcon = () => (
+  <svg width='14' height='14' viewBox='0 0 24 24' fill='currentColor'>
+    <path d='M16 3l5 5-4.5 4.5L18 16l-1.5 1.5L12 13l-6 6H4v-2l6-6-4.5-4.5L7 5l3.5 2.5L15 3z' />
+  </svg>
+);
 interface Props {
   post: SocialPost;
   onReply?: (post: SocialPost) => void;
@@ -369,17 +375,25 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       setShowVerify(true);
       return;
     }
-    // image posts sell for ETH (the artist sells the artwork); text posts
-    // sell for pixels (the points economy)
+    // text posts always sell for pixels; image posts let the artist CHOOSE
+    // ETH (a collector pays you directly) or pixels (earn off the points
+    // economy instead of requiring real ETH from buyers)
     const isImageSale = !!post.imageUrl && post.mediaType !== 'video';
-    const unit = isImageSale ? 'ETH' : 'pixels';
+    let currency: 'ETH' | 'POINTS' = 'POINTS';
+    if (isImageSale) {
+      const wantsPixels = window.confirm(
+        'Sell this artwork for pixels instead of ETH? OK = pixels (points economy). Cancel = ETH (collector pays you directly).'
+      );
+      currency = wantsPixels ? 'POINTS' : 'ETH';
+    }
+    const unit = currency === 'ETH' ? 'ETH' : 'pixels';
     const raw = window.prompt(
       post.collectPrice === null
-        ? isImageSale
+        ? currency === 'ETH'
           ? 'Sell this artwork as an NFT — set a price in ETH (e.g. "0.001"). The buyer pays you directly. 0 = free. Leave empty to cancel.'
           : 'Sell this post as an NFT — set a price in pixels (e.g. "500"). Collectors spend pixels, you earn them. 0 = free. Leave empty to cancel.'
         : `Collect price is ${post.collectPrice} ${unit}. Enter a new ${unit} price, or leave empty to stop new collects.`,
-      post.collectPrice === null ? (isImageSale ? '0.001' : '500') : String(post.collectPrice)
+      post.collectPrice === null ? (currency === 'ETH' ? '0.001' : '500') : String(post.collectPrice)
     );
     if (raw === null) return;
     const price = raw.trim() === '' ? null : Number(raw.trim());
@@ -388,7 +402,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       return;
     }
     try {
-      await setCollectible({ postId: post.id, price }).unwrap();
+      await setCollectible({ postId: post.id, price, currency }).unwrap();
       toast.success(price === null ? 'Collecting closed' : `Collectible at ${price} ${unit}`);
     } catch (err: any) {
       handleGateError(err, 'Could not update');
@@ -493,7 +507,9 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   return (
     <article className='social-post' onClick={goToPost} data-boosted={post.isBoosted}>
       {post.isPinned && (
-        <div className='social-post__pinned'>📌 Pinned</div>
+        <div className='social-post__pinned'>
+          <PinIcon /> Pinned
+        </div>
       )}
       <div
         className='social-post__avatar'

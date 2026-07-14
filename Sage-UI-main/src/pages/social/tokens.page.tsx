@@ -23,15 +23,37 @@ function ageOf(iso: string): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
+/** debounce a fast-changing value — avoids a server round-trip per keystroke */
+function useDebounced<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
+
 /**
  * The pump.fun-style token board: big square art cards, sorted by MARKET CAP
  * so the heavy hitters lead — infinite scroll digs down to the cheap end.
+ * A search box filters by name/symbol/contract address across every launch,
+ * not just what's currently paged in.
  */
 export default function TokensPage() {
   const router = useRouter();
   const [cursor, setCursor] = useState<number | undefined>(undefined);
-  const { data, isFetching } = useGetTokensQuery({ cursor }, { pollingInterval: 30_000 });
+  const [search, setSearch] = useState('');
+  const q = useDebounced(search.trim(), 300);
+  const { data, isFetching } = useGetTokensQuery(
+    { cursor, q: q || undefined },
+    { pollingInterval: q ? undefined : 30_000 }
+  );
   const sentinel = useRef<HTMLDivElement>(null);
+
+  // a fresh search string starts its own paging from the top
+  useEffect(() => {
+    setCursor(undefined);
+  }, [q]);
 
   useEffect(() => {
     const el = sentinel.current;
@@ -59,6 +81,19 @@ export default function TokensPage() {
             🚀 Launch yours
           </button>
         </header>
+        <div className='pump-search'>
+          <span className='pump-search__icon'>🔍</span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder='Search name, symbol, address'
+          />
+          {search && (
+            <button className='pump-search__clear' onClick={() => setSearch('')}>
+              ✕
+            </button>
+          )}
+        </div>
         {isFetching && !data ? (
           <LoaderDots />
         ) : data?.tokens.length ? (
@@ -102,6 +137,8 @@ export default function TokensPage() {
               </div>
             )}
           </>
+        ) : q ? (
+          <div className='social__empty'>No coins match “{q}”.</div>
         ) : (
           <div className='social__empty'>
             No coins on the curve yet — launch the first one. 🚀

@@ -1301,7 +1301,7 @@ async function setCollectible(
   r: { walletAddress: string }
 ) {
   if (!(await requireVerified(r.walletAddress, res))) return;
-  const { postId, price } = req.body || {};
+  const { postId, price, currency: requestedCurrency } = req.body || {};
   const id = Number(postId);
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
@@ -1312,9 +1312,16 @@ async function setCollectible(
   if (p !== null && (isNaN(p) || p < 0)) return res.status(400).json({ error: 'bad price' });
   if (p !== null && !parameters.SOCIAL_COLLECTS_ADDRESS)
     return res.status(400).json({ error: 'collecting is not enabled on this network yet' });
-  // IMAGE posts sell for ETH (the artist sells the artwork, real money);
-  // text posts sell for pixels (the points economy).
-  const currency = post.imageUrl && post.mediaType !== 'video' ? 'ETH' : 'POINTS';
+  const isImagePost = !!post.imageUrl && post.mediaType !== 'video';
+  // Text-only posts always sell for pixels (no artwork to price in ETH).
+  // Image posts let the artist CHOOSE: ETH (real money, buyer pays directly)
+  // or pixels (the points economy) — so an artist can earn pixels for art
+  // instead of always needing collectors to spend real ETH.
+  const currency = !isImagePost
+    ? 'POINTS'
+    : requestedCurrency === 'POINTS'
+    ? 'POINTS'
+    : 'ETH';
   await prisma.socialPost.update({
     where: { id },
     data: { collectPrice: p, collectCurrency: currency },
@@ -2406,8 +2413,23 @@ async function getProfileToken(address: string, res: NextApiResponse) {
 async function getTokens(req: NextApiRequest, res: NextApiResponse) {
   const offset = Math.max(0, Number(req.query.cursor) || 0);
   const PAGE = 24;
+  const q = String(req.query.q || '').trim();
   const launches = await prisma.socialTokenLaunch.findMany({
     include: { Creator: { select: { username: true, profilePicture: true, verifiedAt: true } } },
+    // name/symbol/address search — small(ish) table, filtered in SQL rather
+    // than in JS since we don't want to load+sort the whole board just to
+    // throw most of it away
+    ...(q
+      ? {
+          where: {
+            OR: [
+              { name: { contains: q, mode: 'insensitive' } },
+              { symbol: { contains: q, mode: 'insensitive' } },
+              ...(canon(q) ? [{ tokenAddress: canon(q)! }] : []),
+            ],
+          },
+        }
+      : {}),
   });
   // one latest trade per token (max id), fetched in a single pass
   const maxIds = await prisma.socialTokenTrade.groupBy({

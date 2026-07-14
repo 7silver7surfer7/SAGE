@@ -422,12 +422,20 @@ const socialApi = baseApi.injectEndpoints({
     // mcap-sorted board with infinite scroll: one cache entry, pages merge in
     getTokens: builder.query<
       { tokens: TokenListItem[]; nextCursor: number | null },
-      { cursor?: number } | void
+      { cursor?: number; q?: string } | void
     >({
-      query: (args) => ({
-        url: `social?action=GetTokens${(args as any)?.cursor ? `&cursor=${(args as any).cursor}` : ''}`,
-      }),
-      serializeQueryArgs: () => 'tokens-board',
+      query: (args) => {
+        const cursor = (args as any)?.cursor;
+        const q = (args as any)?.q;
+        return {
+          url: `social?action=GetTokens${cursor ? `&cursor=${cursor}` : ''}${
+            q ? `&q=${encodeURIComponent(q)}` : ''
+          }`,
+        };
+      },
+      // separate cache entry per search string, so switching between the
+      // mcap-sorted board and a search doesn't clobber either's paging state
+      serializeQueryArgs: ({ queryArgs }) => `tokens-board-${(queryArgs as any)?.q || ''}`,
       merge: (current, incoming, { arg }) => {
         if (!(arg as any)?.cursor) return incoming;
         const seen = new Set(current.tokens.map((t) => t.tokenAddress));
@@ -436,7 +444,8 @@ const socialApi = baseApi.injectEndpoints({
         return current;
       },
       forceRefetch: ({ currentArg, previousArg }) =>
-        (currentArg as any)?.cursor !== (previousArg as any)?.cursor,
+        (currentArg as any)?.cursor !== (previousArg as any)?.cursor ||
+        (currentArg as any)?.q !== (previousArg as any)?.q,
       providesTags: ['SocialFeed'],
     }),
     getTokenTradesPage: builder.query<
@@ -603,7 +612,7 @@ const socialApi = baseApi.injectEndpoints({
     }),
     setCollectible: builder.mutation<
       { ok: boolean; collectPrice: number | null; collectCurrency: string },
-      { postId: number; price: number | null }
+      { postId: number; price: number | null; currency?: 'ETH' | 'POINTS' }
     >({
       query: (body) => ({ url: 'social?action=SetCollectible', method: 'POST', body }),
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
