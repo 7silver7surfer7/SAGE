@@ -122,9 +122,6 @@ export default function ProfilePanel({ isArtist }: Props) {
           {/* banner editing lives on the SOCIAL profile now (/social/you →
               Edit banner) — /profile carries just the avatar, same picture
               as SAGE Social */}
-          <a className='profile-panel__social-link' href='/social/'>
-            avatar &amp; banner sync with your SAGE Social profile →
-          </a>
         </div>
         <div className='profile-panel__username-group'>
           <input
@@ -190,7 +187,7 @@ export default function ProfilePanel({ isArtist }: Props) {
 
         <div className='profile-panel__bio-group'>
           <p className='profile-panel__bio-label'>
-            about{' '}
+            bio{' '}
             <span style={state.bio && state.bio.length > 1000 ? { color: 'red' } : {}}>
               ({state.bio?.length || 0}/1000 chars max)
             </span>
@@ -198,7 +195,7 @@ export default function ProfilePanel({ isArtist }: Props) {
           <textarea
             value={(state.bio as string) || ''}
             onChange={handleBioInput}
-            placeholder='ABOUT'
+            placeholder='BIO'
             className='profile-panel__bio-field'
           />
         </div>

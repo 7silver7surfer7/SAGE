@@ -41,6 +41,9 @@ export default function TokenDetailPage() {
   });
   const [recordTrade] = useRecordTradeMutation();
   const [bucketS, setBucketS] = useState(60); // 1m default, pump.fun-style
+  // pump.fun-style trade widget
+  const [side, setSide] = useState<'buy' | 'sell'>('buy');
+  const [amount, setAmount] = useState('0.01'); // ETH (buy) / tokens (sell)
   const [createPost] = useCreatePostMutation();
   const [busy, setBusy] = useState(false);
   const [myBalance, setMyBalance] = useState<number | null>(null);
@@ -80,9 +83,7 @@ export default function TokenDetailPage() {
   const buy = async () => {
     if (!signer) { toast.info('Connect your wallet'); return; }
     if (data?.complete) { toast.info('Curve sold out — this token has graduated'); return; }
-    const raw = window.prompt(`Buy $${t.symbol} — how much ETH?`, '0.01');
-    if (!raw) return;
-    const amt = Number(raw);
+    const amt = Number(amount);
     if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
     // pre-flight: raw wallet reverts read as 'Internal JSON-RPC error'
     const bal = await (signer as any).getBalance();
@@ -108,10 +109,8 @@ export default function TokenDetailPage() {
   const sell = async () => {
     if (!signer) { toast.info('Connect your wallet'); return; }
     if (!myBalance || myBalance <= 0) { toast.info(`You hold no $${t.symbol}`); return; }
-    const raw = window.prompt(`Sell $${t.symbol} — how many tokens? (you hold ${fmt(myBalance)})`, String(Math.floor(myBalance)));
-    if (!raw) return;
-    const amt = Number(raw);
-    if (!amt || amt <= 0 || amt > myBalance) { toast.error('Enter a valid amount'); return; }
+    const amt = Number(amount);
+    if (!amt || amt <= 0 || amt > myBalance) { toast.error(`Enter a valid amount (you hold ${fmt(myBalance)})`); return; }
     setBusy(true);
     const toastId = toast.loading(`Selling $${t.symbol}…`);
     try {
@@ -179,6 +178,16 @@ export default function TokenDetailPage() {
               {!t.airdropEnabled && <span className='token-page__badge'>🔒 no-dump</span>}
             </div>
             {t.description && <p className='token-page__desc'>{t.description}</p>}
+            {t.website && (
+              <a
+                className='token-page__ca token-page__website'
+                href={t.website}
+                target='_blank'
+                rel='noreferrer noopener'
+              >
+                🌐 {t.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 32)}
+              </a>
+            )}
           </div>
           <div className='token-page__share-col'>
             <button className='token-page__share' onClick={share}>Share to feed</button>
@@ -274,10 +283,69 @@ export default function TokenDetailPage() {
           </p>
         </div>
 
-        <div className='token-page__trade'>
-          <button className='token-page__buy' disabled={busy || data?.complete} onClick={buy}>Buy ${t.symbol}</button>
-          <button className='token-page__sell' disabled={busy} onClick={sell}>
-            Sell{myBalance ? ` · ${fmt(myBalance)}` : ''}
+        {/* pump.fun-style trade widget */}
+        <div className='token-trade'>
+          <div className='token-trade__tabs'>
+            <button data-active={side === 'buy'} data-side='buy' onClick={() => { setSide('buy'); setAmount('0.01'); }}>
+              Buy
+            </button>
+            <button data-active={side === 'sell'} data-side='sell' onClick={() => { setSide('sell'); setAmount(myBalance ? String(Math.floor(myBalance)) : '0'); }}>
+              Sell
+            </button>
+          </div>
+          <div className='token-trade__amount'>
+            <input
+              value={amount}
+              inputMode='decimal'
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <span>{side === 'buy' ? 'ETH' : `$${t.symbol}`}</span>
+          </div>
+          {side === 'buy' && data?.ethUsd ? (
+            <p className='token-trade__hint'>≈ ${((Number(amount) || 0) * data.ethUsd).toFixed(2)}</p>
+          ) : side === 'sell' ? (
+            <p className='token-trade__hint'>you hold {fmt(myBalance || 0)}</p>
+          ) : null}
+          <div className='token-trade__presets'>
+            {side === 'buy'
+              ? [25, 100, 250].map((usd) => (
+                  <button
+                    key={usd}
+                    data-side='buy'
+                    onClick={() =>
+                      data?.ethUsd && setAmount((usd / data.ethUsd).toFixed(5))
+                    }
+                  >
+                    ${usd}
+                  </button>
+                ))
+              : [25, 50, 100].map((pct) => (
+                  <button
+                    key={pct}
+                    data-side='sell'
+                    onClick={() => myBalance && setAmount(String(Math.floor((myBalance * pct) / 100)))}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+          </div>
+          <button
+            className='token-trade__cta'
+            data-side={side}
+            disabled={busy || (side === 'buy' && data?.complete)}
+            onClick={() => {
+              if (!signer) { toast.info('Connect your wallet to trade'); return; }
+              if (side === 'buy') buy();
+              else sell();
+            }}
+          >
+            {!signer
+              ? 'Connect wallet to trade'
+              : side === 'buy'
+              ? data?.complete
+                ? 'Graduated — buys closed'
+                : `Buy $${t.symbol}`
+              : `Sell $${t.symbol}`}
           </button>
         </div>
 

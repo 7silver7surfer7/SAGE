@@ -29,6 +29,7 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
   // FIRST buy on the fresh curve — seeds the chart and makes you holder #1
   const [initialBuy, setInitialBuy] = useState('0.01');
   const [description, setDescription] = useState('');
+  const [website, setWebsite] = useState('');
   // default OFF: no-dump launches are the norm — opting IN reserves the 2%
   const [withAirdrop, setWithAirdrop] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -43,7 +44,7 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
     const t = toast.loading(buyEth > 0 ? `Launching + buying ${buyEth} ETH…` : 'Launching your coin… (free — you only pay gas)');
     try {
       const { token, txHash, devBuy } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth);
-      await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop, description: description.trim() || undefined }).unwrap();
+      await record({ tokenAddress: token, name: name.trim(), symbol: symbol.trim().toUpperCase(), launchTxHash: txHash, airdropEnabled: withAirdrop, description: description.trim() || undefined, website: website.trim() || undefined }).unwrap();
       if (devBuy) {
         // the dev buy is a real Bought event in the launch tx — record it so
         // the chart, holders and trades all start seeded
@@ -82,6 +83,14 @@ function LaunchModal({ onClose }: { onClose: () => void }) {
           rows={2}
           onChange={(e) => setDescription(e.target.value)}
           style={{ marginBottom: 12, resize: 'vertical', borderRadius: 16 }}
+        />
+        <input
+          className='social-search__input'
+          placeholder='Website (optional) — https://…'
+          value={website}
+          maxLength={120}
+          onChange={(e) => setWebsite(e.target.value)}
+          style={{ marginBottom: 12 }}
         />
         <label className='social-edit__label'>Initial buy — seeds your chart, makes you holder #1</label>
         <div className='social-unit-input' style={{ marginBottom: 12 }}>

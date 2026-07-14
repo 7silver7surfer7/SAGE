@@ -3778,3 +3778,139 @@ body:has([class*='__overlay']) .layout {
     }
   }
 }
+
+/* ── pump.fun-style trade widget ── */
+.token-trade {
+  border-radius: 18px;
+  padding: 16px;
+  margin: 14px 0;
+  max-width: 520px;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(contrast), 0.14);
+    background: rgba(m.t(contrast), 0.02);
+  }
+  &__tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    button {
+      flex: 1;
+      border: none;
+      cursor: pointer;
+      border-radius: 999px;
+      padding: 10px 0;
+      font-weight: 800;
+      font-size: 0.95rem;
+      background: transparent;
+      @include m.theme() {
+        color: rgba(m.t(contrast), 0.5);
+      }
+      &[data-active='true'][data-side='buy'] {
+        @include m.theme() {
+          background: m.t(accent);
+          color: m.t(base);
+        }
+      }
+      &[data-active='true'][data-side='sell'] {
+        background: #f6608a;
+        color: #131917;
+      }
+    }
+  }
+  &__amount {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 10px;
+    input {
+      width: 50%;
+      max-width: 220px;
+      border: none;
+      background: transparent;
+      outline: none;
+      text-align: right;
+      font-family: 'Space Grotesk', 'Inter', sans-serif;
+      font-size: 2.4rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      @include m.theme() {
+        color: m.t(contrast);
+      }
+    }
+    span {
+      font-weight: 800;
+      font-size: 1rem;
+      @include m.theme() {
+        color: rgba(m.t(contrast), 0.5);
+      }
+    }
+  }
+  &__hint {
+    text-align: center;
+    font-size: 0.8rem;
+    margin: 4px 0 12px;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.45);
+    }
+  }
+  &__presets {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    button {
+      flex: 1;
+      cursor: pointer;
+      border-radius: 999px;
+      padding: 8px 0;
+      font-weight: 700;
+      font-size: 0.85rem;
+      background: transparent;
+      &[data-side='buy'] {
+        @include m.theme() {
+          border: 1px solid rgba(m.t(accent), 0.5);
+          color: m.t(accent);
+        }
+        &:hover {
+          @include m.theme() {
+            background: rgba(m.t(accent), 0.12);
+          }
+        }
+      }
+      &[data-side='sell'] {
+        border: 1px solid rgba(246, 96, 138, 0.5);
+        color: #f6608a;
+        &:hover {
+          background: rgba(246, 96, 138, 0.12);
+        }
+      }
+    }
+  }
+  &__cta {
+    width: 100%;
+    border: none;
+    cursor: pointer;
+    border-radius: 14px;
+    padding: 14px 0;
+    font-weight: 800;
+    font-size: 1rem;
+    &[data-side='buy'] {
+      @include m.theme() {
+        background: m.t(accent);
+        color: m.t(base);
+      }
+    }
+    &[data-side='sell'] {
+      background: #f6608a;
+      color: #131917;
+    }
+    &:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+  }
+}
+.token-page__website {
+  text-decoration: none;
+  display: inline-block;
+  margin-top: 6px;
+}

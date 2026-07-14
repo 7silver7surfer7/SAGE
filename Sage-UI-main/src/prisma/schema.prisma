@@ -517,6 +517,7 @@ model SocialTokenLaunch {
   launchTxHash    String   @db.Char(66)
   imageUrl        String?  // optional token art (S3)
   description     String?  @db.VarChar(300) // pump.fun-style one-liner
+  website         String?  @db.VarChar(120) // project link shown next to the description
   // pump.fun-style opt-out: false = the creator holds ZERO tokens at launch
   // (no airdrop allocation), so the coin cannot be dumped on followers
   airdropEnabled  Boolean  @default(true)

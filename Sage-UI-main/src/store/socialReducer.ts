@@ -225,6 +225,7 @@ export interface TokenDetail {
     symbol: string;
     imageUrl: string | null;
     description: string | null;
+    website: string | null;
     airdropEnabled: boolean;
     creator: SocialUserCard;
   };
@@ -357,6 +358,25 @@ const socialApi = baseApi.injectEndpoints({
     }),
     getActivity: builder.query<{ activity: ActivityItem[] }, void>({
       query: () => ({ url: 'social?action=GetActivity' }),
+      providesTags: ['SocialFeed'],
+    }),
+    getLeaderboardBoard: builder.query<
+      { rows: LeaderboardRow[]; nextOffset: number | null },
+      { board: string; offset?: number }
+    >({
+      query: ({ board, offset }) => ({
+        url: `social?action=GetLeaderboardBoard&board=${board}${offset ? `&offset=${offset}` : ''}`,
+      }),
+      // one cache per board; offset pages append (same pattern as the feed)
+      serializeQueryArgs: ({ queryArgs }) => `lb-${queryArgs.board}`,
+      merge: (current, incoming, { arg }) => {
+        if (!arg.offset) return incoming;
+        current.rows.push(...incoming.rows);
+        current.nextOffset = incoming.nextOffset;
+        return current;
+      },
+      forceRefetch: ({ currentArg, previousArg }) =>
+        currentArg?.offset !== previousArg?.offset || currentArg?.board !== previousArg?.board,
       providesTags: ['SocialFeed'],
     }),
     getLeaderboard: builder.query<Leaderboard, void>({
@@ -581,6 +601,7 @@ const socialApi = baseApi.injectEndpoints({
         imageUrl?: string;
         airdropEnabled?: boolean;
         description?: string;
+        website?: string;
       }
     >({
       query: (body) => ({ url: 'social?action=RecordTokenLaunch', method: 'POST', body }),
@@ -710,6 +731,7 @@ export const {
   useLazyGetOlderMessagesQuery,
   useGetActivityQuery,
   useGetLeaderboardQuery,
+  useGetLeaderboardBoardQuery,
   useGetUserMintsQuery,
   useGetGlobalActivityQuery,
   useGetProfileTokenQuery,

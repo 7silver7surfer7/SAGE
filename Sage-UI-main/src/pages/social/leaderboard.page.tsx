@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import LoaderDots from '@/components/LoaderDots';
 import SocialShell from '@/components/Social/SocialShell';
@@ -6,7 +6,11 @@ import VerifiedBadge from '@/components/Social/VerifiedBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
-import { useGetLeaderboardQuery, LeaderboardRow } from '@/store/socialReducer';
+import {
+  useGetLeaderboardQuery,
+  useGetLeaderboardBoardQuery,
+  LeaderboardRow,
+} from '@/store/socialReducer';
 
 const BOARDS = [
   ['topPoints', 'Top points', 'net pixels — earned holding SAGE, spent/earned collecting posts'],
@@ -19,9 +23,35 @@ const BOARDS = [
 export default function LeaderboardPage() {
   const router = useRouter();
   const [board, setBoard] = useState<(typeof BOARDS)[number][0]>('topPoints');
-  const { data, isFetching } = useGetLeaderboardQuery();
-  const rows: LeaderboardRow[] = (data as any)?.[board] || [];
+  const [offset, setOffset] = useState(0);
+  // stats + widgets still ride the summary query
+  const { data } = useGetLeaderboardQuery();
+  // the board itself scrolls forever (paginated, merged per board)
+  const { data: boardData, isFetching } = useGetLeaderboardBoardQuery({ board, offset });
+  const rows: LeaderboardRow[] = boardData?.rows || [];
   const meta = BOARDS.find(([k]) => k === board)!;
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // infinite scroll: pull the next page when the sentinel nears the viewport
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return undefined;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && boardData?.nextOffset && !isFetching) {
+          setOffset(boardData.nextOffset);
+        }
+      },
+      { rootMargin: '600px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [boardData?.nextOffset, isFetching]);
+
+  const switchBoard = (next: (typeof BOARDS)[number][0]) => {
+    setBoard(next);
+    setOffset(0);
+  };
 
   return (
     <SocialShell>
@@ -55,7 +85,7 @@ export default function LeaderboardPage() {
           <button
             key={key}
             className={`social__tab ${board === key ? 'social__tab--active' : ''}`}
-            onClick={() => setBoard(key)}
+            onClick={() => switchBoard(key)}
           >
             {label}
           </button>
@@ -88,10 +118,14 @@ export default function LeaderboardPage() {
                   ? `${row.count} followers`
                   : board === 'topPoints'
                   ? `${row.count} pixels`
-                  : `${row.sage} SAGE`}
+                  : board === 'topBurners'
+                  ? `${row.count} ETH`
+                  : `${row.count} SAGE`}
               </span>
             </div>
           ))}
+          <div ref={sentinelRef} className='social__sentinel' />
+          {isFetching && offset > 0 && <LoaderDots />}
           <p className='social-board__caption'>{meta[2]}</p>
         </div>
       ) : (

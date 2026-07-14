@@ -101,6 +101,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getInvite(String(request.query.code || ''), response);
       case 'InviteImage':
         return await inviteImage(String(request.query.code || ''), response);
+      case 'GetLeaderboardBoard':
+        return await getLeaderboardBoard(request, response);
       case 'GetLeaderboard':
         return await getLeaderboard(response);
       case 'GetUserMints':
@@ -1529,8 +1531,59 @@ async function pixelsLeaderboard(): Promise<{ address: string; net: bigint }[]> 
     chunk.forEach((u, j) => rows.push({ address: u.walletAddress, net: balances[j] }));
   }
   rows.sort((a, b) => (b.net > a.net ? 1 : b.net < a.net ? -1 : 0));
-  pixelsBoardCache = { rows: rows.slice(0, 10), at: Date.now() };
+  pixelsBoardCache = { rows, at: Date.now() }; // FULL ranking; callers slice
   return pixelsBoardCache.rows;
+}
+
+/** One leaderboard BOARD, paginated — powers the page's infinite scroll. */
+async function getLeaderboardBoard(req: NextApiRequest, res: NextApiResponse) {
+  const board = String(req.query.board || 'topPoints');
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit = Math.min(50, Number(req.query.limit) || 25);
+  let rows: { address: string; value: number }[] = [];
+  if (board === 'topPoints') {
+    rows = (await pixelsLeaderboard())
+      .slice(offset, offset + limit)
+      .map((r) => ({ address: r.address, value: Number(r.net) }));
+  } else if (board === 'topEarners' || board === 'topTippers') {
+    const key = board === 'topEarners' ? 'toAddress' : 'fromAddress';
+    const g = await prisma.socialTip.groupBy({
+      by: [key as any],
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      skip: offset,
+      take: limit,
+    });
+    rows = g.map((r: any) => ({ address: r[key], value: r._sum.amount || 0 }));
+  } else if (board === 'topBurners') {
+    const g = await prisma.socialBoost.groupBy({
+      by: ['fromAddress'],
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      skip: offset,
+      take: limit,
+    });
+    rows = g.map((r) => ({ address: r.fromAddress, value: r._sum.amount || 0 }));
+  } else if (board === 'mostFollowed') {
+    const g = await prisma.socialFollow.groupBy({
+      by: ['followingAddress'],
+      _count: { _all: true },
+      orderBy: { _count: { followerAddress: 'desc' } },
+      skip: offset,
+      take: limit,
+    });
+    rows = g.map((r) => ({ address: r.followingAddress, value: r._count._all }));
+  } else {
+    return res.status(400).json({ error: 'unknown board' });
+  }
+  const cards = await userCards(rows.map((r) => r.address));
+  res.json({
+    rows: rows.map((r) => ({
+      user: cards[r.address] || { address: r.address, username: null, verified: false },
+      count: r.value,
+    })),
+    nextOffset: rows.length === limit ? offset + limit : null,
+  });
 }
 
 async function getLeaderboard(res: NextApiResponse) {
@@ -1559,7 +1612,7 @@ async function getLeaderboard(res: NextApiResponse) {
       orderBy: { _count: { followerAddress: 'desc' } },
       take: 10,
     }),
-    pixelsLeaderboard(),
+    pixelsLeaderboard().then((r) => r.slice(0, 10)),
     prisma.user.count(),
     prisma.socialTokenTrade.aggregate({ _sum: { ethAmount: true } }),
     prisma.socialCollect.aggregate({ _sum: { amount: true }, where: { currency: 'ETH' } }),
@@ -1951,7 +2004,7 @@ async function recordTokenLaunch(
   r: { walletAddress: string }
 ) {
   if (!(await requireVerified(r.walletAddress, res))) return; // premium: launching is a paid perk
-  const { tokenAddress, name, symbol, launchTxHash, imageUrl, airdropEnabled, description } = req.body || {};
+  const { tokenAddress, name, symbol, launchTxHash, imageUrl, airdropEnabled, description, website } = req.body || {};
   const token = canon(tokenAddress);
   if (!token || !launchTxHash || !name || !symbol)
     return res.status(400).json({ error: 'tokenAddress, name, symbol, launchTxHash required' });
@@ -1989,6 +2042,8 @@ async function recordTokenLaunch(
         launchTxHash,
         imageUrl: imageUrl || null,
         description: description ? String(description).slice(0, 300) : null,
+        website:
+          website && /^https?:\/\//.test(String(website)) ? String(website).slice(0, 120) : null,
         airdropEnabled: airdropEnabled !== false,
       },
     });
@@ -2508,6 +2563,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
       symbol: launch.symbol,
       imageUrl: launch.imageUrl,
       description: launch.description || null,
+      website: launch.website || null,
       airdropEnabled: launch.airdropEnabled,
       creator: {
         address: launch.creatorAddress,
