@@ -3968,3 +3968,154 @@ body:has([class*='__overlay']) .layout {
     color: m.t(accent);
   }
 }
+
+/* ── Twitter-style Edit profile modal ── */
+.social-editx {
+  width: min(600px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  border-radius: 18px;
+  padding-bottom: 8px;
+  @include m.theme() {
+    background: m.t(base2);
+    border: 1px solid rgba(m.t(contrast), 0.15);
+    color: m.t(contrast);
+  }
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    @include m.theme() {
+      background: m.t(base2);
+    }
+    h3 {
+      font-family: 'Space Grotesk', 'Inter', sans-serif;
+      font-size: 1.15rem;
+      flex: 1;
+      @include m.theme() {
+        color: m.t(contrast);
+      }
+    }
+  }
+  &__save {
+    border: none;
+    cursor: pointer;
+    border-radius: 999px;
+    padding: 7px 22px;
+    font-weight: 800;
+    font-size: 0.9rem;
+    @include m.theme() {
+      background: m.t(accent);
+      color: m.t(base);
+    }
+    &:disabled {
+      opacity: 0.5;
+    }
+  }
+  &__banner {
+    position: relative;
+    height: 160px;
+    cursor: pointer;
+    @include m.theme() {
+      background: rgba(m.t(contrast), 0.08);
+    }
+  }
+  &__avatar {
+    position: relative;
+    width: 88px;
+    height: 88px;
+    min-width: 88px;
+    border-radius: 50%;
+    overflow: hidden;
+    margin: -44px 0 0 20px;
+    cursor: pointer;
+    z-index: 1;
+    @include m.theme() {
+      border: 3px solid m.t(base2);
+      background: rgba(m.t(contrast), 0.08);
+    }
+  }
+  &__cam {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3rem;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0.85;
+    transition: opacity 0.15s;
+    z-index: 1;
+  }
+  &__banner:hover .social-editx__cam,
+  &__avatar:hover .social-editx__cam {
+    opacity: 1;
+  }
+  &__fields {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 16px 12px;
+  }
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-radius: 10px;
+    padding: 8px 12px;
+    cursor: text;
+    @include m.theme() {
+      border: 1px solid rgba(m.t(contrast), 0.25);
+    }
+    &:focus-within {
+      @include m.theme() {
+        border-color: m.t(accent);
+      }
+    }
+    input,
+    textarea {
+      border: none;
+      background: transparent;
+      outline: none;
+      font-family: inherit;
+      font-size: 1rem;
+      resize: vertical;
+      @include m.theme() {
+        color: m.t(contrast);
+        &::placeholder {
+          color: rgba(m.t(contrast), 0.35);
+        }
+      }
+    }
+  }
+  &__label {
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.5);
+    }
+  }
+}
+.social-profile__meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 0.85rem;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.55);
+  }
+  a {
+    text-decoration: none;
+    @include m.theme() {
+      color: m.t(accent);
+    }
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}

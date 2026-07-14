@@ -193,7 +193,7 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
         </div>
         {mode === 'edition' ? (
           <>
-            <input ref={fileRef} type='file' accept='image/jpeg,image/png,image/webp,image/gif' style={{ display: 'none' }} onChange={(e) => onFile(e.target.files?.[0])} />
+            <input ref={fileRef} type='file' accept='image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime' style={{ display: 'none' }} onChange={(e) => onFile(e.target.files?.[0])} />
             <button className='social-refer__btn' style={{ width: '100%', marginBottom: 12 }} onClick={() => fileRef.current?.click()}>
               {imageUrl ? '✓ Artwork uploaded — replace' : 'Upload artwork'}
             </button>

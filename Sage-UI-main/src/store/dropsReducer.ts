@@ -78,6 +78,9 @@ export interface CreateDropRequest {
   /** Payment currency for every game in this drop. "SAGE" (default) or "ETH"
    *  (native). Baked into the game contracts at deploy. */
   currency?: 'SAGE' | 'ETH';
+  /** Where media + metadata live: 'arweave' (default, admin drop studio) or
+   *  'filebase' (IPFS — the social launcher path, no admin-gated uploads). */
+  storage?: 'arweave' | 'filebase';
   /** One mint spot per IP: minting requires claiming a server-verified spot
    *  (salted-IP dedup) which whitelists the wallet on-chain. Sybil speed
    *  bump, not a wall. */
@@ -144,14 +147,21 @@ export const dropsApi = baseApi.injectEndpoints({
             : `Creating drop "${req.name}" (${req.artworks.length} artwork${req.artworks.length === 1 ? '' : 's'})`
         );
         try {
-          const { url: bannerUrl } = await dropProgress.track('Uploading banner to Arweave', () =>
-            uploadFileToArweave(req.bannerFile)
+          const { url: bannerUrl } = await dropProgress.track(
+            req.storage === 'filebase' ? 'Uploading banner to Filebase (IPFS)' : 'Uploading banner to Arweave',
+            () =>
+              req.storage === 'filebase'
+                ? uploadFileToFilebase(req.bannerFile)
+                : uploadFileToArweave(req.bannerFile)
           );
           let artistProfilePicture: string | undefined;
           if (req.artistIconFile) {
             const { url, optimizedUrl } = await dropProgress.track(
-              'Uploading artist icon to Arweave',
-              () => uploadFileToArweave(req.artistIconFile as File)
+              'Uploading artist icon',
+              () =>
+                req.storage === 'filebase'
+                  ? uploadFileToFilebase(req.artistIconFile as File)
+                  : uploadFileToArweave(req.artistIconFile as File)
             );
             artistProfilePicture = optimizedUrl || url;
           }
@@ -204,7 +214,7 @@ export const dropsApi = baseApi.injectEndpoints({
             await runCollectionPipeline(dropId, req, startDate, endDate, fetchWithBQ);
           }
           if (!req.collection) {
-            await uploadAndRegisterArtworks(dropId, req.artworks, startDate, endDate, fetchWithBQ);
+            await uploadAndRegisterArtworks(dropId, req.artworks, startDate, endDate, fetchWithBQ, req.storage || 'arweave');
           }
           if (req.approveNow) {
             if (req.signer) {
@@ -830,12 +840,45 @@ async function syncAllowlistAddresses(
  * files; everything already uploaded stays as-is (Arweave storage is paid
  * once and permanent, so edits must never re-upload existing media).
  */
+/** Compress + pin a media file to Filebase via the social uploader. */
+async function uploadFileToFilebase(file: File): Promise<{ url: string; optimizedUrl: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/social-upload/?kind=nft&pin=1', { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.url) throw new Error(data?.error || 'Filebase upload failed');
+  return { url: data.url, optimizedUrl: data.url };
+}
+
+/** Pin ERC-721 metadata JSON to Filebase; returns the gateway URL. */
+async function pinMetadataToFilebase(
+  name: string,
+  description: string,
+  mediaUrl: string,
+  isVideo: boolean
+): Promise<string> {
+  const res = await fetch('/api/social/?action=PinNftMetadata', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      description,
+      image: mediaUrl,
+      animationUrl: isVideo ? mediaUrl : undefined,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.url) throw new Error(data?.error || 'metadata pin failed');
+  return data.url;
+}
+
 async function uploadAndRegisterArtworks(
   dropId: number,
   artworks: NewDropArtwork[],
   startDate: number,
   endDate: number,
-  fetchWithBQ: any
+  fetchWithBQ: any,
+  storage: 'arweave' | 'filebase' = 'arweave'
 ) {
   const endpoint = '/api/endpoints/dropUpload/';
   const total = artworks.length;
@@ -843,8 +886,8 @@ async function uploadAndRegisterArtworks(
     const artwork = artworks[i];
     const label = artwork.name || `artwork ${i + 1}`;
     const { url, optimizedUrl } = await dropProgress.track(
-      `Uploading "${label}" to Arweave (${i + 1}/${total})`,
-      () => uploadFileToArweave(artwork.file)
+      `Uploading "${label}" to ${storage === 'filebase' ? 'Filebase (IPFS)' : 'Arweave'} (${i + 1}/${total})`,
+      () => (storage === 'filebase' ? uploadFileToFilebase(artwork.file) : uploadFileToArweave(artwork.file))
     );
     const { width, height } = await getMediaDimensions(artwork.file);
     // Build the ERC-721 metadata JSON and store it on Arweave; its URL
@@ -852,8 +895,11 @@ async function uploadAndRegisterArtworks(
     // this, minted NFTs would have a null/blank metadata pointer.
     const isVideo = artwork.file.type === 'video/mp4';
     const metadataPath = await dropProgress.track(
-      `Writing metadata for "${label}" to Arweave`,
-      () => createNftMetadataOnArweave(endpoint, artwork.name, artwork.description, url, isVideo)
+      `Writing metadata for "${label}"`,
+      () =>
+        storage === 'filebase'
+          ? pinMetadataToFilebase(artwork.name, artwork.description, url, isVideo)
+          : createNftMetadataOnArweave(endpoint, artwork.name, artwork.description, url, isVideo)
     );
     const media = {
       name: artwork.name,

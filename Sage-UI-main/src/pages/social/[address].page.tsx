@@ -320,6 +320,16 @@ export default function SocialProfilePage() {
           {shortenAddress(profile.address)} ⧉
         </button>
         {profile.bio && <p className='social-profile__bio'>{profile.bio}</p>}
+        {(profile.location || profile.webpage) && (
+          <p className='social-profile__meta'>
+            {profile.location && <span>📍 {profile.location}</span>}
+            {profile.webpage && (
+              <a href={profile.webpage} target='_blank' rel='noreferrer noopener'>
+                🔗 {profile.webpage.replace(/^https?:\/\/(www\.)?/, '').slice(0, 30)}
+              </a>
+            )}
+          </p>
+        )}
         {profile.webpage && (
           <a
             className='social-profile__web'
@@ -377,7 +387,15 @@ export default function SocialProfilePage() {
       {verifyOpen && <VerificationModal onClose={() => setVerifyOpen(false)} />}
       {editOpen && (
         <EditProfileModal
-          initial={{ username: profile.username, bio: profile.bio, webpage: profile.webpage }}
+          address={address}
+          initial={{
+            username: profile.username,
+            bio: profile.bio,
+            webpage: profile.webpage,
+            location: profile.location,
+            profilePicture: profile.profilePicture,
+            bannerImageS3Path: profile.bannerImageS3Path,
+          }}
           onClose={() => setEditOpen(false)}
           onSaved={() => refetchProfile()}
         />

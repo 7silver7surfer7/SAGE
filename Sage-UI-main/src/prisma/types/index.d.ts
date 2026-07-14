@@ -138,6 +138,7 @@ export type SafeUserUpdate = Partial<
     | 'twitterUsername'
     | 'instagramUsername'
     | 'webpage'
+    | 'location'
     | 'bannerImageS3Path'
     | 'country'
     | 'state'

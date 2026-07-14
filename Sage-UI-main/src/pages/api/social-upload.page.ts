@@ -9,6 +9,7 @@ import { Role } from '@prisma/client';
 import { requireRole } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
 import { uploadBufferToS3 } from '@/utilities/awsS3-server';
+import { uploadBufferToFilebase } from '@/utilities/serverWallet';
 
 export const config = { api: { bodyParser: false } };
 
@@ -108,6 +109,20 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
       const url = await uploadBufferToS3('social', `${stamp}.gif`, 'image/gif', buffer);
       return res.json({ url, mediaType: 'image', bytes: buffer.length });
     }
+    // pin=1 → the output goes to FILEBASE (IPFS) instead of S3; returns the
+    // public gateway URL. Used for social NFT art (drops/editions) so the
+    // media is content-addressed, not platform-hosted.
+    const pinToFilebase = String(req.query.pin || '') === '1';
+    const gateway = process.env.FILEBASE_GATEWAY || 'https://ipfs.filebase.io/ipfs';
+    const toUrl = async (key: string, type: string, buf: Buffer): Promise<string> => {
+      if (pinToFilebase) {
+        const ipfs = await uploadBufferToFilebase(`social-nft/${key}`, type, buf);
+        if (ipfs) return `${gateway}/${ipfs.replace('ipfs://', '')}`;
+        // Filebase unconfigured/down → S3 keeps the flow alive
+      }
+      return uploadBufferToS3('social', key, type, buf);
+    };
+
     if (['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
       if (buffer.length > MAX_IMAGE_BYTES)
         return res.status(400).json({ error: 'images are capped at 12MB' });
@@ -128,14 +143,14 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
         });
       }
       const webp = await pipeline.webp({ quality: 80 }).toBuffer();
-      const url = await uploadBufferToS3('social', `${stamp}-${kind}.webp`, 'image/webp', webp);
+      const url = await toUrl(`${stamp}-${kind}.webp`, 'image/webp', webp);
       return res.json({ url, mediaType: 'image', bytes: webp.length });
     }
     if (['video/mp4', 'video/quicktime'].includes(mime)) {
       if (buffer.length > MAX_VIDEO_BYTES)
         return res.status(400).json({ error: 'videos are capped at 25MB (≈2 minutes)' });
       const mp4 = await transcodeVideo(buffer);
-      const url = await uploadBufferToS3('social', `${stamp}.mp4`, 'video/mp4', mp4);
+      const url = await toUrl(`${stamp}.mp4`, 'video/mp4', mp4);
       return res.json({ url, mediaType: 'video', bytes: mp4.length });
     }
     return res.status(400).json({ error: `unsupported type ${mime} — jpeg/png/webp/gif/mp4/mov only` });

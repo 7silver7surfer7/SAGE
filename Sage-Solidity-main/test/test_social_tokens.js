@@ -97,21 +97,18 @@ describe('SocialTokenFactory', () => {
     ).to.be.revertedWith('graduated - trade on uniswap');
   });
 
-  it('graduation migrates the market to a REAL Uniswap v2 pool', async () => {
+  it('completing the curve AUTO-graduates to a REAL Uniswap v2 pool', async () => {
     const token = await launch(false); // no-dump: all supply on curve/factory
     // sell the curve out
     await factory.connect(other).buy(token.address, 0, { value: ethers.utils.parseEther('4000') });
     expect((await factory.curves(token.address)).complete).to.equal(true);
-    const curveEth = (await factory.curves(token.address)).realEthReserves;
-    const reserveTokens = await token.balanceOf(factory.address);
-    expect(reserveTokens).to.be.gt(0);
-    // anyone can trigger graduation
-    await factory.connect(buyer).graduate(token.address);
+    // graduation is AUTOMATIC on the completing buy — pool already exists
     const pair = await factory.pairOf(token.address);
     expect(pair).to.not.equal(ethers.constants.AddressZero);
     // the pool holds the curve's ETH (as WETH) and the reserve tokens
-    expect(await weth.balanceOf(pair)).to.equal(curveEth);
-    expect(await token.balanceOf(pair)).to.equal(reserveTokens);
+    expect(await weth.balanceOf(pair)).to.be.gt(0);
+    expect(await token.balanceOf(pair)).to.be.gt(0);
+    expect((await factory.curves(token.address)).realEthReserves).to.equal(0);
     // LP belongs to the treasury
     const pairC = new ethers.Contract(pair, ['function balanceOf(address) view returns (uint256)'], ethers.provider);
     expect(await pairC.balanceOf(treasury.address)).to.be.gt(0);

@@ -6,6 +6,7 @@ import EditionPanel from '@/components/Social/EditionPanel';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import { useCreateDropWithUploadsMutation } from '@/store/dropsReducer';
 import { useSetFollowGateMutation, useCreateDropPostMutation } from '@/store/socialReducer';
+import VerificationModal from '@/components/Social/VerificationModal';
 import { useSigner } from 'wagmi';
 
 type LaunchKind = 'mint' | 'openEdition' | 'auction' | 'zip';
@@ -47,6 +48,7 @@ export default function LaunchNftPage() {
   const router = useRouter();
   const { walletAddress, userData } = useSAGEAccount();
   const addr = walletAddress || (userData as any)?.walletAddress || '';
+  const viewerVerified = !!(userData as any)?.verifiedAt;
   const [kind, setKind] = useState<LaunchKind>('mint');
 
   // shared drop-form state
@@ -65,7 +67,8 @@ export default function LaunchNftPage() {
   const [setFollowGate] = useSetFollowGateMutation();
   const [createDropPost] = useCreateDropPostMutation();
   const { data: signer } = useSigner();
-  const [royalty, setRoyalty] = useState('12');
+  const [royalty, setRoyalty] = useState('10');
+  const [showVerify, setShowVerify] = useState(false);
 
   const isZip = kind === 'zip';
 
@@ -90,7 +93,7 @@ export default function LaunchNftPage() {
     const hours = Number(durationHours) || 24;
     setBusy(true);
     const t = toast.loading(
-      'Creating your drop — uploading art to Arweave (can take a minute), then your wallet prompts to deploy…'
+      'Creating your drop — pinning art to IPFS, then your wallet prompts to deploy…'
     );
     try {
       const dropId = await createDrop({
@@ -135,6 +138,8 @@ export default function LaunchNftPage() {
         saleStartAt: null,
         royaltyPercentage: Math.min(50, Math.max(0, Number(royalty) || 0)),
         currency: 'ETH',
+        // social NFTs live on IPFS via Filebase — no admin-gated Arweave path
+        storage: 'filebase',
         allowlist: { enabled: false, addresses: [] },
       }).unwrap();
       if (!dropId) throw new Error('drop creation failed — see the error above');
@@ -180,6 +185,14 @@ export default function LaunchNftPage() {
 
         {!addr ? (
           <div className='social__empty'>Connect your wallet to launch.</div>
+        ) : !viewerVerified ? (
+          <div className='social-launch__done' style={{ cursor: 'pointer' }} onClick={() => setShowVerify(true)}>
+            <h3>Launching is a verified perk</h3>
+            <p>
+              Get the $10 checkmark to launch mints, open editions, auctions and ZIP collections —
+              your gas, your royalties. Tap to get verified.
+            </p>
+          </div>
         ) : liveDropId ? (
           <div className='social-launch__done'>
             <h3>🎉 “{title}” is in the pipeline</h3>
@@ -254,7 +267,7 @@ export default function LaunchNftPage() {
                 <input
                   ref={fileRef}
                   type='file'
-                  accept={isZip ? '.zip,application/zip' : 'image/jpeg,image/png,image/webp,image/gif'}
+                  accept={isZip ? '.zip,application/zip' : 'image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime'}
                   style={{ display: 'none' }}
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                 />
@@ -342,6 +355,7 @@ export default function LaunchNftPage() {
           </>
         )}
       </div>
+      {showVerify && <VerificationModal onClose={() => setShowVerify(false)} />}
     </SocialShell>
   );
 }

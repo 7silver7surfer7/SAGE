@@ -137,6 +137,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
       case 'Search':
         return await search(String(request.query.q || ''), request, response);
       // ---- authed writes ----
+      case 'PinNftMetadata':
+        return await withAuth(request, response, (r) => pinNftMetadata(request, response, r));
       case 'CreateDropPost':
         return await withAuth(request, response, (r) => createDropPost(request, response, r));
       case 'CreatePost':
@@ -602,6 +604,8 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
           profilePicture: true,
           pfpNftId: true,
           bio: true,
+          webpage: true,
+          location: true,
           bannerImageS3Path: true,
           verifiedAt: true,
           role: true,
@@ -665,6 +669,8 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
     pfpVerified: user ? await isPfpVerified(user) : false,
     verified: !!user?.verifiedAt, // paid checkmark
     bio: user?.bio || null,
+    webpage: (user as any)?.webpage || null,
+    location: (user as any)?.location || null,
     bannerImageS3Path: user?.bannerImageS3Path || null,
     followers,
     following,
@@ -733,6 +739,25 @@ async function createPost(
   }
   const verified = await pfpVerifiedMap([post]);
   res.json({ post: serializePost(post, r.walletAddress, verified) });
+}
+
+/** Pin ERC-721 metadata JSON to Filebase (IPFS) — used by the social NFT
+ *  launcher so token metadata is content-addressed, not platform-hosted. */
+async function pinNftMetadata(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
+  if (!(await requireVerified(r.walletAddress, res))) return;
+  const { name, description, image, animationUrl } = req.body || {};
+  if (!name || !image) return res.status(400).json({ error: 'name and image required' });
+  const meta = {
+    name: String(name).slice(0, 120),
+    description: String(description || '').slice(0, 1000),
+    image: String(image),
+    ...(animationUrl ? { animation_url: String(animationUrl) } : {}),
+  };
+  const key = `social-nft/meta-${r.walletAddress.slice(2, 10)}-${Date.now()}.json`;
+  const ipfs = await uploadJsonToFilebase(key, meta);
+  if (!ipfs) return res.status(500).json({ error: 'Filebase is not configured or unavailable' });
+  const gateway = process.env.FILEBASE_GATEWAY || 'https://ipfs.filebase.io/ipfs';
+  res.json({ url: `${gateway}/${ipfs.replace('ipfs://', '')}`, ipfs });
 }
 
 /**
@@ -2479,10 +2504,12 @@ async function getEditionMetadata(id: number, res: NextApiResponse) {
   const e = await prisma.socialNftEdition.findUnique({ where: { id } });
   if (!e) return res.status(404).json({ error: 'not found' });
   res.setHeader('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=86400');
+  const isVideo = /\.mp4(\?|$)/i.test(e.imageUrl);
   res.json({
     name: e.name,
     description: `${e.name} — an open edition by ${e.artistAddress} on SAGE Social.`,
     image: e.imageUrl,
+    ...(isVideo ? { animation_url: e.imageUrl } : {}),
     external_url: `${siteUrl()}/social/${e.artistAddress}/`,
   });
 }

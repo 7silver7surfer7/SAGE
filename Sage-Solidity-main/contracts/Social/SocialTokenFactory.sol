@@ -130,6 +130,11 @@ contract SocialTokenFactory is ReentrancyGuard {
         Curve storage c = curves[token];
         require(c.creator != address(0), 'unknown token');
         require(c.complete, 'curve not complete');
+        return _graduate(token);
+    }
+
+    function _graduate(address token) internal returns (address pair) {
+        Curve storage c = curves[token];
         require(pairOf[token] == address(0), 'already graduated');
         uint256 ethAmt = c.realEthReserves;
         uint256 tokenAmt = IERC20(token).balanceOf(address(this));
@@ -222,6 +227,9 @@ contract SocialTokenFactory is ReentrancyGuard {
         if (c.realTokenReserves == 0) {
             c.complete = true;
             emit CurveComplete(token);
+            // AUTO-GRADUATION: the completing buy migrates the market to
+            // Uniswap in the same tx — no button, exactly pump.fun
+            _graduate(token);
         }
     }
 

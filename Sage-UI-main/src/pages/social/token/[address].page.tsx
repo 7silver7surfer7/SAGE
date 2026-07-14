@@ -276,7 +276,7 @@ export default function TokenDetailPage() {
             title={
               data?.complete
                 ? 'Graduated: the curve sold out. Its ETH + reserve tokens seed a Uniswap pool — trading continues there.'
-                : `On curve: ${data?.bondingProgressPct ?? 0}% of 793.1M sold. When it sells out the token GRADUATES — the collected ETH and reserve tokens are deposited into a Uniswap pool, and trading moves to the open market.`
+                : `On curve: ${data?.bondingProgressPct ?? 0}% of 793.1M sold. The FINAL BUY auto-graduates the token — its collected ETH and reserve tokens are deposited into a Uniswap pool in the same transaction, and trading moves to the open market.`
             }
           >
             <span>Status</span>
@@ -329,7 +329,7 @@ export default function TokenDetailPage() {
             {data?.complete
               ? data?.uniswapPair
                 ? 'Graduated — liquidity lives in the Uniswap pool above. Trade there.'
-                : 'Sold out! Anyone can trigger graduation — the curve\'s ETH + reserve tokens seed a Uniswap pool.'
+                : 'Sold out! Graduation is automatic on the final buy — if this token predates auto-migration, trigger it below.'
               : 'When the curve sells out the token graduates to a Uniswap pool. Early buyers are further down the curve.'}
           </p>
           {data?.complete && !data?.uniswapPair && (

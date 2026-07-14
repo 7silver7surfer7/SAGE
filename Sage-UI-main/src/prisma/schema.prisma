@@ -30,7 +30,7 @@ model Drop {
   // NFT contract as basis points at drop deploy; each token minted for this
   // drop keeps the value permanently. Marketplace re-sales only — primary
   // sale splits are unaffected.
-  royaltyPercentage                Float       @default(12)
+  royaltyPercentage                Float       @default(10)
   // Payment currency for every game in this drop: "SAGE" (the ERC-20) or
   // "ETH" (native). Chosen at creation, baked into the game contracts at
   // deploy (on-chain: address(0) = SAGE, the 0xEeee..EEeE sentinel = ETH).
@@ -347,6 +347,7 @@ model User {
   createdAt                     DateTime      @default(now())
   role                          Role          @default(USER)
   bio                           String?       @db.VarChar(1000)
+  location                      String?       @db.VarChar(60) // freeform, Twitter-style
   ashBalanceAtCreation          String        @default("0")
   profilePicture                String?
   country                       String?
