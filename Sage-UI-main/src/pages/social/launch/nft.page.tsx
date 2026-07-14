@@ -5,7 +5,8 @@ import SocialShell from '@/components/Social/SocialShell';
 import EditionPanel from '@/components/Social/EditionPanel';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import { useCreateDropWithUploadsMutation } from '@/store/dropsReducer';
-import { useSetFollowGateMutation } from '@/store/socialReducer';
+import { useSetFollowGateMutation, useCreateDropPostMutation } from '@/store/socialReducer';
+import { useSigner } from 'wagmi';
 
 type LaunchKind = 'mint' | 'openEdition' | 'auction' | 'zip';
 
@@ -62,6 +63,9 @@ export default function LaunchNftPage() {
 
   const [createDrop] = useCreateDropWithUploadsMutation();
   const [setFollowGate] = useSetFollowGateMutation();
+  const [createDropPost] = useCreateDropPostMutation();
+  const { data: signer } = useSigner();
+  const [royalty, setRoyalty] = useState('12');
 
   const isZip = kind === 'zip';
 
@@ -78,10 +82,16 @@ export default function LaunchNftPage() {
       toast.error(isZip ? 'Upload your ZIP of images' : 'Upload your artwork');
       return;
     }
+    if (!signer) {
+      toast.info('Connect your wallet — you sign the deploy (your gas, live instantly)');
+      return;
+    }
     const priceNum = Number(price) || 0;
     const hours = Number(durationHours) || 24;
     setBusy(true);
-    const t = toast.loading('Creating your drop…');
+    const t = toast.loading(
+      'Creating your drop — uploading art to Arweave (can take a minute), then your wallet prompts to deploy…'
+    );
     try {
       const dropId = await createDrop({
         artistWallet: addr,
@@ -117,13 +127,17 @@ export default function LaunchNftPage() {
             }
           : {}),
         durationHours: hours,
-        approveNow: false,
+        // the CREATOR deploys on-chain right now, signing with their own
+        // wallet — their gas, no studio queue, live immediately
+        approveNow: true,
+        signer: signer as any,
         goLiveAt: null,
         saleStartAt: null,
-        royaltyPercentage: 12,
+        royaltyPercentage: Math.min(50, Math.max(0, Number(royalty) || 0)),
         currency: 'ETH',
         allowlist: { enabled: false, addresses: [] },
       }).unwrap();
+      if (!dropId) throw new Error('drop creation failed — see the error above');
       if (followersOnly && dropId) {
         // followers auto-join the allowlist (pushed on-chain at deploy)
         await setFollowGate({ dropId, enabled: true })
@@ -132,9 +146,14 @@ export default function LaunchNftPage() {
             toast.warn('Drop created, but the follower gate needs enabling from the drop page')
           );
       }
+      // the drop becomes a FEED POST — likes/replies/shares like any tweet,
+      // with the bid/mint CTA on the card
+      await createDropPost({ dropId, kind: kind === 'zip' ? 'collection' : kind })
+        .unwrap()
+        .catch(() => toast.warn('Drop is live, but the feed post failed — share it manually'));
       setLiveDropId(dropId);
       toast.update(t, {
-        render: 'Drop created — it ships once approved in the studio 🎨',
+        render: 'Live! Your drop is deployed and posted to the feed 🎨',
         type: 'success',
         isLoading: false,
         autoClose: 6000,
@@ -166,8 +185,8 @@ export default function LaunchNftPage() {
             <h3>🎉 “{title}” is in the pipeline</h3>
             <p>
               Your {kind === 'auction' ? 'auction' : isZip ? 'collection' : 'open edition'}
-              {followersOnly ? ' (followers-only)' : ''} was created as drop #{liveDropId}. It goes
-              live once approved &amp; deployed from the studio.
+              {followersOnly ? ' (followers-only)' : ''} is DEPLOYED and live as drop #{liveDropId},
+              and it's on the feed as a post — bids/mints happen right from the timeline.
             </p>
             <div className='social-launch__done-row'>
               <button
@@ -277,6 +296,16 @@ export default function LaunchNftPage() {
                   )}
                 </div>
 
+                <div className='social-launch__row'>
+                  <div className='social-unit-input'>
+                    <input
+                      placeholder='Secondary royalty'
+                      value={royalty}
+                      onChange={(e) => setRoyalty(e.target.value)}
+                    />
+                    <span>% ROYALTY</span>
+                  </div>
+                </div>
                 <label className='social-launch__gate'>
                   <input
                     type='checkbox'
@@ -302,8 +331,9 @@ export default function LaunchNftPage() {
                     : 'Create open edition'}
                 </button>
                 <p className='social-launch__fine'>
-                  Ships through the SAGE drop pipeline: curated, then deployed on-chain. Priced in
-                  ETH · 12% secondary royalty to you.
+                  You sign the on-chain deploy with your wallet (your gas) — live the moment it
+                  confirms, plus a feed post where people bid/mint. Priced in ETH · your royalty
+                  on every secondary sale.
                   {isZip && ' ZIP mints have no deadline — they run until sold out.'}
                   {kind === 'auction' && ' The auction clock starts at the first bid (anti-snipe extensions built in).'}
                 </p>

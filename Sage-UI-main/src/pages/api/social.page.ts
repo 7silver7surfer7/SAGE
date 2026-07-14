@@ -137,6 +137,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
       case 'Search':
         return await search(String(request.query.q || ''), request, response);
       // ---- authed writes ----
+      case 'CreateDropPost':
+        return await withAuth(request, response, (r) => createDropPost(request, response, r));
       case 'CreatePost':
         return await withAuth(request, response, (r) => createPost(request, response, r));
       case 'ToggleLike':
@@ -313,6 +315,9 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
     linkTitle: p.linkTitle || null,
     linkDesc: p.linkDesc || null,
     linkImage: p.linkImage || null,
+    dropId: p.dropId || null,
+    dropKind: p.dropKind || null,
+    dropPrice: p.dropPrice ?? null,
     author: {
       address: p.authorAddress,
       username: p.Author?.username || null,
@@ -726,6 +731,56 @@ async function createPost(
       data: { replyCount: { increment: 1 } },
     });
   }
+  const verified = await pfpVerifiedMap([post]);
+  res.json({ post: serializePost(post, r.walletAddress, verified) });
+}
+
+/**
+ * The Twitter-style DROP post: when a creator launches an auction / open
+ * edition / ZIP collection from the social launcher, this turns the drop
+ * into a feed post — likes, replies and shares work like any post; the
+ * card's CTA drives to the bid/mint.
+ */
+async function createDropPost(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  r: { walletAddress: string }
+) {
+  const dropId = Number(req.body?.dropId);
+  const kind = String(req.body?.kind || '');
+  if (!dropId || !['auction', 'openEdition', 'collection'].includes(kind))
+    return res.status(400).json({ error: 'dropId and kind required' });
+  const drop = await prisma.drop.findUnique({
+    where: { id: dropId },
+    include: {
+      Auctions: { select: { minimumPrice: true }, take: 1 },
+      OpenEditions: { select: { costTokens: true }, take: 1 },
+      CollectionMints: { select: { costTokens: true }, take: 1 },
+    },
+  });
+  if (!drop) return res.status(404).json({ error: 'drop not found' });
+  if (drop.artistAddress.toLowerCase() !== r.walletAddress.toLowerCase())
+    return res.status(403).json({ error: 'only the drop artist can post it' });
+  const price =
+    kind === 'auction'
+      ? Number(drop.Auctions[0]?.minimumPrice || 0)
+      : kind === 'openEdition'
+      ? drop.OpenEditions[0]?.costTokens || 0
+      : drop.CollectionMints[0]?.costTokens || 0;
+  const verb =
+    kind === 'auction' ? 'started an auction' : kind === 'collection' ? 'dropped a collection' : 'opened an edition';
+  const post = await prisma.socialPost.create({
+    data: {
+      authorAddress: r.walletAddress,
+      text: `${verb}: “${drop.name}”${drop.description ? ` — ${drop.description.slice(0, 140)}` : ''}`,
+      imageUrl: drop.bannerImageS3Path,
+      mediaType: 'image',
+      dropId,
+      dropKind: kind,
+      dropPrice: price,
+    },
+    include: postInclude(r.walletAddress),
+  });
   const verified = await pfpVerifiedMap([post]);
   res.json({ post: serializePost(post, r.walletAddress, verified) });
 }

@@ -76,7 +76,7 @@ export default function LeaderboardPage() {
           </div>
           <div>
             <b>{data.stats.nftVolumePixels.toLocaleString()}</b>
-            <span>pixels spent on art</span>
+            <span>pixels spent on posts</span>
           </div>
         </div>
       )}

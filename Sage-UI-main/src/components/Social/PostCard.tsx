@@ -499,6 +499,31 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             )}
           </div>
         )}
+        {post.dropId && (
+          <button
+            className='social-post__drop-cta'
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push(`/drops/${post.dropId}`);
+            }}
+          >
+            <span className='social-post__drop-kind'>
+              {post.dropKind === 'auction'
+                ? '🔨 LIVE AUCTION'
+                : post.dropKind === 'collection'
+                ? '🗂 COLLECTION MINT'
+                : '◎ OPEN EDITION'}
+            </span>
+            <span className='social-post__drop-price'>
+              {post.dropKind === 'auction'
+                ? `reserve ${post.dropPrice} ETH`
+                : `${post.dropPrice} ETH / mint`}
+            </span>
+            <span className='social-post__drop-go'>
+              {post.dropKind === 'auction' ? 'Place bid →' : 'Mint →'}
+            </span>
+          </button>
+        )}
         {post.collectPrice !== null && (
           <div className='social-post__collect-row'>
             <button

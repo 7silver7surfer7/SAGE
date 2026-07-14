@@ -29,6 +29,9 @@ export interface SocialPost {
   linkTitle: string | null;
   linkDesc: string | null;
   linkImage: string | null;
+  dropId: number | null;
+  dropKind: 'auction' | 'openEdition' | 'collection' | null;
+  dropPrice: number | null;
   author: SocialAuthor;
   likedByViewer: boolean;
   repostedByViewer: boolean;
@@ -449,6 +452,10 @@ const socialApi = baseApi.injectEndpoints({
     searchSocial: builder.query<{ users: SocialUserCard[]; posts: SocialPost[] }, string>({
       query: (q) => ({ url: `social?action=Search&q=${encodeURIComponent(q)}` }),
     }),
+    createDropPost: builder.mutation<{ post: SocialPost }, { dropId: number; kind: string }>({
+      query: (body) => ({ url: 'social?action=CreateDropPost', method: 'POST', body }),
+      invalidatesTags: ['SocialFeed'],
+    }),
     createPost: builder.mutation<
       { post: SocialPost },
       { text: string; imageUrl?: string; mediaType?: 'image' | 'video'; replyToId?: number }
@@ -788,6 +795,7 @@ export const {
   useToggleHideItemMutation,
   useRequestCollectVoucherMutation,
   useCreatePostMutation,
+  useCreateDropPostMutation,
   useToggleLikeMutation,
   useToggleRepostMutation,
   useToggleFollowMutation,

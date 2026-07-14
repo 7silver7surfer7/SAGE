@@ -3926,3 +3926,45 @@ body:has([class*='__overlay']) .layout {
     color: rgba(m.t(contrast), 0.55);
   }
 }
+
+/* Twitter-style drop post CTA — the tweet IS the storefront */
+.social-post__drop-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  cursor: pointer;
+  @include m.theme() {
+    background: rgba(m.t(accent), 0.1);
+    border: 1px solid rgba(m.t(accent), 0.5);
+    color: m.t(contrast);
+  }
+  &:hover {
+    @include m.theme() {
+      background: rgba(m.t(accent), 0.18);
+    }
+  }
+}
+.social-post__drop-kind {
+  font-weight: 800;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+}
+.social-post__drop-price {
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.6);
+  }
+}
+.social-post__drop-go {
+  margin-left: auto;
+  font-weight: 800;
+  font-size: 0.85rem;
+  @include m.theme() {
+    color: m.t(accent);
+  }
+}

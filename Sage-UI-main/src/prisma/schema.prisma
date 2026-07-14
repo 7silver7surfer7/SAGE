@@ -439,6 +439,11 @@ model SocialPost {
   linkTitle    String?        @db.VarChar(200)
   linkDesc     String?        @db.VarChar(300)
   linkImage    String?        @db.VarChar(500)
+  // Twitter-style DROP posts: the post is the storefront — likes/replies/
+  // shares work as usual, the CTA drives to the auction/mint
+  dropId       Int?
+  dropKind     String?        // "auction" | "openEdition" | "collection"
+  dropPrice    Float?         // reserve (auction) / mint price, in the drop's currency
   Likes        SocialLike[]
   Reposts      SocialRepost[]
   Tips         SocialTip[]
