@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import { useSigner } from 'wagmi';
+import { utils } from 'ethers';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
@@ -53,6 +54,18 @@ function linkifyText(text: string) {
       part
     )
   );
+}
+
+/** Wallet errors in plain words — never show 'Internal JSON-RPC error'. */
+function humanWalletError(err: any, priceEth?: number): string {
+  const code = err?.code ?? err?.error?.code;
+  const raw = String(err?.error?.message || err?.data?.message || err?.reason || err?.message || '');
+  if (code === 4001 || code === 'ACTION_REJECTED' || /user (rejected|denied)/i.test(raw))
+    return 'you cancelled the transaction';
+  if (code === 'INSUFFICIENT_FUNDS' || /insufficient funds/i.test(raw))
+    return `not enough ETH${priceEth ? ` (need ${priceEth} + gas)` : ' for this transaction + gas'}`;
+  if (/internal json-rpc/i.test(raw)) return 'the transaction failed — check your ETH balance covers the price + gas';
+  return raw.slice(0, 90) || 'transaction failed';
 }
 
 function domainOf(url: string): string {
@@ -255,7 +268,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       toast.update(t, { render: `Tipped ${amount} ${currency} 🎉`, type: 'success', isLoading: false, autoClose: 4000 });
     } catch (err: any) {
       toast.update(t, {
-        render: err?.data?.error || err?.message?.slice(0, 80) || 'Tip failed',
+        render: err?.data?.error || `Tip failed — ${humanWalletError(err)}`,
         type: 'error',
         isLoading: false,
         autoClose: 5000,
@@ -341,7 +354,32 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
           setBusy(false);
           return;
         }
-        txHash = await sendEth(post.author.address, price, signer as any);
+        // pre-flight: a raw wallet revert reads as 'Internal JSON-RPC error' —
+        // check the balance FIRST and say it in plain words
+        const bal = await (signer as any).getBalance();
+        const need = utils.parseEther(String(price));
+        if (bal.lt(need)) {
+          toast.update(t, {
+            render: `Not minted — not enough ETH (need ${price}, you have ${(+utils.formatEther(bal)).toFixed(5)})`,
+            type: 'error',
+            isLoading: false,
+            autoClose: 8000,
+          });
+          setBusy(false);
+          return;
+        }
+        try {
+          txHash = await sendEth(post.author.address, price, signer as any);
+        } catch (payErr: any) {
+          toast.update(t, {
+            render: `Not minted — ${humanWalletError(payErr, price)}`,
+            type: 'error',
+            isLoading: false,
+            autoClose: 8000,
+          });
+          setBusy(false);
+          return;
+        }
         toast.update(t, { render: 'Payment sent — minting…', isLoading: true });
       }
       const r = await collectPost({ postId: post.id, payWith, txHash }).unwrap();

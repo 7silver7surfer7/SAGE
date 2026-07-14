@@ -395,9 +395,18 @@ const socialApi = baseApi.injectEndpoints({
             })
           )
         );
+        // your PROFILE page shows getUserPosts — patch it too so the new post
+        // is there the instant you land on it (no 30s-later refresh)
+        dispatch(
+          socialApi.util.updateQueryData('getUserPosts', created.author.address, (draft) => {
+            if (!draft.posts.some((p) => p.id === created!.id)) draft.posts.unshift(created!);
+          })
+        );
       },
+      // refetches are SAFE to fire now — the server pins your fresh posts to
+      // the top of page 1, so a refetch can't bury what the patch just added
       invalidatesTags: (_r, _e, arg) =>
-        arg.replyToId ? [{ type: 'SocialPost', id: arg.replyToId }, 'SocialFeed'] : [],
+        arg.replyToId ? [{ type: 'SocialPost', id: arg.replyToId }, 'SocialFeed'] : ['SocialFeed'],
     }),
     toggleLike: builder.mutation<{ liked: boolean }, number>({
       query: (postId) => ({ url: 'social?action=ToggleLike', method: 'POST', body: { postId } }),
