@@ -257,7 +257,7 @@ export default function SocialProfilePage() {
       <input
         ref={avatarFileRef}
         type='file'
-        accept='image/jpeg,image/png,image/webp'
+        accept='image/jpeg,image/png,image/webp,image/avif'
         style={{ display: 'none' }}
         onChange={(e) => {
           const f = e.target.files?.[0];

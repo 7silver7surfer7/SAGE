@@ -141,7 +141,7 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
       return uploadBufferToS3('social', key, type, buf);
     };
 
-    if (['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
+    if (['image/jpeg', 'image/png', 'image/webp', 'image/avif'].includes(mime)) {
       if (buffer.length > MAX_IMAGE_BYTES)
         return res.status(400).json({ error: 'images are capped at 12MB' });
       // kind steers the crop: avatars are square-cover 400px, banners 1500×500
@@ -178,7 +178,7 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
       const url = await toUrl(`${stamp}.mp4`, 'video/mp4', mp4);
       return res.json({ url, mediaType: 'video', bytes: mp4.length });
     }
-    return res.status(400).json({ error: `unsupported type ${mime} — jpeg/png/webp/gif/mp4/mov only` });
+    return res.status(400).json({ error: `unsupported type ${mime} — jpeg/png/webp/avif/gif/mp4/mov only` });
   } catch (e: any) {
     console.error('social upload error', e);
     return res.status(500).json({ error: e?.message?.slice(0, 120) || 'upload failed' });
