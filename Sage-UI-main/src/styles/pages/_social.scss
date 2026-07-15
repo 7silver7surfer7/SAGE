@@ -2327,13 +2327,14 @@ body:has([class*='__overlay']) .layout {
 /* tighten the post rows on narrow phones so chips and tip totals never clip */
 @media (max-width: 640px) {
   .social-post__actions {
-    // comment/repost/like/boost spread across the row (Twitter-style)
-    // instead of clumping together — the tip button below already wraps to
-    // its own line, so there's no clipping risk in giving these room.
-    // space-evenly (not space-between): with only 4 items, space-between
-    // has zero edge padding and glues the last icon to the screen edge.
-    justify-content: space-evenly;
-    gap: 8px;
+    // comment/repost/like/boost centered as a group, evenly gapped — the
+    // tip button below already wraps to its own line, so there's no
+    // clipping risk in giving these room. space-between/space-evenly both
+    // stretched the group to the row's full width, which reads as
+    // lopsided with only 4 items; centering keeps it a tight, balanced
+    // cluster regardless of row width.
+    justify-content: center;
+    gap: 28px;
     flex-wrap: wrap;
   }
   .social-post__action {
