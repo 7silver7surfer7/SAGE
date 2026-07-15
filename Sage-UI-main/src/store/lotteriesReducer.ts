@@ -13,6 +13,7 @@ import { promiseToast } from '@/utilities/toast';
 import { registerLotterySale, registerRefund } from '@/utilities/sales';
 import { Refund } from '@prisma/client';
 import { NATIVE_CURRENCY_SENTINEL } from '@/constants/config';
+import { toDecimalString } from '@/utilities/decimalString';
 
 export interface BuyTicketRequest {
   lotteryId: number;
@@ -126,7 +127,7 @@ const lotteriesApi = baseApi.injectEndpoints({
         try {
           const contract = await getLotteryContract(signer);
           const wallet = await signer.getAddress();
-          const amountWei = ethers.utils.parseEther(refund.refundableTokens.toString());
+          const amountWei = ethers.utils.parseEther(toDecimalString(refund.refundableTokens));
           const tx = await contract.refund(wallet, refund.lotteryId, amountWei);
           await tx.wait();
           await registerRefund(refund.id, tx, signer);

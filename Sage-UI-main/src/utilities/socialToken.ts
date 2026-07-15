@@ -4,6 +4,7 @@ import launcherJson from '@/constants/abis/Social/SocialNFTLauncher.sol/SocialNF
 import minterJson from '@/constants/abis/Social/SocialCollectMinter.sol/SocialCollectMinter.json';
 import ERC20StandardJson from '@/constants/abis/ERC-20/ERC20Standard.json';
 import { parameters } from '@/constants/config';
+import { toDecimalString } from '@/utilities/decimalString';
 
 export function factoryContract(signerOrProvider: Signer | ethers.providers.Provider) {
   return new ethers.Contract(
@@ -57,7 +58,7 @@ export async function buyToken(
 ): Promise<string> {
   const factory = factoryContract(signer);
   const tx = await factory.buy(tokenAddress, 0, {
-    value: ethers.utils.parseEther(String(ethAmount)),
+    value: ethers.utils.parseEther(toDecimalString(ethAmount)),
   });
   await tx.wait(1);
   return tx.hash;
@@ -71,7 +72,7 @@ export async function sellToken(
 ): Promise<string> {
   const factory = factoryContract(signer);
   const token = new ethers.Contract(tokenAddress, ERC20StandardJson.abi, signer);
-  const wei = ethers.utils.parseEther(String(amount));
+  const wei = ethers.utils.parseEther(toDecimalString(amount));
   const approve = await token.approve(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, wei);
   await approve.wait(1);
   const tx = await factory.sell(tokenAddress, wei, 0);
@@ -98,13 +99,13 @@ export async function airdropToken(
 ): Promise<string> {
   const factory = factoryContract(signer);
   const token = new ethers.Contract(tokenAddress, ERC20StandardJson.abi, signer);
-  const total = ethers.utils.parseEther(String(amountEach)).mul(recipients.length);
+  const total = ethers.utils.parseEther(toDecimalString(amountEach)).mul(recipients.length);
   const approve = await token.approve(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, total);
   await approve.wait(1);
   const tx = await factory.airdrop(
     tokenAddress,
     recipients,
-    ethers.utils.parseEther(String(amountEach))
+    ethers.utils.parseEther(toDecimalString(amountEach))
   );
   await tx.wait(1);
   return tx.hash;
@@ -163,7 +164,7 @@ export async function createEdition(
     symbol,
     uri,
     maxSupply,
-    ethers.utils.parseEther(String(priceEth))
+    ethers.utils.parseEther(toDecimalString(priceEth))
   );
   const receipt = await tx.wait(1);
   const ev = receipt.events?.find((e: any) => e.event === 'EditionCreated');
@@ -188,7 +189,7 @@ export async function createCollection(
     symbol,
     baseUri,
     maxSupply,
-    ethers.utils.parseEther(String(priceEth))
+    ethers.utils.parseEther(toDecimalString(priceEth))
   );
   const receipt = await tx.wait(1);
   const ev = receipt.events?.find((e: any) => e.event === 'EditionCreated');
@@ -203,7 +204,7 @@ export async function mintEdition(
 ): Promise<string> {
   const launcher = launcherContract(signer);
   const tx = await launcher.mint(editionAddress, {
-    value: ethers.utils.parseEther(String(priceEth)),
+    value: ethers.utils.parseEther(toDecimalString(priceEth)),
   });
   await tx.wait(1);
   return tx.hash;
@@ -228,7 +229,7 @@ export function swapRouterContract(signerOrProvider: Signer | ethers.providers.P
 /** Buy a GRADUATED token on its Uniswap pool (0.25% router fee: 0.05% creator). */
 export async function buyOnPool(tokenAddress: string, ethAmount: number, signer: Signer): Promise<string> {
   const router = swapRouterContract(signer);
-  const tx = await router.buy(tokenAddress, 0, { value: ethers.utils.parseEther(String(ethAmount)) });
+  const tx = await router.buy(tokenAddress, 0, { value: ethers.utils.parseEther(toDecimalString(ethAmount)) });
   await tx.wait(1);
   return tx.hash;
 }
@@ -242,7 +243,7 @@ export async function sellOnPool(tokenAddress: string, tokenAmount: number, sign
     ['function allowance(address,address) view returns (uint256)', 'function approve(address,uint256) returns (bool)'],
     signer
   );
-  const amount = ethers.utils.parseEther(String(tokenAmount));
+  const amount = ethers.utils.parseEther(toDecimalString(tokenAmount));
   const allowance = await token.allowance(owner, router.address);
   if (allowance.lt(amount)) {
     const a = await token.approve(router.address, ethers.constants.MaxUint256);

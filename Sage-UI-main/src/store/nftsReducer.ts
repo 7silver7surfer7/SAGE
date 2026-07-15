@@ -17,6 +17,7 @@ import { registerMarketplaceSale } from '@/utilities/sales';
 import { parameters, currencyAddressFor } from '@/constants/config';
 import { NFTFactory } from '@/types/contracts';
 import { name } from 'aws-sdk/clients/importexport';
+import { toDecimalString } from '@/utilities/decimalString';
 
 export interface MintRequest {
   name: string;
@@ -122,7 +123,7 @@ export const nftsApi = baseApi.injectEndpoints({
     buyFromSellOffer: builder.mutation<boolean, { tokenId: number; offer: Offer; signer: Signer }>({
       queryFn: async ({ tokenId, offer, signer }, {}, _, fetchWithBQ) => {
         const marketplaceContract = await getMarketplaceContract(signer);
-        const weiPrice = ethers.utils.parseEther(offer.price.toString());
+        const weiPrice = ethers.utils.parseEther(toDecimalString(offer.price));
         // the currency is baked into the SIGNED offer — replay it exactly
         const offerCurrency = (offer as any).currency || 'SAGE';
         const isEthListing = offerCurrency === 'ETH';
@@ -173,7 +174,7 @@ export const nftsApi = baseApi.injectEndpoints({
     sellFromBuyOffer: builder.mutation<boolean, { tokenId: number; offer: Offer; signer: Signer }>({
       queryFn: async ({ tokenId, offer, signer }, {}, _, fetchWithBQ) => {
         const marketplaceContract = await getMarketplaceContract(signer);
-        const weiPrice = ethers.utils.parseEther(offer.price.toString());
+        const weiPrice = ethers.utils.parseEther(toDecimalString(offer.price));
         try {
           console.log(
             `sellFromBuyOffer(${offer.signer}, ${offer.nftContractAddress}, ${weiPrice}, ${tokenId}, ${offer.expiresAt}, ${CHAIN_ID}, ${offer.signedOffer})`
@@ -210,7 +211,7 @@ export const nftsApi = baseApi.injectEndpoints({
     createBuyOffer: builder.mutation<null, OfferRequest>({
       queryFn: async (offer, {}, _, fetchWithBQ) => {
         try {
-          const weiAmount = ethers.utils.parseEther(offer.amount.toString());
+          const weiAmount = ethers.utils.parseEther(toDecimalString(offer.amount));
           const marketplaceContract = await getMarketplaceContract(offer.signer);
           const tokenAddress = await marketplaceContract.token();
           await approveERC20Transfer(
@@ -319,7 +320,7 @@ async function createSignedOffer(
   fetchWithBQ: any,
   currency: 'SAGE' | 'ETH' = 'SAGE'
 ) {
-  const weiAmount = ethers.utils.parseEther(amount.toString());
+  const weiAmount = ethers.utils.parseEther(toDecimalString(amount));
   var { signedOffer, expiresAt } = await signOffer(
     nftContractAddress,
     tokenId,

@@ -11,6 +11,7 @@ import { tipSage, sendEth } from '@/utilities/tip';
 import { humanWalletError } from '@/utilities/walletError';
 import { redeemCollectVoucher } from '@/utilities/socialToken';
 import { parameters } from '@/constants/config';
+import { toDecimalString } from '@/utilities/decimalString';
 import {
   SocialPost,
   useDeletePostMutation,
@@ -448,7 +449,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
         // pre-flight: a raw wallet revert reads as 'Internal JSON-RPC error' —
         // check the balance FIRST and say it in plain words
         const bal = await (signer as any).getBalance();
-        const need = utils.parseEther(String(price));
+        const need = utils.parseEther(toDecimalString(price));
         if (bal.lt(need)) {
           toast.update(t, {
             render: `Not minted — not enough ETH (need ${price}, you have ${(+utils.formatEther(bal)).toFixed(5)})`,

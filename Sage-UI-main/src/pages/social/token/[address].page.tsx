@@ -29,6 +29,7 @@ import {
   useCreatePostMutation,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
+import { toDecimalString } from '@/utilities/decimalString';
 
 function timeAgo(iso: string) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -131,7 +132,7 @@ export default function TokenDetailPage() {
     if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
     // pre-flight: raw wallet reverts read as 'Internal JSON-RPC error'
     const bal = await (signer as any).getBalance();
-    if (bal.lt(utils.parseEther(String(amt)))) {
+    if (bal.lt(utils.parseEther(toDecimalString(amt)))) {
       toast.error(`Not enough ETH — you need ${amt}, you have ${(+utils.formatEther(bal)).toFixed(5)}`);
       return;
     }

@@ -22,6 +22,7 @@ import {
   getOpenEditionContract,
 } from '@/utilities/contracts';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
+import { toDecimalString } from '@/utilities/decimalString';
 import useAllowlistGate from '@/hooks/useAllowlistGate';
 
 interface Props extends ModalProps {
@@ -149,7 +150,7 @@ export default function MintOpenEditionModal({
     setIsMinting(true);
     try {
       const contract = await getOpenEditionContract(signer);
-      const weiTotal = ethers.utils.parseEther(String(openEdition.costTokens * quantity));
+      const weiTotal = ethers.utils.parseEther(toDecimalString(openEdition.costTokens * quantity));
       // ETH editions carry the payment as msg.value — no ERC-20 approval step
       if (requiresSAGE && !isEthEdition) {
         await approveERC20Transfer(parameters.ASHTOKEN_ADDRESS, contract.address, weiTotal, signer);

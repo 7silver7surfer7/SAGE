@@ -21,6 +21,7 @@ import {
 } from '@/utilities/contracts';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import useAllowlistGate from '@/hooks/useAllowlistGate';
+import { toDecimalString } from '@/utilities/decimalString';
 
 interface Props extends ModalProps {
   collection: CollectionMint;
@@ -145,7 +146,7 @@ export default function MintCollectionModal({
         return;
       }
       const contract = await getCollectionContract(signer);
-      const weiTotal = ethers.utils.parseEther(String(collection.costTokens * quantity));
+      const weiTotal = ethers.utils.parseEther(toDecimalString(collection.costTokens * quantity));
       // ETH collections carry the payment as msg.value — no ERC-20 approval step
       if (requiresSAGE && !isEthCollection) {
         await approveERC20Transfer(parameters.ASHTOKEN_ADDRESS, contract.address, weiTotal, signer);

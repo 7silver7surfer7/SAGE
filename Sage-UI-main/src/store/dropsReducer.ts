@@ -21,6 +21,7 @@ import { createNftMetadataOnArweave, uploadFileToArweave } from '@/utilities/arw
 import { uploadFileToS3 } from '@/utilities/awsS3-client';
 import { dropProgress } from '@/utilities/dropProgress';
 import { isVideoSrc } from '@/utilities/media';
+import { toDecimalString } from '@/utilities/decimalString';
 
 // SAGE Social's primary-sale split: 99% artist / 1% platform — distinct from
 // the shared marketplace SageConfig dial (default 80/20). Applied to a
@@ -1133,7 +1134,7 @@ async function deployCollectionMints(
       limitPerUser: cm.limitPerUser,
       baseUri: cm.baseUri,
       whitelist: whitelistAddress,
-      costTokens: ethers.utils.parseEther(String(cm.costTokens)),
+      costTokens: ethers.utils.parseEther(toDecimalString(cm.costTokens)),
       id: cm.id,
       currency: currencyAddressFor((drop as any).currency),
       artistShareBps: (drop as any).isSocial ? SOCIAL_ARTIST_SHARE_BPS : 0,
@@ -1637,7 +1638,7 @@ async function deployLotteries(
     }
     const startTime = Math.floor(new Date(l.startTime).getTime() / 1000);
     const endTime = Math.floor(new Date(l.endTime).getTime() / 1000);
-    const costPerTicketTokens = ethers.utils.parseEther(l.costPerTicketTokens.toString());
+    const costPerTicketTokens = ethers.utils.parseEther(toDecimalString(l.costPerTicketTokens));
     createParams.push({
       lotteryID: l.id,
       ticketCostPoints: l.costPerTicketPoints,
@@ -1706,7 +1707,7 @@ async function deployOpenEditions(
   for (const oe of toDeploy) {
     const startTime = Math.floor(new Date(oe.startTime).getTime() / 1000);
     const closeTime = Math.floor(new Date(oe.endTime).getTime() / 1000);
-    const costTokens = ethers.utils.parseEther(String(oe.costTokens));
+    const costTokens = ethers.utils.parseEther(toDecimalString(oe.costTokens));
     // Idempotency check: oe.id (a DB id) is reused as the on-chain edition
     // id on every retry. createOpenEdition() reverts "Edition already
     // exists" if it's already registered — which happens whenever the tx

@@ -19,6 +19,7 @@ import LoaderSpinner from '@/components/LoaderSpinner';
 import { useSession } from 'next-auth/react';
 import { parameters } from '@/constants/config';
 import { formatTimestampYYMMddHHmm } from '@/utilities/strings';
+import { toDecimalString } from '@/utilities/decimalString';
 
 interface Props extends ModalProps {
   artist: User;
@@ -64,7 +65,7 @@ export default function MakeOfferModal({ isOpen, closeModal, artist, nft, buyOff
       toast.info(`Minimum offer for this piece is ${nft.price}`);
       return;
     }
-    if (ethers.utils.parseEther(amount.toString()).gt(walletBalance?.value!)) {
+    if (ethers.utils.parseEther(toDecimalString(amount)).gt(walletBalance?.value!)) {
       toast.warn(`Insufficient balance for this offer amount`);
       return;
     }

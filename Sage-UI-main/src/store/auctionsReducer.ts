@@ -11,6 +11,7 @@ import { baseApi } from './baseReducer';
 import { promiseToast } from '@/utilities/toast';
 import { registerAuctionSale } from '@/utilities/sales';
 import { parameters, NATIVE_CURRENCY_SENTINEL } from '@/constants/config';
+import { toDecimalString } from '@/utilities/decimalString';
 
 export interface AuctionState {
   highestBidder: string; // wallet address
@@ -87,7 +88,7 @@ const auctionsApi = baseApi.injectEndpoints({
         }
         let weiValue: ethers.BigNumber;
         try {
-          weiValue = ethers.utils.parseEther(amount.toString());
+          weiValue = ethers.utils.parseEther(toDecimalString(amount));
         } catch {
           toast.error('Enter a valid bid amount', { toastId: `bid${auctionId}` });
           return { data: null };
