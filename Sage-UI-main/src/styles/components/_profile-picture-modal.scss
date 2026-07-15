@@ -44,10 +44,7 @@ canvas {
       // background-color: transparent;
 
       color: m.t(base);
-      &[data-type='save'] {
-        color: m.t(base);
-        background-color: m.t(accent);
-      }
+      background-color: m.t(accent);
     }
   }
 }
