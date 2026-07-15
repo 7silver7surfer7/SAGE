@@ -168,7 +168,16 @@ export async function createEdition(
   );
   const receipt = await tx.wait(1);
   const ev = receipt.events?.find((e: any) => e.event === 'EditionCreated');
-  return { edition: ev?.args?.edition, txHash: tx.hash };
+  // Without this, a missing/unparsed event silently sent editionAddress:
+  // undefined through to RecordEditionLaunch, which 400'd with a generic
+  // "editionAddress, name, symbol, imageUrl, launchTxHash required" — the
+  // tx had actually mined fine, so that error was pointing at the wrong step.
+  if (!ev?.args?.edition) {
+    throw new Error(
+      `Edition deployed (tx ${tx.hash}) but its address couldn't be read from the receipt — try refreshing and checking your editions list before relaunching.`
+    );
+  }
+  return { edition: ev.args.edition, txHash: tx.hash };
 }
 
 /**
@@ -193,7 +202,12 @@ export async function createCollection(
   );
   const receipt = await tx.wait(1);
   const ev = receipt.events?.find((e: any) => e.event === 'EditionCreated');
-  return { edition: ev?.args?.edition, txHash: tx.hash };
+  if (!ev?.args?.edition) {
+    throw new Error(
+      `Collection deployed (tx ${tx.hash}) but its address couldn't be read from the receipt — try refreshing and checking your editions list before relaunching.`
+    );
+  }
+  return { edition: ev.args.edition, txHash: tx.hash };
 }
 
 /** Mint one from an edition — the minter pays price + gas; 1% to the platform. */
