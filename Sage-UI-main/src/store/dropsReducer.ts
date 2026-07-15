@@ -883,7 +883,7 @@ async function pinMetadataToFilebase(
   mediaUrl: string,
   isVideo: boolean
 ): Promise<string> {
-  const res = await fetch('/api/social/?action=PinNftMetadata', {
+  const res = await fetch('/api/endpoints/dropUpload/?action=PinNftMetadataToFilebase', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

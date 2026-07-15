@@ -16,6 +16,7 @@ import {
   CollectionProgress,
 } from '@/utilities/collectionBundler';
 import { processCollectionZipToFilebase } from '@/utilities/collectionPinner';
+import { uploadJsonToFilebase } from '@/utilities/serverWallet';
 import { cleanPrismaError } from '@/utilities/prismaError';
 import { mirrorToS3, s3MirrorUrl } from '@/utilities/s3Mirror';
 import { getRequester, requireRole, Requester } from '@/utilities/apiAuth';
@@ -42,6 +43,13 @@ const ACTION_ROLES: Record<string, Role[]> = {
   // upload-time mirror write failed (see src/utilities/s3Mirror.ts)
   EnsureS3Mirror: [Role.ADMIN],
   UploadNftMetadataToArweave: [Role.ARTIST, Role.ADMIN],
+  // Filebase-storage counterpart to UploadNftMetadataToArweave — same
+  // self-serve-friendly roles as InsertOpenEdition/InsertAuction. Was
+  // routed through social.page.ts's PinNftMetadata, which is gated behind
+  // the PAID verification checkmark (a SAGE Social premium-feature paywall,
+  // not meant to apply here) — that accidentally blocked EVERY Filebase-
+  // storage drop for any unverified artist/admin at the metadata-pin step.
+  PinNftMetadataToFilebase: [Role.USER, Role.ARTIST, Role.ADMIN],
   // ── Self-serve social launches: creation actions are open to any signed-in
   // wallet, but NON-ADMINS are hard-scoped in the handler — InsertDrop forces
   // artistWallet to the requester, and every game/collection insert must
@@ -136,6 +144,9 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       break;
     case 'UploadNftMetadataToArweave':
       await uploadNftMetadataToArweave(request.body, response);
+      break;
+    case 'PinNftMetadataToFilebase':
+      await pinNftMetadataToFilebase(request.body, response);
       break;
     case 'InsertDrop':
       await insertDrop(request.body, response);
@@ -327,6 +338,30 @@ async function uploadNftMetadataToArweave(nftMetadataFile: any, response: NextAp
     metadataType
   );
   response.json({ id: tx.id, balance });
+}
+
+/** Pin ERC-721 metadata JSON to Filebase for a drop artwork — the
+ *  Filebase-storage counterpart to uploadNftMetadataToArweave above. */
+async function pinNftMetadataToFilebase(body: any, response: NextApiResponse) {
+  const { name, description, image, animationUrl } = body || {};
+  if (!name || !image) {
+    response.status(400).json({ error: 'name and image required' });
+    return;
+  }
+  const meta = {
+    name: String(name).slice(0, 120),
+    description: String(description || '').slice(0, 1000),
+    image: String(image),
+    ...(animationUrl ? { animation_url: String(animationUrl) } : {}),
+  };
+  const key = `drop-nft/meta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const ipfs = await uploadJsonToFilebase(key, meta);
+  if (!ipfs) {
+    response.status(500).json({ error: 'Filebase is not configured or unavailable' });
+    return;
+  }
+  const gateway = process.env.FILEBASE_GATEWAY || 'https://ipfs.filebase.io/ipfs';
+  response.json({ url: `${gateway}/${ipfs.replace('ipfs://', '')}`, ipfs });
 }
 
 /**
