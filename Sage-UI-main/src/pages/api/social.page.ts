@@ -2523,7 +2523,11 @@ async function getTokens(req: NextApiRequest, res: NextApiResponse) {
     })
     .sort((a, b) => b.mcapUsd - a.mcapUsd);
   const page = rows.slice(offset, offset + PAGE);
-  res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
+  // NOT cached: a CDN-level TTL here would sit on top of RTK Query's own
+  // client-side tag invalidation (getTokens/recordTokenLaunch already wire
+  // that up correctly) and serve stale results regardless — up to 150s of
+  // "my new coin isn't on the board" is a bad launch experience.
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     tokens: page,
     nextCursor: offset + PAGE < rows.length ? offset + PAGE : null,
