@@ -19,6 +19,7 @@ import {
 import VerificationModal from './VerificationModal';
 import { useRecordTradeMutation } from '@/store/socialReducer';
 import { humanWalletError } from '@/utilities/walletError';
+import { retryTransient } from '@/utilities/retryTransient';
 
 /**
  * Launch modal — pump.fun-faithful form: name+ticker row, description,
@@ -84,21 +85,30 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
     if (buyEthStr && !Number.isFinite(buyEth)) { toast.error('Check the initial buy amount'); return; }
     setBusy(true);
     const t = toast.loading(buyEth > 0 ? `Launching + buying ${buyEth} ETH…` : 'Launching your coin… (free — you only pay gas)');
+    let deployed: { token: string; txHash: string; devBuy: boolean } | null = null;
     try {
       // pass the raw string through — see launchToken's docstring for why
       // (Number()/String() mangles small decimals into scientific notation)
-      const { token, txHash, devBuy } = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth > 0 ? buyEthStr : '0');
-      await record({
-        tokenAddress: token,
-        name: name.trim(),
-        symbol: symbol.trim().toUpperCase(),
-        launchTxHash: txHash,
-        airdropEnabled: withAirdrop,
-        description: description.trim() || undefined,
-        website: website.trim() || undefined,
-        imageUrl: imageUrl || undefined,
-        bannerUrl: bannerUrl || undefined,
-      }).unwrap();
+      deployed = await launchToken(name.trim(), symbol.trim().toUpperCase(), withAirdrop, signer as any, buyEth > 0 ? buyEthStr : '0');
+      const { token, txHash, devBuy } = deployed;
+      // by this point the launch tx already succeeded and gas is spent —
+      // retry the DB-recording step on transient failures (network blip, a
+      // 503 from the server under load) instead of stranding a real
+      // on-chain coin as invisible/unrecorded.
+      toast.update(t, { render: 'On-chain — saving…', isLoading: true });
+      await retryTransient(() =>
+        record({
+          tokenAddress: token,
+          name: name.trim(),
+          symbol: symbol.trim().toUpperCase(),
+          launchTxHash: txHash,
+          airdropEnabled: withAirdrop,
+          description: description.trim() || undefined,
+          website: website.trim() || undefined,
+          imageUrl: imageUrl || undefined,
+          bannerUrl: bannerUrl || undefined,
+        }).unwrap()
+      );
       if (devBuy) {
         // the dev buy is a real Bought event in the launch tx — record it so
         // the chart, holders and trades all start seeded
@@ -112,7 +122,19 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
       router.push(`/social/token/${token}`);
     } catch (err: any) {
       if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
-      else toast.update(t, { render: err?.data?.error || `Launch failed — ${humanWalletError(err)}`, type: 'error', isLoading: false, autoClose: 7000 });
+      else if (deployed) {
+        // deploy succeeded but saving it never did, even after retries —
+        // say so explicitly instead of a generic "launch failed" that reads
+        // as if nothing happened and gas wasn't spent
+        toast.update(t, {
+          render: `$${symbol.toUpperCase()} deployed on-chain (${deployed.token.slice(0, 10)}…) but saving it failed after retries — refresh in a minute; if it's still missing, that address is safe to look up directly.`,
+          type: 'error',
+          isLoading: false,
+          autoClose: false,
+        });
+      } else {
+        toast.update(t, { render: err?.data?.error || `Launch failed — ${humanWalletError(err)}`, type: 'error', isLoading: false, autoClose: 7000 });
+      }
     } finally {
       setBusy(false);
     }

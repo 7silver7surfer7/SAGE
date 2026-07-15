@@ -22,6 +22,7 @@ import { uploadFileToS3 } from '@/utilities/awsS3-client';
 import { dropProgress } from '@/utilities/dropProgress';
 import { isVideoSrc } from '@/utilities/media';
 import { toDecimalString } from '@/utilities/decimalString';
+import { retryTransient } from '@/utilities/retryTransient';
 
 // SAGE Social's primary-sale split: 99% artist / 1% platform — distinct from
 // the shared marketplace SageConfig dial (default 80/20). Applied to a
@@ -866,36 +867,52 @@ async function syncAllowlistAddresses(
  * files; everything already uploaded stays as-is (Arweave storage is paid
  * once and permanent, so edits must never re-upload existing media).
  */
-/** Compress + pin a media file to Filebase via the social uploader. */
+/** Compress + pin a media file to Filebase via the social uploader. Retries
+ *  transient failures (network blip, a 503 under load) — video transcoding
+ *  is the heaviest request this server handles, so it's the most exposed
+ *  to a momentarily overloaded instance. */
 async function uploadFileToFilebase(file: File): Promise<{ url: string; optimizedUrl: string }> {
-  const form = new FormData();
-  form.append('file', file);
-  const res = await fetch('/api/social-upload/?kind=nft&pin=1', { method: 'POST', body: form });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.url) throw new Error(data?.error || 'Filebase upload failed');
-  return { url: data.url, optimizedUrl: data.url };
+  return retryTransient(async () => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch('/api/social-upload/?kind=nft&pin=1', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.url) {
+      const err: any = new Error(data?.error || 'Filebase upload failed');
+      err.status = res.status;
+      throw err;
+    }
+    return { url: data.url, optimizedUrl: data.url };
+  });
 }
 
-/** Pin ERC-721 metadata JSON to Filebase; returns the gateway URL. */
+/** Pin ERC-721 metadata JSON to Filebase; returns the gateway URL. Retries
+ *  transient failures, same reasoning as uploadFileToFilebase above. */
 async function pinMetadataToFilebase(
   name: string,
   description: string,
   mediaUrl: string,
   isVideo: boolean
 ): Promise<string> {
-  const res = await fetch('/api/endpoints/dropUpload/?action=PinNftMetadataToFilebase', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name,
-      description,
-      image: mediaUrl,
-      animationUrl: isVideo ? mediaUrl : undefined,
-    }),
+  return retryTransient(async () => {
+    const res = await fetch('/api/endpoints/dropUpload/?action=PinNftMetadataToFilebase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        description,
+        image: mediaUrl,
+        animationUrl: isVideo ? mediaUrl : undefined,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.url) {
+      const err: any = new Error(data?.error || 'metadata pin failed');
+      err.status = res.status;
+      throw err;
+    }
+    return data.url;
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.url) throw new Error(data?.error || 'metadata pin failed');
-  return data.url;
 }
 
 async function uploadAndRegisterArtworks(

@@ -6,6 +6,7 @@ import { baseApi } from '@/store/baseReducer';
 import { useCreatePostMutation, useToggleHideItemMutation } from '@/store/socialReducer';
 import VerificationModal from './VerificationModal';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
+import { retryTransient } from '@/utilities/retryTransient';
 
 interface EditionRow {
   id: number;
@@ -119,14 +120,35 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
     if (!max || max < 1) { toast.error('Check supply'); return; }
     setBusy(true);
     const t = toast.loading('Deploying… (free — gas only)');
+    let deployed: { edition: string; txHash: string } | null = null;
     try {
-      const { edition, txHash } = await createEdition(name.trim(), symbol.trim().toUpperCase(), imageUrl, max, p, signer as any);
-      await record({ editionAddress: edition, name: name.trim(), symbol: symbol.trim().toUpperCase(), imageUrl, priceEth: p, maxSupply: max, launchTxHash: txHash }).unwrap();
+      deployed = await createEdition(name.trim(), symbol.trim().toUpperCase(), imageUrl, max, p, signer as any);
+      // by this point the mint tx already succeeded and gas is spent — retry
+      // the DB-recording step on transient failures (network blip, a 503
+      // from the server under load) instead of stranding a real on-chain
+      // edition as an invisible, unrecorded object the user has to notice
+      // and manually recover.
+      toast.update(t, { render: 'On-chain — saving…', isLoading: true });
+      await retryTransient(() =>
+        record({ editionAddress: deployed!.edition, name: name.trim(), symbol: symbol.trim().toUpperCase(), imageUrl, priceEth: p, maxSupply: max, launchTxHash: deployed!.txHash }).unwrap()
+      );
       toast.update(t, { render: `${name} is live 🎨`, type: 'success', isLoading: false, autoClose: 3000 });
       setLive({ symbol: symbol.trim().toUpperCase(), name: name.trim(), artist: artistAddress });
     } catch (err: any) {
       if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
-      else toast.update(t, { render: err?.data?.error || err?.message?.slice(0, 90) || 'Launch failed', type: 'error', isLoading: false, autoClose: 6000 });
+      else if (deployed) {
+        // the deploy succeeded but saving it never did, even after retries —
+        // say so explicitly instead of a generic "launch failed" that reads
+        // as if nothing happened and gas wasn't spent
+        toast.update(t, {
+          render: `${name} deployed on-chain (${deployed.edition.slice(0, 10)}…) but saving it failed after retries — refresh in a minute; if it's still missing from your editions, that address is safe to look up directly.`,
+          type: 'error',
+          isLoading: false,
+          autoClose: false,
+        });
+      } else {
+        toast.update(t, { render: err?.data?.error || err?.message?.slice(0, 90) || 'Launch failed', type: 'error', isLoading: false, autoClose: 6000 });
+      }
     } finally {
       setBusy(false);
     }
