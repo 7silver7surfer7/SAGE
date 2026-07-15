@@ -72,11 +72,13 @@ const TREASURY_ADDRESS = '0x3E099aF007CaB8233D44782D8E6fe80FECDC321e'; // platfo
 const POINTS_PER_SAGE = 100;
 
 // referral economics: every user has exactly ONE invite code — the tier only
-// changes how many uses it carries (verified doubles it; admin is unbounded
-// in practice).
+// changes how many uses it carries (verified doubles it). Admin was
+// previously unbounded (1000); capped to 100 for the mainnet launch batch —
+// there's a single admin/multisig account, so this is effectively a
+// per-wallet cap. Bump it back up post-launch if a bigger batch is wanted.
 const INVITE_USES_BASE = 5;
 const INVITE_USES_VERIFIED = 10;
-const INVITE_USES_ADMIN = 1000;
+const INVITE_USES_ADMIN = 100;
 
 export default async function handler(request: NextApiRequest, response: NextApiResponse) {
   const { action } = request.query;
