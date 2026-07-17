@@ -1,0 +1,32 @@
+name: SagePoints keeper
+
+# Keeps on-chain pixel balances tracking real SAGE holdings: a new buyer starts
+# accruing from their purchase, more buys bump it up, a sale banks-and-stops it.
+# The keeper replays SAGE Transfer events and syncs only the holders whose
+# balance drifted from their on-chain checkpoint, so a quiet run sends no tx.
+# Stateless (no watermark) — safe on ephemeral runners.
+on:
+  schedule:
+    - cron: '*/10 * * * *' # every 10 minutes
+  workflow_dispatch: {}
+
+concurrency:
+  group: points-keeper
+  cancel-in-progress: false
+
+jobs:
+  keeper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install ethers
+        run: npm install --no-save ethers@5 dotenv
+      - name: Run keeper
+        run: node Sage-Solidity-main/scripts/keeper_sync_points.js
+        env:
+          # reuse the existing pixel-oracle secret (same wallet is the v3
+          # controller/owner): Settings → Secrets → Actions → POINTS_ORACLE_PK
+          POINTS_ORACLE_PK: ${{ secrets.POINTS_ORACLE_PK }}
