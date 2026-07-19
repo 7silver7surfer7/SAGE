@@ -217,11 +217,27 @@ async function main() {
     console.log(`DRY_RUN — would seedSettled ${users.length} holder(s); no tx sent.`);
     return;
   }
-  const blk = await p.getBlock('latest');
-  const gasPrice = blk.baseFeePerGas.mul(150).div(100);
-  const tx = await sp.seedSettled(users, amounts, { gasPrice, type: 0, gasLimit: 200000 + users.length * 60000 });
-  await tx.wait();
-  console.log(`keeper: synced ${users.length} holder(s), tx ${tx.hash}`);
+  // Chunked seeds with ESTIMATED gas: each seedSettled entry costs ~90-100k
+  // (three cold SSTOREs + an external balanceOf), so the old hand formula of
+  // 60k/user ran out of gas the first time a big catch-up batch appeared
+  // (67 holders → status:0 with gasUsed == gasLimit). estimateGas + 30%
+  // reflects true cost; the 120k/user fallback covers estimateGas hiccups.
+  const SEED_BATCH = 40;
+  for (let i = 0; i < users.length; i += SEED_BATCH) {
+    const u = users.slice(i, i + SEED_BATCH);
+    const a = amounts.slice(i, i + SEED_BATCH);
+    const blk = await p.getBlock('latest');
+    const gasPrice = blk.baseFeePerGas.mul(150).div(100);
+    let gasLimit;
+    try {
+      gasLimit = (await sp.estimateGas.seedSettled(u, a, { gasPrice, type: 0 })).mul(130).div(100);
+    } catch {
+      gasLimit = ethers.BigNumber.from(300000 + u.length * 120000);
+    }
+    const tx = await sp.seedSettled(u, a, { gasPrice, type: 0, gasLimit });
+    await tx.wait();
+    console.log(`keeper: synced ${u.length} holder(s) (${i + u.length}/${users.length}), tx ${tx.hash}`);
+  }
 }
 
 main()
