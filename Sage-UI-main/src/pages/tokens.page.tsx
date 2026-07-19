@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import { useSigner } from 'wagmi';
+import { useConnectModal } from '@rainbow-me/rainbowkit';
 import Logotype from '@/components/Logotype';
 import LoaderDots from '@/components/LoaderDots';
 import SearchIcon from '@/components/Icons/SearchIcon';
@@ -47,8 +48,9 @@ function useDebounced<T>(value: T, delayMs: number): T {
  */
 export default function TokensPage() {
   const router = useRouter();
-  const { walletAddress, userData } = useSAGEAccount();
+  const { isSignedIn, walletAddress, userData } = useSAGEAccount();
   const { data: signer } = useSigner();
+  const { openConnectModal } = useConnectModal();
   const addr = walletAddress || (userData as any)?.walletAddress || '';
   const [launchOpen, setLaunchOpen] = useState(false);
   const [cursor, setCursor] = useState<number | undefined>(undefined);
@@ -78,8 +80,16 @@ export default function TokensPage() {
   }, [data?.nextCursor, isFetching]);
 
   const onLaunchClick = () => {
-    if (!addr || !signer) {
+    if (!addr || !isSignedIn) {
       toast.info('Connect your wallet to launch a coin');
+      return;
+    }
+    if (!signer) {
+      // session cookie survives reloads but the wallet connection doesn't —
+      // reopen the connect modal instead of showing a "connect your wallet"
+      // message to someone who (correctly) believes they're already signed in
+      toast.info('Reconnect your wallet to sign transactions');
+      openConnectModal?.();
       return;
     }
     setLaunchOpen(true);
