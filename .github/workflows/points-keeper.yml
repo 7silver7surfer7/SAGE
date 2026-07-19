@@ -2,9 +2,14 @@ name: SagePoints keeper
 
 # Keeps on-chain pixel balances tracking real SAGE holdings: a new buyer starts
 # accruing from their purchase, more buys bump it up, a sale banks-and-stops it.
-# The keeper replays SAGE Transfer events and syncs only the holders whose
-# balance drifted from their on-chain checkpoint, so a quiet run sends no tx.
-# Stateless (no watermark) — safe on ephemeral runners.
+#
+# v3: holder discovery comes from the app's own trade ledger (an ever-growing,
+# real-time-updated DB table), not a chain log scan — a prior chain-scanning
+# design either timed out on full history or silently lost any wallet whose
+# one relevant transfer scrolled out of a bounded lookback window before a run
+# caught it. Only syncs holders whose balance drifted from their on-chain
+# checkpoint, so a quiet run sends no tx. Stateless (no watermark) — safe on
+# ephemeral runners.
 on:
   schedule:
     - cron: '*/10 * * * *' # every 10 minutes
@@ -24,20 +29,21 @@ jobs:
           node-version: '20'
       - name: Install ethers
         run: npm install --no-save ethers@5 dotenv
+      # The post-graduation trade indexer is LAZY — it sweeps a token's
+      # Uniswap Swap events into the trades table only when its token page is
+      # viewed. Nudge every token's page endpoint FIRST, before the keeper
+      # reads that same table as its holder ledger, so charts/mcaps/holder
+      # lists AND pixel accrual all work off data that's ≤10min fresh even
+      # with zero visitors. Graduation-gated server-side; un-graduated tokens
+      # no-op.
+      - name: Nudge post-graduation trade indexer
+        run: |
+          for a in $(curl -sL "https://sageart.xyz/api/social/?action=GetTokens" | jq -r '.tokens[].tokenAddress' 2>/dev/null); do
+            curl -sL -o /dev/null --max-time 60 "https://sageart.xyz/api/social/?action=GetTokenDetail&address=$a" || true
+          done
       - name: Run keeper
         run: node Sage-Solidity-main/scripts/keeper_sync_points.js
         env:
           # reuse the existing pixel-oracle secret (same wallet is the v3
           # controller/owner): Settings → Secrets → Actions → POINTS_ORACLE_PK
           POINTS_ORACLE_PK: ${{ secrets.POINTS_ORACLE_PK }}
-      # The post-graduation trade indexer is LAZY — it sweeps a token's
-      # Uniswap Swap events into the trades table only when its token page is
-      # viewed. Nudge every token's page endpoint each cron tick so charts,
-      # board mcaps, and holder lists stay ≤10min fresh even with zero
-      # visitors. Graduation-gated server-side; un-graduated tokens no-op.
-      - name: Nudge post-graduation trade indexer
-        if: always()
-        run: |
-          for a in $(curl -sL "https://sageart.xyz/api/social/?action=GetTokens" | jq -r '.tokens[].tokenAddress' 2>/dev/null); do
-            curl -sL -o /dev/null --max-time 60 "https://sageart.xyz/api/social/?action=GetTokenDetail&address=$a" || true
-          done

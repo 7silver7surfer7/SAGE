@@ -1,37 +1,52 @@
 /**
- * SagePoints v3 keeper — incremental edition.
+ * SagePoints v3 keeper — DB-driven edition.
  *
- * WHY THE REWRITE: the original replayed the token's FULL Transfer history in
- * one eth_getLogs(fromBlock: 0). That was fine while SAGE had a few dozen
- * transfers — but post-graduation Uniswap trading added thousands of swaps
- * (each with SAGE Transfer legs), the call crossed the RPC's scan budget
- * ("log query timed out"), and the keeper flatlined at 2026-07-19 03:55 UTC.
- * Every wallet that bought during the outage got no checkpoint → no accrual →
- * the pixels leaderboard went stale. Full-history replay is also O(history)
- * per run, so it only ever gets worse.
+ * TWO PRIOR DESIGNS, TWO DISTINCT FAILURE MODES:
+ *  v1 replayed the token's FULL Transfer history in one eth_getLogs(0→latest).
+ *     Post-graduation Uniswap volume pushed that call past the RPC's scan
+ *     budget ("log query timed out") and the keeper flatlined outright
+ *     (2026-07-19 03:55 UTC — no buyer got a checkpoint until it was fixed).
+ *  v2 (the "fix") scanned only a bounded recent window, chunked. That solved
+ *     the timeout, but introduced a quieter bug: a wallet whose ONE relevant
+ *     transfer scrolls out of the window before any run processes it is
+ *     PERMANENTLY invisible to every future run — it never trades again, so
+ *     it never re-enters any window. Measured impact: 146 of 214 current
+ *     SAGE holders (68%) had lastSync=0 — zero pixel accrual, forever,
+ *     because they all bought during the v1 outage and never touched the
+ *     token again. A sliding window cannot self-heal this; it can only be
+ *     re-swept with a manually-widened one-off LOOKBACK_BLOCKS, which is a
+ *     patch, not a fix — the same blind spot reopens on the next outage.
  *
- * NOW: O(window), flat forever —
- *  - scans only the last LOOKBACK_BLOCKS (default 120k ≈ 33h at ~0.1s blocks)
- *    in 20k-block chunks (empirically safe on this RPC)
- *  - reconstructs each affected holder's true accrual INCREMENTALLY from the
- *    contract's own public state (settled / lastSync / checkpointSage) plus
- *    the window's trade segments — no need to see history before lastSync,
- *    because checkpointSage IS the balance snapshot at lastSync
- *  - skips contract addresses (the Uniswap pair, factory, router) via getCode
- *  - batches every RPC read; drift-detection keeps quiet runs tx-free
+ * NOW (v3): drop chain log scanning from the keeper ENTIRELY. Holder
+ * discovery comes from the app's own trade ledger (GetTokenTradeLedger) —
+ * an ever-growing, real-time-updated, NEVER-EXPIRING record (the pool-swap
+ * indexer shipped 2026-07-19 keeps it current within seconds). Paging
+ * through it once per run is a complete substitute for a chain scan:
+ *  - no RPC log-query budget to blow (no eth_getLogs against the token at
+ *    all — only cheap batched view calls: balanceOf/checkpointSage/lastSync)
+ *  - no sliding window to fall out of — a wallet that traded once, ever,
+ *    stays a permanent candidate on every future run until it's healthy
+ *  - O(distinct traders + trades), both bounded and slow-growing, not
+ *    O(chain history) and not O(recent volume)
  *
- * Segment math per drifted holder (whole-SAGE units, capped):
+ * Segment math per drifted holder (whole-SAGE units, capped) — same shape as
+ * v2, just fed from DB rows instead of chain events:
  *   [lastSync → t1) at min(checkpointSage, cap)   ← contract's own snapshot
  *   [t1 → t2)      at balance after trade 1
  *   ...
  *   [tN → now)     at live balance (cross-checked against reconstruction)
  *   settled_new = settled_onchain + Σ segment accruals
- * seedSettled(users, amounts) then banks settled_new, re-checkpoints at the
- * live balance, and restarts the honest stream from the seed block.
+ *
+ * Known limitation (unchanged from v1/v2, stated plainly): this reconstructs
+ * accrual from TRADE history. A raw wallet-to-wallet SAGE transfer (a gift,
+ * an airdrop outside the trade flow) isn't a "trade" and won't appear in the
+ * ledger, so it's invisible to the backdated-accrual estimate. It is NEVER
+ * invisible to the final checkpoint, though — that's always set from the
+ * true on-chain balanceOf — so a gap here only mis-estimates a one-time
+ * bonus, never ongoing accrual, and never compounds.
  *
  * Env: POINTS_ORACLE_PK (or DEPLOYER_PK) — controller/owner wallet.
- *      LOOKBACK_BLOCKS  — scan window override (outage recovery: raise it)
- *      DRY_RUN=1        — print the seed batch, send nothing.
+ *      DRY_RUN=1 — print the seed batch, send nothing.
  *
  *   node scripts/keeper_sync_points.js
  */
@@ -42,12 +57,11 @@ const RPC = 'https://rpc.mainnet.chain.robinhood.com';
 const CHAIN = 4663;
 const SAGE = '0x14561006002e8f76E68EC69e6A32527730bb73c8';
 const V3 = '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e';
+const LEDGER_URL = 'https://sageart.xyz/api/social/?action=GetTokenTradeLedger';
 const RATE = 25; // rateScaled → 0.25/day
 const CAP = 100000; // whole SAGE
 const DAY = 86400;
 
-const LOOKBACK = Number(process.env.LOOKBACK_BLOCKS || 120000);
-const CHUNK = 20000; // blocks per eth_getLogs (bigger ranges time out)
 const BATCH = 50; // parallel RPC reads
 const DRY = process.env.DRY_RUN === '1';
 
@@ -61,56 +75,51 @@ async function batched(items, fn) {
   return out;
 }
 
+/** Page through the full trade ledger for one token. Never expires, never times out. */
+async function fetchLedger(tokenAddress) {
+  const trades = [];
+  let cursor;
+  do {
+    const url = `${LEDGER_URL}&address=${tokenAddress}${cursor ? `&cursor=${cursor}` : ''}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`ledger fetch failed: HTTP ${res.status}`);
+    const page = await res.json();
+    trades.push(...page.trades);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return trades;
+}
+
 async function main() {
   const pk = process.env.POINTS_ORACLE_PK || process.env.DEPLOYER_PK;
   if (!pk) throw new Error('POINTS_ORACLE_PK (or DEPLOYER_PK) required');
   const p = new ethers.providers.StaticJsonRpcProvider(RPC, CHAIN);
   const w = new ethers.Wallet(pk, p);
 
-  // ── bounded, chunked scan of recent SAGE transfers ──
-  const head = await p.getBlockNumber();
-  const fromBlock = Math.max(0, head - LOOKBACK);
-  const topic = ethers.utils.id('Transfer(address,address,uint256)');
-  const iface = new ethers.utils.Interface([
-    'event Transfer(address indexed from,address indexed to,uint256 value)',
-  ]);
-  let logs = [];
-  for (let b = fromBlock; b <= head; b += CHUNK) {
-    const to = Math.min(b + CHUNK - 1, head);
-    logs = logs.concat(await p.getLogs({ address: SAGE, topics: [topic], fromBlock: b, toBlock: to }));
+  // ── holder discovery: the DB ledger, not the chain ──
+  const trades = await fetchLedger(SAGE);
+  const now = Math.floor(Date.now() / 1000);
+  // stable order: DB `id` isn't reliably chronological across separate
+  // backfill runs (rows inserted well after ones with lower ids can carry
+  // EARLIER timestamps) — sort by the timestamp itself, which is what the
+  // segment math actually needs to be correct.
+  const evs = trades
+    .map((t) => ({
+      t: Math.floor(new Date(t.createdAt).getTime() / 1000),
+      trader: ethers.utils.getAddress(t.trader),
+      side: t.side,
+      amount: t.tokenAmount,
+    }))
+    .sort((a, b) => a.t - b.t);
+  const byTrader = new Map();
+  for (const e of evs) {
+    if (!byTrader.has(e.trader)) byTrader.set(e.trader, []);
+    byTrader.get(e.trader).push(e);
   }
+  const holders = Array.from(byTrader.keys());
+  console.log(`ledger: ${trades.length} trade(s), ${holders.length} distinct wallet(s)`);
 
-  // block timestamps (deduped, batched)
-  const blockNums = Array.from(new Set(logs.map((l) => l.blockNumber)));
-  const stamps = await batched(blockNums, (n) => p.getBlock(n));
-  const ts = new Map(stamps.map((b) => [b.number, b.timestamp]));
-  const now = (await p.getBlock('latest')).timestamp;
-
-  // stable chain ordering: same-second trades (0.3s blocks + arb bursts) must
-  // apply in log order or running balances zig through states that never
-  // existed on-chain
-  const evs = logs
-    .map((l) => {
-      const e = iface.parseLog(l);
-      return {
-        t: ts.get(l.blockNumber),
-        bn: l.blockNumber,
-        li: l.logIndex,
-        from: e.args.from.toLowerCase(),
-        to: e.args.to.toLowerCase(),
-        val: e.args.value,
-      };
-    })
-    .sort((a, b) => a.t - b.t || a.bn - b.bn || a.li - b.li);
-
-  // ── affected addresses, minus zero + contracts (pool/factory/router/…) ──
-  const zero = ethers.constants.AddressZero.toLowerCase();
-  const touched = Array.from(new Set(evs.flatMap((e) => [e.from, e.to]))).filter((a) => a !== zero);
-  const codes = await batched(touched, (a) => p.getCode(a).catch(() => '0x'));
-  const isContract = new Map(touched.map((a, i) => [a, codes[i] !== '0x']));
-  const holders = touched.filter((a) => !isContract.get(a));
-
-  // ── contract state per holder (public mappings), batched ──
+  // ── contract state per holder (public mappings), batched — no log scans ──
   const sage = new ethers.Contract(SAGE, ['function balanceOf(address) view returns (uint256)'], p);
   const sp = new ethers.Contract(
     V3,
@@ -130,98 +139,83 @@ async function main() {
     last: await sp.lastSync(a),
   }));
 
-  // ── drifted holders → incremental true accrual over the window's segments ──
+  // ── drifted holders → true accrual over their trade-history segments ──
   const users = [];
   const amounts = [];
   for (const s of state) {
     const liveWhole = s.bal.div(ethers.constants.WeiPerEther).toNumber();
     const cp = s.cp.toNumber();
     const last = s.last.toNumber();
-    if (liveWhole === cp) continue; // no drift → the contract streams correctly
+    if (liveWhole === cp && last !== 0) continue; // healthy and already synced at least once
     if (liveWhole === 0 && s.settled.isZero() && last === 0) continue; // sold out, nothing banked
 
-    // this holder's in-window balance changes after lastSync
-    const mine = evs.filter((e) => (e.from === s.a || e.to === s.a) && e.t > last);
+    const mine = byTrader.get(s.a).filter((e) => e.t > last);
     let extra = 0;
     if (last === 0) {
-      // Never synced. Not always a fresh buyer: flat-cycling arb bots never
-      // drift (balance == checkpoint == 0 at every old-keeper pass), so they
-      // reach here holding PRE-window tokens — start their running balance at
-      // live − Σ(window deltas), never zero, or an opening sell walks the
-      // balance negative and accrues NEGATIVE pixels (which uint256 seeding
-      // would wrap into astronomical balances).
-      const windowDelta = mine.reduce(
-        (d, e) => (e.to === s.a ? d.add(e.val) : d.sub(e.val)),
-        ethers.BigNumber.from(0)
-      );
-      let running = s.bal.sub(windowDelta);
-      if (running.lt(0)) running = ethers.BigNumber.from(0);
-      if (running.gt(0)) {
+      // Never synced. Not always a fresh buyer: a wallet whose ledger opens
+      // with a SELL held tokens before its first recorded trade (a transfer
+      // outside the trade flow, or trades that predate this ledger) — start
+      // the running balance at live − Σ(ledger deltas), never zero, or the
+      // opening sell walks it negative (which uint256 seeding would wrap
+      // into an astronomical balance).
+      const ledgerDelta = mine.reduce((d, e) => d + (e.side === 'buy' ? e.amount : -e.amount), 0);
+      let running = Math.max(0, liveWhole - ledgerDelta);
+      if (running > 0) {
         console.warn(
-          `warn: ${s.a.slice(0, 10)} never synced but held ${ethers.utils.formatEther(running).split('.')[0]} SAGE pre-window — crediting window activity only`
+          `warn: ${s.a.slice(0, 10)} never synced but held ~${Math.floor(running)} SAGE before its first ledger trade — crediting ledger activity only`
         );
       }
       for (let i = 0; i < mine.length; i++) {
         const e = mine[i];
-        running = e.to === s.a ? running.add(e.val) : running.sub(e.val);
-        if (running.lt(0)) running = ethers.BigNumber.from(0);
+        running = Math.max(0, running + (e.side === 'buy' ? e.amount : -e.amount));
         const until = i + 1 < mine.length ? mine[i + 1].t : now;
-        extra += accrue(running.div(ethers.constants.WeiPerEther).toNumber(), until - e.t);
+        extra += accrue(running, until - e.t);
       }
     } else {
       // synced before: contract snapshot (checkpointSage) IS the balance at
       // lastSync — walk segments forward from it
-      let runningWhole = cp;
+      let running = cp;
       let cursor = last;
-      let runningWei = ethers.utils.parseEther(String(cp)); // approx anchor
-      for (let i = 0; i < mine.length; i++) {
-        const e = mine[i];
-        extra += accrue(runningWhole, e.t - cursor);
-        runningWei = e.to === s.a ? runningWei.add(e.val) : runningWei.sub(e.val);
-        if (runningWei.lt(0)) runningWei = ethers.BigNumber.from(0);
-        runningWhole = Number(ethers.utils.formatEther(runningWei));
+      for (const e of mine) {
+        extra += accrue(running, e.t - cursor);
+        running = Math.max(0, running + (e.side === 'buy' ? e.amount : -e.amount));
         cursor = e.t;
       }
-      // final segment to now; prefer the live balance (whole-token anchor
-      // drift from the cp approximation stays sub-token, but live is exact)
-      const reconWhole = Math.floor(runningWhole);
+      const reconWhole = Math.floor(running);
       if (Math.abs(reconWhole - liveWhole) > 1) {
         console.warn(
-          `warn: ${s.a.slice(0, 10)} reconstruction ${reconWhole} != live ${liveWhole} — trades older than the window? using live`
+          `warn: ${s.a.slice(0, 10)} reconstruction ${reconWhole} != live ${liveWhole} — non-trade transfer? using live for the final segment`
         );
       }
       extra += accrue(liveWhole, now - cursor);
     }
-    // hard floor: accrual can never be negative, and a seed must never bank
-    // LESS than what's already settled (seedSettled overwrites) — a negative
-    // here would wrap uint256 into an astronomical balance
+    // hard floor: accrual can never be negative, and a negative would wrap
+    // the uint256 seed into an astronomical balance
     if (extra < 0) {
       console.warn(`warn: ${s.a.slice(0, 10)} computed negative extra ${Math.floor(extra)} — clamping to 0`);
       extra = 0;
     }
-    users.push(ethers.utils.getAddress(s.a));
+    users.push(s.a);
     amounts.push(Math.floor(s.settled.toNumber() + extra));
   }
 
-  const scanned = `${fromBlock}→${head}`;
   if (users.length === 0) {
-    console.log(`keeper ${new Date(now * 1000).toISOString()}: scanned ${scanned}, ${holders.length} wallet(s) touched, all in sync.`);
+    console.log(`keeper ${new Date(now * 1000).toISOString()}: ${holders.length} wallet(s) checked, all in sync.`);
     return;
   }
   console.log(
-    `keeper ${new Date(now * 1000).toISOString()}: scanned ${scanned}, drifted: ${users
+    `keeper ${new Date(now * 1000).toISOString()}: drifted ${users.length}/${holders.length}: ${users
+      .slice(0, 20)
       .map((u, i) => `${u.slice(0, 8)}=${amounts[i]}`)
-      .join(', ')}`
+      .join(', ')}${users.length > 20 ? ', …' : ''}`
   );
   if (DRY) {
     console.log(`DRY_RUN — would seedSettled ${users.length} holder(s); no tx sent.`);
     return;
   }
   // Chunked seeds with ESTIMATED gas: each seedSettled entry costs ~90-100k
-  // (three cold SSTOREs + an external balanceOf), so the old hand formula of
-  // 60k/user ran out of gas the first time a big catch-up batch appeared
-  // (67 holders → status:0 with gasUsed == gasLimit). estimateGas + 30%
-  // reflects true cost; the 120k/user fallback covers estimateGas hiccups.
+  // (three cold SSTOREs + an external balanceOf) — a hand-rolled per-user
+  // formula ran out of gas the first time a large catch-up batch appeared.
   const SEED_BATCH = 40;
   for (let i = 0; i < users.length; i += SEED_BATCH) {
     const u = users.slice(i, i + SEED_BATCH);
