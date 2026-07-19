@@ -13,6 +13,7 @@ name: SagePoints keeper
 on:
   schedule:
     - cron: '*/10 * * * *' # every 10 minutes
+    - cron: '17 * * * *' # reconcile: hourly, offset to avoid overlapping the keeper
   workflow_dispatch: {}
 
 concurrency:
@@ -21,6 +22,7 @@ concurrency:
 
 jobs:
   keeper:
+    if: github.event.schedule != '17 * * * *'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,4 +48,26 @@ jobs:
         env:
           # reuse the existing pixel-oracle secret (same wallet is the v3
           # controller/owner): Settings → Secrets → Actions → POINTS_ORACLE_PK
+          POINTS_ORACLE_PK: ${{ secrets.POINTS_ORACLE_PK }}
+
+  reconcile:
+    # Safety net for the trade-ledger-driven keeper above: that keeper can only
+    # discover wallets that traded through this app, so a wallet that received
+    # SAGE via pure transfer/airdrop (never a trade) never enters its ledger
+    # scan and would accrue zero pixels forever. This job replays the FULL
+    # genesis-to-head Transfer-log history to reconstruct every address's real
+    # balance timeline and seeds anyone the fast keeper missed. Heavier
+    # (chunked eth_getLogs across ~250 EOAs) so it runs hourly, not every 10min.
+    if: github.event.schedule == '17 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install ethers
+        run: npm install --no-save ethers@5 dotenv
+      - name: Run reconciliation
+        run: node Sage-Solidity-main/scripts/keeper_reconcile.js
+        env:
           POINTS_ORACLE_PK: ${{ secrets.POINTS_ORACLE_PK }}

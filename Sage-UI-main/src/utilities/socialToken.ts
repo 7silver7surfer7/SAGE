@@ -3,12 +3,44 @@ import factoryJson from '@/constants/abis/Social/SocialTokenFactory.sol/SocialTo
 import launcherJson from '@/constants/abis/Social/SocialNFTLauncher.sol/SocialNFTLauncher.json';
 import minterJson from '@/constants/abis/Social/SocialCollectMinter.sol/SocialCollectMinter.json';
 import ERC20StandardJson from '@/constants/abis/ERC-20/ERC20Standard.json';
-import { parameters } from '@/constants/config';
+import {
+  parameters,
+  SAGE_PRICE_TOKEN_ADDRESS,
+  SAGE_PRICE_FACTORY_ADDRESS,
+} from '@/constants/config';
 import { toDecimalString } from '@/utilities/decimalString';
 
-export function factoryContract(signerOrProvider: Signer | ethers.providers.Provider) {
+// Any token whose bonding-curve/graduation state lives on a factory OTHER
+// than the current default — its state is in THAT contract's storage and
+// can't be migrated when the default changes, so it must resolve there
+// forever. SAGE is pinned to the ORIGINAL factory permanently. The 2026-07-19
+// LP-to-treasury factory swap also caught a mainnet "test" token that had
+// already graduated on the immediately-prior factory — same problem, smaller
+// scale: swapping the default without pinning it would have pointed its
+// pairOf() lookup at a factory that never processed its graduation, silently
+// breaking its price/chart exactly like an unpinned SAGE would. Add an entry
+// here every time SOCIAL_TOKEN_FACTORY_ADDRESS changes AND a token already
+// graduated on the outgoing factory. Mirrors factoryForToken() in
+// pages/api/social.page.ts — keep both in sync.
+const LEGACY_FACTORY_BY_TOKEN: Record<string, string> = {
+  [SAGE_PRICE_TOKEN_ADDRESS.toLowerCase()]: SAGE_PRICE_FACTORY_ADDRESS,
+  '0x4b6fc1facc24d97010e07459788b6d985d6469d9':
+    '0x6a22f6647b00022928bb103E66fA0a6659f7A64F', // "test" — graduated pre-2026-07-19 factory swap
+};
+
+export function factoryAddressForToken(tokenAddress?: string): string {
+  const legacy = tokenAddress && LEGACY_FACTORY_BY_TOKEN[tokenAddress.toLowerCase()];
+  return legacy || parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
+}
+
+// Pass the token being traded so SAGE routes to its original factory; omit it
+// for token-agnostic calls like launch() (always the current factory).
+export function factoryContract(
+  signerOrProvider: Signer | ethers.providers.Provider,
+  tokenAddress?: string
+) {
   return new ethers.Contract(
-    parameters.SOCIAL_TOKEN_FACTORY_ADDRESS,
+    factoryAddressForToken(tokenAddress),
     factoryJson.abi,
     signerOrProvider
   );
@@ -44,7 +76,7 @@ export async function launchToken(
 
 /** Migrate a sold-out curve to its Uniswap pool — anyone can trigger. */
 export async function graduateToken(tokenAddress: string, signer: Signer): Promise<string> {
-  const factory = factoryContract(signer);
+  const factory = factoryContract(signer, tokenAddress);
   const tx = await factory.graduate(tokenAddress);
   await tx.wait(1);
   return tx.hash;
@@ -56,7 +88,7 @@ export async function buyToken(
   ethAmount: number,
   signer: Signer
 ): Promise<string> {
-  const factory = factoryContract(signer);
+  const factory = factoryContract(signer, tokenAddress);
   const tx = await factory.buy(tokenAddress, 0, {
     value: ethers.utils.parseEther(toDecimalString(ethAmount)),
   });
@@ -70,10 +102,10 @@ export async function sellToken(
   amount: number,
   signer: Signer
 ): Promise<string> {
-  const factory = factoryContract(signer);
+  const factory = factoryContract(signer, tokenAddress);
   const token = new ethers.Contract(tokenAddress, ERC20StandardJson.abi, signer);
   const wei = ethers.utils.parseEther(toDecimalString(amount));
-  const approve = await token.approve(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, wei);
+  const approve = await token.approve(factoryAddressForToken(tokenAddress), wei);
   await approve.wait(1);
   const tx = await factory.sell(tokenAddress, wei, 0);
   await tx.wait(1);
@@ -97,10 +129,10 @@ export async function airdropToken(
   amountEach: number,
   signer: Signer
 ): Promise<string> {
-  const factory = factoryContract(signer);
+  const factory = factoryContract(signer, tokenAddress);
   const token = new ethers.Contract(tokenAddress, ERC20StandardJson.abi, signer);
   const total = ethers.utils.parseEther(toDecimalString(amountEach)).mul(recipients.length);
-  const approve = await token.approve(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, total);
+  const approve = await token.approve(factoryAddressForToken(tokenAddress), total);
   await approve.wait(1);
   const tx = await factory.airdrop(
     tokenAddress,
@@ -116,7 +148,7 @@ export async function tokenSpotPriceEthPerMillion(
   tokenAddress: string,
   provider: ethers.providers.Provider
 ): Promise<number> {
-  const factory = factoryContract(provider);
+  const factory = factoryContract(provider, tokenAddress);
   const wei = await factory.spotPriceWei(tokenAddress); // wei per whole token
   return Number(ethers.utils.formatEther(wei.mul(1_000_000)));
 }

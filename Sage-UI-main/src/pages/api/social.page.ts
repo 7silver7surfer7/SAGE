@@ -3327,15 +3327,23 @@ const FACTORY_ABI = [
   'function pairOf(address) view returns (address)',
 ];
 
-// SAGE's bonding curve lives in the ORIGINAL factory (SAGE_PRICE_FACTORY_ADDRESS);
-// its trades and reads must resolve there. Every newer token is on the current
-// SOCIAL_TOKEN_FACTORY_ADDRESS. Mirrors factoryAddressForToken() in
-// utilities/socialToken.ts. No-op off mainnet (no token matches the SAGE addr).
+// Any token whose bonding-curve/graduation state lives on a factory OTHER than
+// the current default must keep resolving there — that state can't migrate
+// when the default changes. SAGE is pinned to the ORIGINAL factory
+// permanently. The 2026-07-19 LP-to-treasury factory swap also caught a
+// mainnet "test" token that had already graduated on the immediately-prior
+// factory. Add an entry here every time SOCIAL_TOKEN_FACTORY_ADDRESS changes
+// AND a token already graduated on the outgoing factory. Mirrors
+// factoryAddressForToken() in utilities/socialToken.ts — keep both in sync.
+const LEGACY_FACTORY_BY_TOKEN: Record<string, string> = {
+  [SAGE_PRICE_TOKEN_ADDRESS.toLowerCase()]: SAGE_PRICE_FACTORY_ADDRESS,
+  '0x4b6fc1facc24d97010e07459788b6d985d6469d9':
+    '0x6a22f6647b00022928bb103E66fA0a6659f7A64F', // "test" — graduated pre-2026-07-19 factory swap
+};
+
 function factoryForToken(token: string): string {
-  if (token && token.toLowerCase() === SAGE_PRICE_TOKEN_ADDRESS.toLowerCase()) {
-    return SAGE_PRICE_FACTORY_ADDRESS;
-  }
-  return parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
+  const legacy = token && LEGACY_FACTORY_BY_TOKEN[token.toLowerCase()];
+  return legacy || parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
 }
 
 /** Records a mined buy/sell so the chart, trades feed and holders stay live. */
