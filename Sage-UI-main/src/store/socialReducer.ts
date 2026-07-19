@@ -6,6 +6,7 @@ export interface SocialAuthor {
   profilePicture: string | null;
   pfpVerified: boolean;
   verified: boolean; // paid checkmark
+  isAgent: boolean; // sage-mcp AI agent — see AgentBadge.tsx
 }
 
 export interface SocialPost {
@@ -42,6 +43,25 @@ export interface SocialPost {
   likedByViewer: boolean;
   repostedByViewer: boolean;
   collectedByViewer: boolean;
+  // quote-repost embed (one level deep; null if the quoted post was deleted)
+  quotedPostId?: number | null;
+  quoteCount: number;
+  quoted?: QuotedPost | null;
+}
+
+export interface QuotedPost {
+  id: number;
+  text: string;
+  imageUrl: string | null;
+  mediaType: 'image' | 'video' | null;
+  createdAt: string;
+  author: {
+    address: string;
+    username: string | null;
+    profilePicture: string | null;
+    verified: boolean;
+    isAgent: boolean;
+  };
 }
 
 export interface FollowGatedDrop {
@@ -56,6 +76,7 @@ export interface SocialProfile {
   profilePicture: string | null;
   pfpVerified: boolean;
   verified: boolean; // paid checkmark
+  isAgent: boolean; // sage-mcp AI agent — see AgentBadge.tsx
   bio: string | null;
   webpage: string | null;
   location: string | null;
@@ -68,6 +89,7 @@ export interface SocialProfile {
   isSelf: boolean;
   needsInvite: boolean; // self only: composer should ask for an invite code
   unreadMessages: number; // self only
+  unreadActivity: number; // self only — Twitter-style Activity-tab unread count (capped 99)
   followGatedDrops: FollowGatedDrop[];
   myDrops: FollowGatedDrop[];
   groupChat: { enabled: boolean; isMember: boolean } | null;
@@ -90,7 +112,6 @@ export interface OwnedNft {
 
 export interface VerificationInfo {
   priceUsd: number;
-  priceSage: number;
   priceEth: number;
   treasury: string;
   pointsPerSage: number;
@@ -144,6 +165,7 @@ export interface SocialUserCard {
   username: string | null;
   profilePicture?: string | null;
   verified: boolean;
+  isAgent?: boolean; // sage-mcp AI agent — see AgentBadge.tsx
 }
 
 export interface DirectMessage {
@@ -177,6 +199,9 @@ export interface LeaderboardRow {
   user: SocialUserCard;
   sage?: number;
   count?: number;
+  // pixels/day — present only on the topPoints board, so the client can stream
+  // the balance up live between refetches (see useLivePixels).
+  rate?: number;
 }
 
 export interface Leaderboard {
@@ -275,6 +300,38 @@ type Scope = 'global' | 'latest' | 'following';
 export interface FeedPage {
   posts: SocialPost[];
   nextCursor: number | null;
+}
+
+export interface HashtagPage {
+  tag: string;
+  posts: SocialPost[];
+  nextCursor: number | null;
+}
+
+export type FollowCard = SocialUserCard & { followedByViewer: boolean };
+export interface FollowListPage {
+  users: FollowCard[];
+  nextCursor: string | null;
+}
+
+const LIST_ENDPOINTS = ['getFeed', 'getUserPosts', 'getHashtagFeed'];
+
+// Patches EVERY currently-cached instance of the {posts: SocialPost[]} list
+// endpoints above, instead of a guessed set of query args. getFeed's global
+// tab keys its cache on a fresh random `seed` per page load and paginated
+// pages key on `cursor`, so a patch aimed at a fixed shape like {scope}
+// silently misses the actual mounted query — that's why like/repost looked
+// broken on the timeline itself and only "worked" on a post's own detail
+// page (getPostThread is keyed on postId alone, so it always matches).
+function patchAllListCaches(dispatch: any, getState: any, apply: (draft: any) => void) {
+  const patches: { undo: () => void }[] = [];
+  const queries = (getState() as any).api?.queries || {};
+  for (const key in queries) {
+    const q = queries[key];
+    if (!q || !LIST_ENDPOINTS.includes(q.endpointName)) continue;
+    patches.push(dispatch((socialApi.util.updateQueryData as any)(q.endpointName, q.originalArgs, apply)));
+  }
+  return patches;
 }
 
 const socialApi = baseApi.injectEndpoints({
@@ -387,6 +444,12 @@ const socialApi = baseApi.injectEndpoints({
     getActivity: builder.query<{ activity: ActivityItem[] }, void>({
       query: () => ({ url: 'social?action=GetActivity' }),
       providesTags: ['SocialFeed'],
+    }),
+    // stamp "Activity opened" → resets the unread badge; invalidate the
+    // profile so the nav re-fetches unreadActivity: 0
+    markActivitySeen: builder.mutation<{ ok: boolean }, void>({
+      query: () => ({ url: 'social?action=MarkActivitySeen', method: 'POST', body: {} }),
+      invalidatesTags: ['SocialProfile'],
     }),
     getLeaderboardBoard: builder.query<
       { rows: LeaderboardRow[]; nextOffset: number | null },
@@ -515,7 +578,13 @@ const socialApi = baseApi.injectEndpoints({
     }),
     createPost: builder.mutation<
       { post: SocialPost },
-      { text: string; imageUrl?: string; mediaType?: 'image' | 'video'; replyToId?: number }
+      {
+        text: string;
+        imageUrl?: string;
+        mediaType?: 'image' | 'video';
+        replyToId?: number;
+        quotedPostId?: number;
+      }
     >({
       query: (body) => ({ url: 'social?action=CreatePost', method: 'POST', body }),
       // Your new post shows at the TOP of the feed immediately: patch the
@@ -554,18 +623,14 @@ const socialApi = baseApi.injectEndpoints({
       // optimistic: paginated feed pages beyond the newest are append-only in
       // the cache, so patch them directly instead of waiting for a refetch —
       // and patch the post-detail thread too, or ♥ looks dead on /post/[id]
-      async onQueryStarted(postId, { dispatch, queryFulfilled }) {
+      async onQueryStarted(postId, { dispatch, getState, queryFulfilled }) {
         const flip = (p: SocialPost | undefined) => {
           if (!p) return;
           p.likedByViewer = !p.likedByViewer;
           p.likeCount += p.likedByViewer ? 1 : -1;
         };
-        const patches = (['global', 'following', 'latest'] as const).map((scope) =>
-          dispatch(
-            socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
-              flip(draft.posts.find((x) => x.id === postId));
-            })
-          )
+        const patches = patchAllListCaches(dispatch, getState, (draft: any) =>
+          flip(draft.posts?.find((x: SocialPost) => x.id === postId))
         );
         patches.push(
           dispatch(
@@ -584,18 +649,14 @@ const socialApi = baseApi.injectEndpoints({
     }),
     toggleRepost: builder.mutation<{ reposted: boolean }, number>({
       query: (postId) => ({ url: 'social?action=ToggleRepost', method: 'POST', body: { postId } }),
-      async onQueryStarted(postId, { dispatch, queryFulfilled }) {
+      async onQueryStarted(postId, { dispatch, getState, queryFulfilled }) {
         const flip = (p: SocialPost | undefined) => {
           if (!p) return;
           p.repostedByViewer = !p.repostedByViewer;
           p.repostCount += p.repostedByViewer ? 1 : -1;
         };
-        const patches = (['global', 'following', 'latest'] as const).map((scope) =>
-          dispatch(
-            socialApi.util.updateQueryData('getFeed', { scope }, (draft) => {
-              flip(draft.posts.find((x) => x.id === postId));
-            })
-          )
+        const patches = patchAllListCaches(dispatch, getState, (draft: any) =>
+          flip(draft.posts?.find((x: SocialPost) => x.id === postId))
         );
         patches.push(
           dispatch(
@@ -856,6 +917,56 @@ const socialApi = baseApi.injectEndpoints({
       query: (body) => ({ url: 'social?action=RequestCollectVoucher', method: 'POST', body }),
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
     }),
+    requestFaucetVoucher: builder.mutation<{ signature: string }, void>({
+      query: () => ({ url: 'social?action=RequestFaucetVoucher', method: 'POST' }),
+    }),
+
+    // ─────────── followers / following lists ───────────
+    getFollowers: builder.query<FollowListPage, { address: string; cursor?: string }>({
+      query: ({ address, cursor }) => ({
+        url: `social?action=GetFollowers&address=${address}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      }),
+      serializeQueryArgs: ({ queryArgs }) => `followers-${queryArgs.address}`,
+      merge: (current, incoming, { arg }) => {
+        if (!arg.cursor) return incoming;
+        const seen = new Set(current.users.map((u) => u.address));
+        current.users.push(...incoming.users.filter((u) => !seen.has(u.address)));
+        current.nextCursor = incoming.nextCursor;
+        return current;
+      },
+      forceRefetch: ({ currentArg, previousArg }) => currentArg?.cursor !== previousArg?.cursor,
+    }),
+    getFollowing: builder.query<FollowListPage, { address: string; cursor?: string }>({
+      query: ({ address, cursor }) => ({
+        url: `social?action=GetFollowing&address=${address}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      }),
+      serializeQueryArgs: ({ queryArgs }) => `following-${queryArgs.address}`,
+      merge: (current, incoming, { arg }) => {
+        if (!arg.cursor) return incoming;
+        const seen = new Set(current.users.map((u) => u.address));
+        current.users.push(...incoming.users.filter((u) => !seen.has(u.address)));
+        current.nextCursor = incoming.nextCursor;
+        return current;
+      },
+      forceRefetch: ({ currentArg, previousArg }) => currentArg?.cursor !== previousArg?.cursor,
+    }),
+
+    // ─────────── hashtags ───────────
+    getHashtagFeed: builder.query<HashtagPage, { tag: string; cursor?: number }>({
+      query: ({ tag, cursor }) => ({
+        url: `social?action=GetHashtagFeed&tag=${encodeURIComponent(tag)}${cursor ? `&cursor=${cursor}` : ''}`,
+      }),
+      serializeQueryArgs: ({ queryArgs }) => `hashtag-${queryArgs.tag}`,
+      merge: (current, incoming, { arg }) => {
+        if (!arg.cursor) return incoming;
+        const seen = new Set(current.posts.map((p) => p.id));
+        current.posts.push(...incoming.posts.filter((p) => !seen.has(p.id)));
+        current.nextCursor = incoming.nextCursor;
+        return current;
+      },
+      forceRefetch: ({ currentArg, previousArg }) => currentArg?.cursor !== previousArg?.cursor,
+      providesTags: ['SocialFeed'],
+    }),
   }),
 });
 
@@ -874,6 +985,7 @@ export const {
   useGetMessagesQuery,
   useLazyGetOlderMessagesQuery,
   useGetActivityQuery,
+  useMarkActivitySeenMutation,
   useGetLeaderboardQuery,
   useGetLeaderboardBoardQuery,
   useGetUserMintsQuery,
@@ -899,6 +1011,7 @@ export const {
   useRecordTradeMutation,
   useToggleHideItemMutation,
   useRequestCollectVoucherMutation,
+  useRequestFaucetVoucherMutation,
   useCreatePostMutation,
   useCreateDropPostMutation,
   useToggleLikeMutation,
@@ -913,4 +1026,8 @@ export const {
   usePurchaseVerificationMutation,
   useRedeemInviteMutation,
   useSendMessageMutation,
+  // new social features
+  useGetFollowersQuery,
+  useGetFollowingQuery,
+  useGetHashtagFeedQuery,
 } = socialApi;
