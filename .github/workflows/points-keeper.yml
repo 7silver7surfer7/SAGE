@@ -30,3 +30,14 @@ jobs:
           # reuse the existing pixel-oracle secret (same wallet is the v3
           # controller/owner): Settings → Secrets → Actions → POINTS_ORACLE_PK
           POINTS_ORACLE_PK: ${{ secrets.POINTS_ORACLE_PK }}
+      # The post-graduation trade indexer is LAZY — it sweeps a token's
+      # Uniswap Swap events into the trades table only when its token page is
+      # viewed. Nudge every token's page endpoint each cron tick so charts,
+      # board mcaps, and holder lists stay ≤10min fresh even with zero
+      # visitors. Graduation-gated server-side; un-graduated tokens no-op.
+      - name: Nudge post-graduation trade indexer
+        if: always()
+        run: |
+          for a in $(curl -sL "https://sageart.xyz/api/social/?action=GetTokens" | jq -r '.tokens[].tokenAddress' 2>/dev/null); do
+            curl -sL -o /dev/null --max-time 60 "https://sageart.xyz/api/social/?action=GetTokenDetail&address=$a" || true
+          done
