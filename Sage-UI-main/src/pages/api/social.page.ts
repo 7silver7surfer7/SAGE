@@ -3503,31 +3503,134 @@ async function getMyTokenHoldings(address: string, res: NextApiResponse) {
 }
 
 /** Paginated holders (trade-derived balances) — the holders column. */
+// Incremental Transfer-recipient indexing (mirrors syncPoolTrades' shape:
+// bounded chunks per sweep, cursor persisted with GREATEST, idempotent
+// inserts). The trade ledger only discovers wallets that traded THROUGH us —
+// a pure-transfer recipient (gift, external airdrop, aggregator leg) holds
+// real tokens but never enters SocialTokenTrade, so holder lists fed only by
+// the ledger were blind to ~67 real SAGE holders. This sweeps the token's own
+// Transfer logs for recipient addresses instead; contracts (the pair, routers,
+// aggregators) are filtered out via getCode at insert time so the pool itself
+// never shows up as a "holder". Runs inside the holders SWR refresh, so it
+// costs nothing on the request path once the cache is warm.
+const TRANSFEREE_SYNC_CHUNK = 20_000; // same eth_getLogs budget note as pool sync
+const TRANSFEREE_SYNC_MAX_CHUNKS = 6;
+async function syncTransferees(token: string): Promise<void> {
+  try {
+    const launch = await prisma.socialTokenLaunch.findUnique({
+      where: { tokenAddress: token },
+      select: { id: true, transferSyncedBlock: true },
+    });
+    if (!launch) return;
+    const { ethers } = await import('ethers');
+    const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+    const head = await provider.getBlockNumber();
+    let from: number;
+    if (launch.transferSyncedBlock) {
+      from = launch.transferSyncedBlock + 1;
+    } else {
+      // first sweep: binary-search the token contract's creation block so we
+      // never scan pre-launch history (same trick as the pool sync)
+      let lo = 1,
+        hi = head;
+      while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const code = await provider.getCode(token, mid).catch(() => '0x');
+        if (code && code !== '0x') hi = mid;
+        else lo = mid + 1;
+      }
+      from = lo;
+    }
+    if (from > head) return;
+    const TRANSFER = ethers.utils.id('Transfer(address,address,uint256)');
+    const recipients = new Set<string>();
+    let scannedTo = from - 1;
+    for (let c = 0; c < TRANSFEREE_SYNC_MAX_CHUNKS && scannedTo < head; c++) {
+      const chunkFrom = scannedTo + 1;
+      const chunkTo = Math.min(chunkFrom + TRANSFEREE_SYNC_CHUNK - 1, head);
+      const logs = await provider.getLogs({
+        address: token,
+        topics: [TRANSFER],
+        fromBlock: chunkFrom,
+        toBlock: chunkTo,
+      });
+      for (const l of logs) {
+        if (l.topics.length < 3) continue;
+        recipients.add(ethers.utils.getAddress('0x' + l.topics[2].slice(26)));
+      }
+      scannedTo = chunkTo;
+    }
+    recipients.delete(ethers.constants.AddressZero);
+    recipients.delete(ethers.utils.getAddress(token));
+    if (recipients.size) {
+      const known = await prisma.socialTokenTransferee.findMany({
+        where: { tokenAddress: token, address: { in: Array.from(recipients) } },
+        select: { address: true },
+      });
+      known.forEach((k) => recipients.delete(k.address));
+      const rows: { tokenAddress: string; address: string }[] = [];
+      for (const a of Array.from(recipients)) {
+        const code = await provider.getCode(a).catch(() => null);
+        // null = RPC hiccup: skip WITHOUT inserting — an unknown address must
+        // not be misclassified; it'll be re-checked because the cursor only
+        // advances past it once, but skipDuplicates makes a re-scan free
+        if (code === '0x') rows.push({ tokenAddress: token, address: a });
+      }
+      if (rows.length) {
+        await prisma.socialTokenTransferee.createMany({ data: rows, skipDuplicates: true });
+      }
+    }
+    await prisma.$executeRaw`
+      UPDATE "SocialTokenLaunch"
+      SET "transferSyncedBlock" = GREATEST(COALESCE("transferSyncedBlock", 0), ${scannedTo})
+      WHERE id = ${launch.id}
+    `;
+  } catch (e) {
+    console.error(`transferee sync failed for ${token}`, e);
+  }
+}
+
 // The ledger's per-trader nets are an approximation, not truth: an
 // aggregator-split sell only shows the leg that hit OUR pair, and raw
 // transfers never appear at all — so a wallet that fully exited can keep
 // showing as a top holder forever (observed live). balanceOf IS truth, so
-// the displayed list live-verifies every ledger candidate against the chain.
-// Same stale-while-revalidate shape as pixelsLeaderboard: any warm cache
-// answers instantly, one background refresh per instance past the TTL, and
-// only a cold instance pays the sweep inline (~300 candidates, chunked).
+// the displayed list live-verifies every candidate against the chain.
+// Candidates = ledger traders ∪ indexed transfer recipients, so wallets that
+// only ever RECEIVED tokens appear too. Same stale-while-revalidate shape as
+// pixelsLeaderboard: any warm cache answers instantly, one background refresh
+// per instance past the TTL, and only a cold instance pays the sweep inline.
 const holdersCache = new Map<string, { rows: { addr: string; bal: number }[]; at: number }>();
 const holdersRefreshing = new Set<string>();
 async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: number }[]> {
   const key = token.toLowerCase();
   const computeFresh = async () => {
-    const trades = await prisma.socialTokenTrade.findMany({
-      where: { tokenAddress: token },
-      select: { trader: true, side: true, tokenAmount: true },
-    });
+    await syncTransferees(token);
+    const [trades, transferees] = await Promise.all([
+      prisma.socialTokenTrade.findMany({
+        where: { tokenAddress: token },
+        select: { trader: true, side: true, tokenAmount: true },
+      }),
+      prisma.socialTokenTransferee.findMany({
+        where: { tokenAddress: token },
+        select: { address: true },
+      }),
+    ]);
     const nets = new Map<string, number>();
     for (const t of trades) {
       const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
       nets.set(t.trader, (nets.get(t.trader) || 0) + d);
     }
-    const candidates = Array.from(nets.entries())
-      .filter(([, b]) => b > 0.000001)
-      .map(([a]) => a);
+    // union, deduped case-insensitively (curve-era rows and transfer rows can
+    // disagree on checksum casing — two casings of one wallet must not become
+    // two holder entries)
+    const byLc = new Map<string, string>();
+    nets.forEach((net, a) => {
+      if (net > 0.000001 && !byLc.has(a.toLowerCase())) byLc.set(a.toLowerCase(), a);
+    });
+    for (const t of transferees) {
+      if (!byLc.has(t.address.toLowerCase())) byLc.set(t.address.toLowerCase(), t.address);
+    }
+    const candidates = Array.from(byLc.values());
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
     const erc20 = new ethers.Contract(

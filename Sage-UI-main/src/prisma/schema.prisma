@@ -17,6 +17,20 @@ model Drop {
   goLiveAt                         DateTime? // staged until this time; null = live once approved
   approvedBy                       String?     @db.Char(42)
   bannerImageS3Path                String
+  // Set only when the artist uploaded a VIDEO as the banner: bannerImageS3Path
+  // is always a static first-frame poster (most banner surfaces — dashboard
+  // cards, this drop's own social post preview thumbnail, etc. — render it
+  // as a plain <img> and can't play video), while this holds the real clip
+  // for the few surfaces that DO know how to play it (the drop's Twitter-
+  // style announcement post on the social feed).
+  bannerVideoS3Path                String?
+  // Custom ERC-721 ticker/symbol, set at drop creation. Only actually takes
+  // effect the FIRST time this drop's artist deploys their shared NFT
+  // contract (Open Edition / Auction mint into that one contract, and its
+  // symbol is immutable once deployed) — ignored on every later drop by the
+  // same artist, since there's nothing left to set. Null = auto-derive from
+  // the artist's display name, same as before this field existed.
+  nftSymbol                        String?
   description                      String
   mobileCoverS3Path                String?
   tileImageS3Path                  String?
@@ -100,6 +114,18 @@ model MintIpClaim {
   @@unique([dropId, walletAddress])
 }
 
+// SAGE Social faucet: ONE claim per wallet AND per network, globally (no
+// per-drop dimension — unlike MintIpClaim there's only one faucet). A row
+// here reserves the claim the moment a voucher is issued, before the
+// on-chain tx even lands, so two requests racing from the same IP/wallet
+// can't both walk away with a signed voucher.
+model FaucetClaim {
+  id            Int      @id @default(autoincrement())
+  ipHash        String   @unique @db.Char(64) // sha256(salt + client ip), hex
+  walletAddress String   @unique @db.Char(42)
+  createdAt     DateTime @default(now())
+}
+
 // "Collection" drop style: a ZIP of N unique images uploaded in bulk (ANS-104
 // bundles + one Arweave path manifest); collectors mint sequentially at a
 // fixed SAGE price via the SageCollection contract. Unlike OpenEdition there
@@ -115,6 +141,11 @@ model CollectionMint {
   // this makes each collection drop its own marketplace collection. Null =
   // legacy (minted into the artist's shared contract, e.g. rMonet).
   nftContractAddress String? @db.Char(42)
+  // Custom ERC-721 ticker/symbol for the DEDICATED contract this collection
+  // deploys (unlike Drop.nftSymbol, this always applies — every ZIP
+  // collection gets its own fresh contract). Null = auto-derive from the
+  // drop's name, same as before this field existed.
+  nftSymbol        String?
   costTokens       Float     @default(0) // mint price in SAGE
   maxSupply        Int // number of images == hard mint cap
   limitPerUser     Int       @default(0) // 0 = unlimited
@@ -242,6 +273,11 @@ model Nft {
   arweavePath              String?
   s3Path                   String
   s3PathOptimized          String
+  // "video" | "image" (null = legacy/image). s3Path/s3PathOptimized store
+  // the real media either way — this just tells BaseMedia whether it's safe
+  // to <video> it, since a Filebase/IPFS URL has no file extension to sniff
+  // (unlike an arweave.net tx or a plain .mp4 path).
+  mediaType                String?
   tags                     String?
   width                    Int?
   height                   Int?
@@ -386,6 +422,18 @@ model User {
   // Referral gate: the invite code this wallet redeemed to join SAGE Social.
   // Null + role USER + unverified = can browse but not post yet.
   invitedByCode                 String?
+  // Set true the moment this wallet ever signs in through sage-mcp (the AI
+  // agent MCP server) — see AGENT_SIWE_STATEMENT in [...nextauth].page.ts.
+  // Drives the "Agent" badge on SAGE Social so humans aren't fooled into
+  // treating an agent-run account as a person. Sticky: never reset to false,
+  // since a wallet that has ever driven itself via MCP has demonstrated
+  // agent capability regardless of which client signs in next.
+  isAgent                        Boolean       @default(false)
+  // Last time this wallet opened the Activity tab — drives the Twitter-style
+  // unread counter on the Activity nav item (count of likes/reposts/tips/
+  // collects/follows/replies directed at them since this timestamp). Null =
+  // never opened, so everything counts as unread.
+  lastSeenActivityAt             DateTime?
   SocialInviteCodes             SocialInviteCode[] @relation("InviteOwner")
   SocialMessagesSent            SocialMessage[]    @relation("SocialMsgFrom")
   SocialMessagesReceived        SocialMessage[]    @relation("SocialMsgTo")
@@ -467,6 +515,11 @@ model SocialPost {
   dropId       Int?
   dropKind     String?        // "auction" | "openEdition" | "collection"
   dropPrice    Float?         // reserve (auction) / mint price, in the drop's currency
+  // quote-reposts: a new post that embeds another as a card (self-relation)
+  quotedPostId Int?
+  Quoted       SocialPost?    @relation("SocialQuotes", fields: [quotedPostId], references: [id], onDelete: SetNull)
+  Quotes       SocialPost[]   @relation("SocialQuotes")
+  quoteCount   Int            @default(0)
   Likes        SocialLike[]
   Reposts      SocialRepost[]
   Tips         SocialTip[]
@@ -476,6 +529,17 @@ model SocialPost {
   @@index([authorAddress])
   @@index([replyToId])
   @@index([boostedUntil])
+  @@index([quotedPostId])
+}
+
+// One row per #tag per post, written at post time — powers tag feeds.
+model SocialHashtag {
+  id        Int      @id @default(autoincrement())
+  postId    Int
+  tag       String   @db.VarChar(80)
+  createdAt DateTime @default(now())
+  @@index([tag, createdAt])
+  @@index([postId])
 }
 
 model SocialFollow {
@@ -531,6 +595,21 @@ model SocialBoost {
   @@index([postId])
 }
 
+// Global registry of on-chain payments TO THE TREASURY that have been
+// redeemed for SOME action. PurchaseVerification (User.verifiedTxHash) and
+// BoostPost (SocialBoost.txHash) both pay the same TREASURY_ADDRESS but used
+// to check uniqueness only against their OWN table — so a single real
+// payment could be submitted once as a verification purchase AND once as a
+// boost, granting both from one payment. txHash as the primary key makes
+// claiming it atomic and global across every treasury-paying action, not
+// just within one action's own table.
+model SocialTreasuryTxClaim {
+  txHash    String   @id @db.Char(66)
+  action    String // "PurchaseVerification" | "BoostPost"
+  claimedBy String   @db.Char(42)
+  createdAt DateTime @default(now())
+}
+
 // A pump.fun-style creator coin launched from a SAGE Social profile. Mirrors
 // on-chain state (SocialTokenFactory) for the profile buy widget; the chain
 // is the source of truth for reserves/price (read live).
@@ -552,8 +631,29 @@ model SocialTokenLaunch {
   airdropEnabled  Boolean  @default(true)
   createdAt       DateTime @default(now())
   airdropCount    Int      @default(0) // followers airdropped to (cumulative)
+  // post-graduation swap indexing cursor: last pair block scanned into
+  // SocialTokenTrade (null = pool never scanned). Int gives ~6y headroom at
+  // this chain's ~0.1s blocks (13.9M as of 2026-07); revisit before 2.1B.
+  poolSyncedBlock Int?
+  // Transfer-recipient indexing cursor: last block scanned into
+  // SocialTokenTransferee (null = never scanned; first sweep binary-searches
+  // the token contract's creation block). Same headroom note as above.
+  transferSyncedBlock Int?
   @@index([createdAt])
   @@index([creatorAddress])
+}
+
+// Every EOA that ever RECEIVED this token in a raw Transfer. The trade ledger
+// only knows wallets that traded through us — a pure-transfer recipient (gift,
+// external airdrop, aggregator leg) holds real tokens but never appears in
+// SocialTokenTrade, so holder lists derived from the ledger alone are blind to
+// them (~67 real SAGE holders were invisible when this was added, 2026-07-19).
+// Contracts (pair, routers) are filtered out at insert time via getCode.
+model SocialTokenTransferee {
+  id           Int    @id @default(autoincrement())
+  tokenAddress String @db.Char(42)
+  address      String @db.Char(42)
+  @@unique([tokenAddress, address])
 }
 
 // A self-serve NFT edition launched from a SAGE Social profile (artists +
@@ -614,9 +714,17 @@ model SocialCollect {
   currency         String     @default("SAGE") // "SAGE" | "ETH"
   pointsSpent      BigInt?    // pixels burned instead of SAGE (verified users)
   payTxHash        String?    @db.Char(66) @unique // null for free collects
-  mintTxHash       String     @db.Char(66)
-  contractAddress  String     @db.Char(42) // SageNFT the token was minted into
-  tokenId          Int
+  // Nullable so a row can be created as an atomic CLAIM (using the
+  // @@unique([postId, collectorAddress]) below as the race guard) BEFORE the
+  // slow verify-payment + on-chain-mint work runs, then filled in once
+  // minting actually succeeds. Was NOT NULL, which meant the uniqueness
+  // check could only ever be enforced AFTER minting already happened —
+  // two concurrent requests for the same post both passed the early
+  // check-then-mint sequence and both minted a real NFT, with only one
+  // recorded here (see collectPost() in social.page.ts).
+  mintTxHash       String?    @db.Char(66)
+  contractAddress  String?    @db.Char(42) // SageNFT the token was minted into
+  tokenId          Int?
   createdAt        DateTime   @default(now())
   Post             SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
   @@unique([postId, collectorAddress]) // one edition per wallet
