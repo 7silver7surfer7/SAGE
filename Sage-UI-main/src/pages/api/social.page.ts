@@ -3503,30 +3503,87 @@ async function getMyTokenHoldings(address: string, res: NextApiResponse) {
 }
 
 /** Paginated holders (trade-derived balances) — the holders column. */
+// The ledger's per-trader nets are an approximation, not truth: an
+// aggregator-split sell only shows the leg that hit OUR pair, and raw
+// transfers never appear at all — so a wallet that fully exited can keep
+// showing as a top holder forever (observed live). balanceOf IS truth, so
+// the displayed list live-verifies every ledger candidate against the chain.
+// Same stale-while-revalidate shape as pixelsLeaderboard: any warm cache
+// answers instantly, one background refresh per instance past the TTL, and
+// only a cold instance pays the sweep inline (~300 candidates, chunked).
+const holdersCache = new Map<string, { rows: { addr: string; bal: number }[]; at: number }>();
+const holdersRefreshing = new Set<string>();
+async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: number }[]> {
+  const key = token.toLowerCase();
+  const computeFresh = async () => {
+    const trades = await prisma.socialTokenTrade.findMany({
+      where: { tokenAddress: token },
+      select: { trader: true, side: true, tokenAmount: true },
+    });
+    const nets = new Map<string, number>();
+    for (const t of trades) {
+      const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
+      nets.set(t.trader, (nets.get(t.trader) || 0) + d);
+    }
+    const candidates = Array.from(nets.entries())
+      .filter(([, b]) => b > 0.000001)
+      .map(([a]) => a);
+    const { ethers } = await import('ethers');
+    const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+    const erc20 = new ethers.Contract(
+      token,
+      ['function balanceOf(address) view returns (uint256)'],
+      provider
+    );
+    const rows: { addr: string; bal: number }[] = [];
+    for (let i = 0; i < candidates.length; i += 20) {
+      const chunk = candidates.slice(i, i + 20);
+      const bals = await Promise.all(
+        chunk.map((a) =>
+          erc20
+            .balanceOf(a)
+            .then((b: any) => Number(ethers.utils.formatEther(b)))
+            // an RPC hiccup must not erase a real holder from the list — fall
+            // back to the ledger net for this refresh rather than dropping them
+            .catch(() => nets.get(a) || 0)
+        )
+      );
+      chunk.forEach((a, j) => {
+        if (bals[j] > 0.000001) rows.push({ addr: a, bal: bals[j] });
+      });
+    }
+    rows.sort((a, b) => b.bal - a.bal);
+    return rows;
+  };
+  const cached = holdersCache.get(key);
+  if (cached) {
+    if (Date.now() - cached.at > 60_000 && !holdersRefreshing.has(key)) {
+      holdersRefreshing.add(key);
+      computeFresh()
+        .then((rows) => holdersCache.set(key, { rows, at: Date.now() }))
+        .catch((e) => console.error('holders refresh failed', e))
+        .finally(() => holdersRefreshing.delete(key));
+    }
+    return cached.rows;
+  }
+  const rows = await computeFresh();
+  holdersCache.set(key, { rows, at: Date.now() });
+  return rows;
+}
+
 async function getTokenHoldersPage(req: NextApiRequest, res: NextApiResponse) {
   const token = canon(String(req.query.address || ''));
   if (!token) return res.status(400).json({ error: 'bad address' });
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const limit = Math.min(50, Number(req.query.limit) || 25);
-  const trades = await prisma.socialTokenTrade.findMany({
-    where: { tokenAddress: token },
-    select: { trader: true, side: true, tokenAmount: true },
-  });
-  const balances = new Map<string, number>();
-  for (const t of trades) {
-    const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
-    balances.set(t.trader, (balances.get(t.trader) || 0) + d);
-  }
-  const all = Array.from(balances.entries())
-    .filter(([, b]) => b > 0.000001)
-    .sort((a, b) => b[1] - a[1]);
+  const all = await liveVerifiedHolders(token);
   const page = all.slice(offset, offset + limit);
-  const cards = await userCards(page.map(([a]) => a));
+  const cards = await userCards(page.map((h) => h.addr));
   res.setHeader('Cache-Control', 'no-store');
   res.json({
-    holders: page.map(([addr, bal]) => ({
-      user: cards[addr] || { address: addr, username: null, verified: false, isAgent: false },
-      balance: bal,
+    holders: page.map((h) => ({
+      user: cards[h.addr] || { address: h.addr, username: null, verified: false, isAgent: false },
+      balance: h.bal,
     })),
     nextOffset: offset + limit < all.length ? offset + limit : null,
   });
@@ -3647,8 +3704,8 @@ async function syncPoolTradesInner(
         }
       }
 
-      // phase 2: decode + batched tx/block lookups (trader = tx.from; block
-      // lookups deduped — arb bursts put many swaps in one block)
+      // phase 2: decode + batched receipt/block lookups (block lookups
+      // deduped — arb bursts put many swaps in one block)
       const rows: {
         tokenAddress: string;
         trader: string;
@@ -3659,14 +3716,48 @@ async function syncPoolTradesInner(
         txHash: string;
         createdAt: Date;
       }[] = [];
+      // Attribute the trade to the wallet whose TOKEN balance actually moved,
+      // not tx.from. Aggregator/relayed swaps (MetaMask Swaps etc.) are
+      // submitted by a relayer EOA — tx.from is the relayer, and the real
+      // seller's exit becomes invisible to the ledger (observed live: a 76M
+      // SAGE exit recorded under the relayer, leaving the seller looking like
+      // a top-5 holder after selling out). The token's own Transfer events in
+      // the same receipt name the true party: net the deltas per address,
+      // drop the pair itself, and take the biggest gainer (buy) / biggest
+      // loser (sell). Falls back to tx.from when no clear party emerges
+      // (e.g. a same-tx arb whose deltas cancel — where tx.from IS the bot).
+      const TRANSFER_TOPIC = ethers.utils.id('Transfer(address,address,uint256)');
+      const traderFromReceipt = (rc: any, isBuy: boolean): string => {
+        const deltas = new Map<string, any>();
+        for (const l of rc.logs) {
+          if (
+            l.address.toLowerCase() !== token.toLowerCase() ||
+            l.topics[0] !== TRANSFER_TOPIC ||
+            l.topics.length < 3
+          )
+            continue;
+          const src = ('0x' + l.topics[1].slice(26)).toLowerCase();
+          const dst = ('0x' + l.topics[2].slice(26)).toLowerCase();
+          const v = ethers.BigNumber.from(l.data === '0x' ? 0 : l.data);
+          deltas.set(src, (deltas.get(src) || ethers.constants.Zero).sub(v));
+          deltas.set(dst, (deltas.get(dst) || ethers.constants.Zero).add(v));
+        }
+        deltas.delete(pair.toLowerCase());
+        let best: { addr: string; score: any } | null = null;
+        deltas.forEach((d, addr) => {
+          const score = isBuy ? d : d.mul(-1);
+          if (score.gt(0) && (!best || score.gt(best!.score))) best = { addr, score };
+        });
+        return ethers.utils.getAddress(best ? (best as { addr: string }).addr : rc.from);
+      };
       const blockTs = new Map<number, number>();
       for (let i = 0; i < logs.length; i += POOL_SYNC_LOOKUP_BATCH) {
         const batch = logs.slice(i, i + POOL_SYNC_LOOKUP_BATCH);
         const uniqueBlocks = Array.from(
           new Set(batch.map((l) => l.blockNumber).filter((b) => !blockTs.has(b)))
         );
-        const [txs, blocks] = await Promise.all([
-          Promise.all(batch.map((l) => provider.getTransaction(l.transactionHash))),
+        const [receipts, blocks] = await Promise.all([
+          Promise.all(batch.map((l) => provider.getTransactionReceipt(l.transactionHash))),
           Promise.all(uniqueBlocks.map((b) => provider.getBlock(b))),
         ]);
         blocks.forEach((b) => blockTs.set(b.number, b.timestamp));
@@ -3682,7 +3773,7 @@ async function syncPoolTradesInner(
           if (tokenAmount <= 0 || ethAmount <= 0) return; // dust/flash edge
           rows.push({
             tokenAddress: token,
-            trader: ethers.utils.getAddress(txs[j].from),
+            trader: traderFromReceipt(receipts[j], isBuy),
             side: isBuy ? 'buy' : 'sell',
             ethAmount,
             tokenAmount,
@@ -3826,17 +3917,13 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
     })
   ).reverse();
 
-  // holders derived from recorded trades (buys add, sells subtract) — a
-  // testnet approximation; the chain is authoritative for real balances
-  const balances = new Map<string, number>();
-  for (const t of trades) {
-    const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
-    balances.set(t.trader, (balances.get(t.trader) || 0) + d);
-  }
-  const holders = Array.from(balances.entries())
-    .filter(([, b]) => b > 0.000001)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20);
+  // live-verified against chain balanceOf (SWR-cached) — ledger-derived nets
+  // kept a fully-exited wallet in the top 5 (aggregator-split sell recorded
+  // under the relayer), and the old last-500-trades window couldn't even see
+  // every trader
+  const verified = await liveVerifiedHolders(token);
+  const holders = verified.slice(0, 20).map((h) => [h.addr, h.bal] as [string, number]);
+  const holderCount = verified.length;
   const holderCards = await userCards(holders.map(([a]) => a));
 
   const INITIAL_REAL = 793_100_000; // pump.fun-shaped initial real reserves
@@ -3879,7 +3966,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
     complete: curve?.complete ?? false,
     uniswapPair: curve?.pair ?? null,
     bondingProgressPct: Math.round(soldPct * 10) / 10,
-    holderCount: holders.length,
+    holderCount,
     // real total — `trades` is the last-500 chart window, not the count
     tradeCount: await prisma.socialTokenTrade.count({ where: { tokenAddress: token } }),
     series: trades.map((t) => ({ t: t.createdAt, price: t.priceEth })),
