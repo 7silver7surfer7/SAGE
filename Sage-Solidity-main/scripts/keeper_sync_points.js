@@ -205,11 +205,33 @@ async function main() {
       }
       const reconWhole = Math.floor(running);
       if (Math.abs(reconWhole - liveWhole) > 1) {
-        console.warn(
-          `warn: ${s.a.slice(0, 10)} reconstruction ${reconWhole} != live ${liveWhole} — non-trade transfer? using live for the final segment`
-        );
+        if (mine.length === 0) {
+          // No ledger trade at all since lastSync, yet the balance moved —
+          // an off-ledger transfer, or a sale routed through an aggregator
+          // whose tx.from wasn't this wallet (both invisible to recordTrade
+          // AND to syncPoolTrades' tx.from heuristic). Unlike the "traded
+          // again during the scan" case below, there's ZERO timestamp
+          // evidence for WHEN in [last, now] the balance actually changed —
+          // crediting the live (post-change) balance for the WHOLE window
+          // would retroactively zero out real accrual over cp, which is
+          // trusted on-chain state (our own prior seedSettled), not a user
+          // claim. Credit through cp instead: a real holder who sold via an
+          // aggregator right before this run still gets the days they
+          // legitimately held, and the checkpoint reset below still moves
+          // them to their true live balance going forward.
+          console.warn(
+            `warn: ${s.a.slice(0, 10)} balance moved (${reconWhole} -> ${liveWhole}) with no ledger trade since lastSync — crediting the held balance through now`
+          );
+          extra += accrue(cp, now - cursor);
+        } else {
+          console.warn(
+            `warn: ${s.a.slice(0, 10)} reconstruction ${reconWhole} != live ${liveWhole} — non-trade transfer? using live for the final segment`
+          );
+          extra += accrue(liveWhole, now - cursor);
+        }
+      } else {
+        extra += accrue(liveWhole, now - cursor);
       }
-      extra += accrue(liveWhole, now - cursor);
     }
     // hard floor: accrual can never be negative, and a negative would wrap
     // the uint256 seed into an astronomical balance
