@@ -2080,27 +2080,80 @@ async function userCards(addresses: string[]) {
 // (pixels/day) lets the client extrapolate the balance live between fetches, so
 // the numbers tick up in real time without hammering the RPC.
 let pixelsBoardCache: { rows: { address: string; net: bigint; rate: bigint }[]; at: number } | null = null;
+/**
+ * Pixel-eligible candidate wallets — ROOT-CAUSE FIX (2026-07-19): this used to
+ * be prisma.user.findMany(), i.e. "anyone who has ever signed into SAGE
+ * Social." Pixels accrue from holding SAGE on-chain, which has NOTHING to do
+ * with whether a wallet ever visited the website — measured impact: 130
+ * total User rows existed, only 41 of them were even SAGE traders, while the
+ * chain had 1,010 distinct traders. The leaderboard was structurally
+ * incapable of showing >41 wallets no matter how correct their on-chain
+ * accrual was (and today's earlier keeper fixes made it MORE correct for
+ * wallets this query couldn't even see).
+ *
+ * Candidates now come from the platform's own SAGE trade ledger — the same
+ * source of truth the points keeper itself uses for holder discovery — via a
+ * plain distinct query, not a chain scan. Known remaining gap, same one
+ * flagged for the holder-list report: a wallet that received SAGE ONLY via a
+ * raw transfer (never a trade — e.g. the platform's follower-airdrop
+ * feature) won't appear here either. That set is real (~211 wallets
+ * measured) and is being closed as a follow-up via a persisted registry the
+ * reconciliation keeper populates; tracked separately, not blocking this fix.
+ */
+let pixelsBoardRefreshing = false;
 async function pixelsLeaderboard(): Promise<{ address: string; net: bigint; rate: bigint }[]> {
-  if (pixelsBoardCache && Date.now() - pixelsBoardCache.at < 60_000) return pixelsBoardCache.rows;
+  // Stale-while-revalidate — NOT "block until fresh." Expanding the candidate
+  // set from 41 (User-table wallets) to 1,010 (real traders) made this sweep
+  // hundreds of RPC calls; measured live at 72s on a cold cache. On a plain
+  // TTL cache that cost re-hits EVERY 60s forever, on a production request
+  // path, on an RPC that was ALSO independently timing out that same minute —
+  // a slow shared endpoint stalling one Node.js instance can make unrelated
+  // requests on that instance (a like-toggle, anything) feel slow too, even
+  // though they never touch the chain. Now: any request with SOME cache,
+  // however stale, gets it back immediately; a refresh kicks off in the
+  // background (deduped by the in-flight flag) and the NEXT request picks up
+  // the new numbers. Only a fully cold cache (new instance, first ever call)
+  // pays the on-chain cost inline — everyone after that never waits on RPC.
   if (!parameters.SAGE_POINTS_ADDRESS) return [];
-  const users = await prisma.user.findMany({ select: { walletAddress: true }, take: 300 });
-  const rows: { address: string; net: bigint; rate: bigint }[] = [];
-  // chunked so we don't blast the RPC with 300 parallel calls
-  for (let i = 0; i < users.length; i += 25) {
-    const chunk = users.slice(i, i + 25);
-    const results = await Promise.all(
-      chunk.map((u) =>
-        Promise.all([
-          pixelsOf(u.walletAddress).catch(() => BigInt(0)),
-          pixelsDailyRate(u.walletAddress).catch(() => BigInt(0)),
-        ])
-      )
-    );
-    chunk.forEach((u, j) => rows.push({ address: u.walletAddress, net: results[j][0], rate: results[j][1] }));
+  const computeFresh = async () => {
+    const traders = await prisma.socialTokenTrade.findMany({
+      where: { tokenAddress: parameters.ASHTOKEN_ADDRESS },
+      select: { trader: true },
+      distinct: ['trader'],
+    });
+    const addresses = Array.from(new Set(traders.map((t) => t.trader)));
+    const rows: { address: string; net: bigint; rate: bigint }[] = [];
+    // modest chunk size — gentler on a shared RPC than the old 50/burst
+    for (let i = 0; i < addresses.length; i += 20) {
+      const chunk = addresses.slice(i, i + 20);
+      const results = await Promise.all(
+        chunk.map((a) =>
+          Promise.all([pixelsOf(a).catch(() => BigInt(0)), pixelsDailyRate(a).catch(() => BigInt(0))])
+        )
+      );
+      chunk.forEach((a, j) => rows.push({ address: a, net: results[j][0], rate: results[j][1] }));
+    }
+    rows.sort((a, b) => (b.net > a.net ? 1 : b.net < a.net ? -1 : 0));
+    return rows;
+  };
+  if (pixelsBoardCache) {
+    if (Date.now() - pixelsBoardCache.at > 60_000 && !pixelsBoardRefreshing) {
+      pixelsBoardRefreshing = true;
+      computeFresh()
+        .then((rows) => {
+          pixelsBoardCache = { rows, at: Date.now() };
+        })
+        .catch((e) => console.error('pixelsLeaderboard background refresh failed', e))
+        .finally(() => {
+          pixelsBoardRefreshing = false;
+        });
+    }
+    return pixelsBoardCache.rows; // always instant once anything is cached
   }
-  rows.sort((a, b) => (b.net > a.net ? 1 : b.net < a.net ? -1 : 0));
-  pixelsBoardCache = { rows, at: Date.now() }; // FULL ranking; callers slice
-  return pixelsBoardCache.rows;
+  // truly cold (new instance, first call ever) — nothing to serve yet
+  const rows = await computeFresh();
+  pixelsBoardCache = { rows, at: Date.now() };
+  return rows;
 }
 
 /** One leaderboard BOARD, paginated — powers the page's infinite scroll. */
