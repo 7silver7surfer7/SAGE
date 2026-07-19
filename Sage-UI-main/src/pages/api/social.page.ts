@@ -1,10 +1,15 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { Role } from '@prisma/client';
+import { Role, Prisma } from '@prisma/client';
 import { ethers } from 'ethers';
+import { createHash } from 'crypto';
 import { requireRole, getRequester } from '@/utilities/apiAuth';
 import { extractFirstUrl, fetchLinkPreview } from '@/utilities/linkPreview';
 import prisma from '@/prisma/client';
-import { parameters } from '@/constants/config';
+import {
+  parameters,
+  SAGE_PRICE_TOKEN_ADDRESS,
+  SAGE_PRICE_FACTORY_ADDRESS,
+} from '@/constants/config';
 import {
   verifySageTransfer,
   verifyPayment,
@@ -14,8 +19,10 @@ import {
   isWhitelistedOnChain,
   uploadJsonToFilebase,
   signCollectVoucher,
+  signFaucetVoucher,
   DEAD_ADDRESS,
   pixelsOf,
+  pixelsDailyRate,
   transferPixelsOnChain,
 } from '@/utilities/serverWallet';
 
@@ -36,6 +43,23 @@ import {
  *    on-chain allowlist
  */
 const AUTHED: Role[] = [Role.USER, Role.ARTIST, Role.ADMIN];
+
+// Cloud Run instance-local cache — not shared across instances or deploys,
+// just cheap insurance against a hot polling endpoint (SocialShell polls
+// GetGlobalActivity every 10s from every active social-page visitor)
+// re-running the same 5-9 queries for every single caller. A few seconds of
+// staleness on a "what just happened" ticker or leaderboard is imperceptible;
+// the Supabase pool/egress load saved by sharing one computation across
+// concurrent callers is not — this is what was tipping the shared 15-
+// connection pool into EMAXCONNSESSION under moderate concurrent load.
+const memoCache = new Map<string, { data: any; expiresAt: number }>();
+async function withMemoCache<T>(key: string, ttlMs: number, compute: () => Promise<T>): Promise<T> {
+  const hit = memoCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.data;
+  const data = await compute();
+  memoCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+  return data;
+}
 
 // burn-to-boost — Twitter-style budget × duration, SOFT. You pick a daily
 // budget ($/day) and a number of days; total = daily × days, burned in SAGE.
@@ -61,10 +85,9 @@ const FEED_PAGE = 20;
 
 // paid verification: $10 worth of SAGE to the platform treasury buys the
 // checkmark + premium features (sell/collect posts, points-collect, boost,
-// DMs). Posting stays free. Price is computed live off the SAGE/WETH pair;
-// FALLBACK_SAGE covers a dead price feed (testnet SAGE has no real market).
+// DMs). Posting stays free. ETH-only (see verificationPrices()) — price is
+// computed live off the ETH/USD feed; FALLBACK_ETH covers a dead feed.
 const VERIFICATION_PRICE_USD = 10;
-const VERIFICATION_FALLBACK_SAGE = 100;
 const VERIFICATION_FALLBACK_ETH = 0.003; // ≈$10 if the ETH/USD feed is down
 const TREASURY_ADDRESS = '0x3E099aF007CaB8233D44782D8E6fe80FECDC321e'; // platform multisig
 
@@ -117,6 +140,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getTokenHoldersPage(request, response);
       case 'GetTokenDetail':
         return await getTokenDetail(String(request.query.address || ''), response);
+      case 'GetTokenTradeLedger':
+        return await getTokenTradeLedger(request, response);
       case 'GetTokens':
         return await getTokens(request, response);
       case 'GetMyTokenHoldings':
@@ -140,6 +165,12 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getGlobalActivity(response);
       case 'Search':
         return await search(String(request.query.q || ''), request, response);
+      case 'GetFollowers':
+        return await getFollowList(request, response, 'followers');
+      case 'GetFollowing':
+        return await getFollowList(request, response, 'following');
+      case 'GetHashtagFeed':
+        return await getHashtagFeed(request, response);
       // ---- authed writes ----
       case 'PinNftMetadata':
         return await withAuth(request, response, (r) => pinNftMetadata(request, response, r));
@@ -183,6 +214,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => sendMessage(request, response, r));
       case 'GetActivity':
         return await withAuth(request, response, (r) => getActivity(response, r));
+      case 'MarkActivitySeen':
+        return await withAuth(request, response, (r) => markActivitySeen(response, r));
       case 'ToggleHideItem':
         return await withAuth(request, response, (r) => toggleHideItem(request, response, r));
       case 'RecordTokenLaunch':
@@ -195,6 +228,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => recordEditionLaunch(request, response, r));
       case 'RequestCollectVoucher':
         return await withAuth(request, response, (r) => requestCollectVoucher(request, response, r));
+      case 'RequestFaucetVoucher':
+        return await withAuth(request, response, (r) => requestFaucetVoucher(request, response, r));
       case 'DeletePost':
         return await withAuth(request, response, (r) => deletePost(request, response, r));
       case 'EditPost':
@@ -331,12 +366,33 @@ function serializePost(p: any, viewer?: string | null, verifiedMap?: Record<stri
     dropId: p.dropId || null,
     dropKind: p.dropKind || null,
     dropPrice: p.dropPrice ?? null,
+    // quote-repost embed (one level; null if the quoted post was deleted)
+    quotedPostId: p.quotedPostId || null,
+    quoteCount: p.quoteCount || 0,
+    quoted:
+      p.Quoted && !p.Quoted.deletedAt
+        ? {
+            id: p.Quoted.id,
+            text: p.Quoted.text,
+            imageUrl: p.Quoted.imageUrl,
+            mediaType: p.Quoted.mediaType,
+            createdAt: p.Quoted.createdAt,
+            author: {
+              address: p.Quoted.authorAddress,
+              username: p.Quoted.Author?.username || null,
+              profilePicture: p.Quoted.Author?.profilePicture || null,
+              verified: !!p.Quoted.Author?.verifiedAt,
+              isAgent: !!p.Quoted.Author?.isAgent,
+            },
+          }
+        : null,
     author: {
       address: p.authorAddress,
       username: p.Author?.username || null,
       profilePicture: p.Author?.profilePicture || null,
       pfpVerified: verifiedMap?.[p.authorAddress] || false,
       verified: !!p.Author?.verifiedAt, // paid checkmark
+      isAgent: !!p.Author?.isAgent, // sage-mcp AI agent — see AgentBadge.tsx
     },
     likedByViewer: viewer ? (p.Likes?.length ?? 0) > 0 : false,
     repostedByViewer: viewer ? (p.Reposts?.length ?? 0) > 0 : false,
@@ -394,8 +450,20 @@ async function attachDropTiming(serialized: any[]): Promise<any[]> {
   return serialized;
 }
 
+const AUTHOR_SELECT = {
+  username: true,
+  profilePicture: true,
+  pfpNftId: true,
+  verifiedAt: true,
+  isAgent: true,
+} as const;
+
 const postInclude = (viewer?: string | null) => ({
-  Author: { select: { username: true, profilePicture: true, pfpNftId: true, verifiedAt: true } },
+  Author: { select: AUTHOR_SELECT },
+  // Quote-repost embed: the quoted card is always shown (one level deep — the
+  // quoted post's own quote is NOT expanded, so this can't recurse). Author is
+  // needed for the byline; viewer state on the embedded card is not.
+  Quoted: { include: { Author: { select: AUTHOR_SELECT } } },
   ...(viewer
     ? {
         Likes: { where: { userAddress: viewer }, select: { userAddress: true } },
@@ -443,9 +511,15 @@ async function pfpVerifiedMap(posts: any[]): Promise<Record<string, boolean>> {
 async function canParticipate(wallet: string): Promise<boolean> {
   const u = await prisma.user.findUnique({
     where: { walletAddress: wallet },
-    select: { role: true, verifiedAt: true, invitedByCode: true },
+    select: { role: true, verifiedAt: true, invitedByCode: true, bannedAt: true },
   });
   if (!u) return false;
+  // A ban's own doc comment (see banUser()) promises posts/replies "drop out
+  // of every feed" — but banning is DB-only state, the banned wallet's
+  // session/JWT stays valid, and this was the only real posting gate
+  // (createPost only ever calls canParticipate). Without this, a banned
+  // wallet could keep posting/replying indefinitely.
+  if (u.bannedAt) return false;
   return u.role !== Role.USER || !!u.verifiedAt || !!u.invitedByCode;
 }
 
@@ -453,41 +527,40 @@ async function canParticipate(wallet: string): Promise<boolean> {
 async function requireVerified(wallet: string, res: NextApiResponse): Promise<boolean> {
   const u = await prisma.user.findUnique({
     where: { walletAddress: wallet },
-    select: { role: true, verifiedAt: true },
+    select: { role: true, verifiedAt: true, bannedAt: true },
   });
   // no admin free-ride: the checkmark is PAID for, full stop — admins see the
   // same paywall as everyone (per founder: 'I should be prompted to verify')
-  if (u?.verifiedAt) return true;
+  // A ban must win even over an already-purchased checkmark — this gate is
+  // what DMs/collect/boost/edit all sit behind, so a banned-but-verified
+  // wallet was otherwise fully able to keep DMing the person who reported it.
+  if (u?.verifiedAt && !u.bannedAt) return true;
   res.status(403).json({
-    error: 'This is a premium feature — get verified to unlock it',
-    needsVerification: true,
+    error: u?.bannedAt ? 'This account is banned' : 'This is a premium feature — get verified to unlock it',
+    needsVerification: !u?.bannedAt,
   });
   return false;
 }
 
 // module-level 5-min cache: the verification price only needs to be roughly
-// live, and the SAGE/WETH pair read costs an RPC round-trip
-let verificationPriceCache: { sage: number; eth: number; at: number } | null = null;
-async function verificationPrices(): Promise<{ sage: number; eth: number }> {
+// live, and the ETH/USD read costs an RPC round-trip
+let verificationPriceCache: { eth: number; at: number } | null = null;
+async function verificationPrices(): Promise<{ eth: number }> {
   if (verificationPriceCache && Date.now() - verificationPriceCache.at < 300_000)
     return verificationPriceCache;
-  let sage = VERIFICATION_FALLBACK_SAGE;
   let eth = VERIFICATION_FALLBACK_ETH;
-  // live $10-worth SAGE pricing only on production — testnet SAGE isn't the
-  // token the price feed tracks, and a mispriced feed would quote absurd
-  // amounts. The ETH leg (CoinGecko ETH/USD) is real on every network.
+  // ETH-only: SAGE is now a bonding-curve token that's volatile right at
+  // launch (no deep liquidity yet) — "$10 of SAGE" would swing wildly run to
+  // run, so verification prices in ETH exclusively. The CoinGecko ETH/USD
+  // feed is real on every network, unlike the old SAGE-specific pair read.
   try {
     const priceUtils = await import('@/utilities/sagePrice');
     const ethUsd = await priceUtils.getEthUsd();
     if (ethUsd > 0) eth = Math.ceil((VERIFICATION_PRICE_USD / ethUsd) * 1e6) / 1e6;
-    if (process.env.NEXT_PUBLIC_APP_MODE === 'production') {
-      const usd = await priceUtils.getSagePriceUsd();
-      if (usd && usd > 0) sage = Math.ceil((VERIFICATION_PRICE_USD / usd) * 100) / 100;
-    }
   } catch {
-    // dead feed → fallback prices
+    // dead feed → fallback price
   }
-  verificationPriceCache = { sage, eth, at: Date.now() };
+  verificationPriceCache = { eth, at: Date.now() };
   return verificationPriceCache;
 }
 
@@ -706,6 +779,8 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
           role: true,
           invitedByCode: true,
           pinnedPostId: true,
+          isAgent: true,
+          lastSeenActivityAt: true,
         },
       }),
       prisma.socialFollow.count({ where: { followingAddress: addr } }),
@@ -743,6 +818,24 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
   const unreadMessages = isSelf
     ? await prisma.socialMessage.count({ where: { toAddress: addr, readAt: null } })
     : 0;
+  // Twitter-style unread Activity counter: interactions directed at me since I
+  // last opened the Activity tab (null lastSeen → count everything). Mirrors
+  // getActivity's six sources, each excluding my own actions. Capped at 99 for
+  // the badge — the UI renders "99+" past that.
+  let unreadActivity = 0;
+  if (isSelf) {
+    const since = (user as any)?.lastSeenActivityAt ?? new Date(0);
+    const mine = { Post: { authorAddress: addr } };
+    const [uL, uR, uT, uC, uF, uReplies] = await Promise.all([
+      prisma.socialLike.count({ where: { ...mine, NOT: { userAddress: addr }, createdAt: { gt: since } } }),
+      prisma.socialRepost.count({ where: { ...mine, NOT: { userAddress: addr }, createdAt: { gt: since } } }),
+      prisma.socialTip.count({ where: { toAddress: addr, createdAt: { gt: since } } }),
+      prisma.socialCollect.count({ where: { ...mine, NOT: { collectorAddress: addr }, createdAt: { gt: since } } }),
+      prisma.socialFollow.count({ where: { followingAddress: addr, createdAt: { gt: since } } }),
+      prisma.socialPost.count({ where: { ReplyTo: { authorAddress: addr }, NOT: { authorAddress: addr }, createdAt: { gt: since } } }),
+    ]);
+    unreadActivity = Math.min(99, uL + uR + uT + uC + uF + uReplies);
+  }
   // alpha chat visibility: exists+enabled, and the viewer is a follower/owner.
   // Lazily provision for verified users verified before the feature (or via SQL).
   let groupChat: { enabled: boolean; isMember: boolean } | null = null;
@@ -764,6 +857,7 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
     profilePicture: user?.profilePicture || null,
     pfpVerified: user ? await isPfpVerified(user) : false,
     verified: !!user?.verifiedAt, // paid checkmark
+    isAgent: !!(user as any)?.isAgent, // sage-mcp AI agent — see AgentBadge.tsx
     bio: user?.bio || null,
     webpage: (user as any)?.webpage || null,
     location: (user as any)?.location || null,
@@ -776,10 +870,28 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
     isSelf,
     needsInvite,
     unreadMessages,
+    unreadActivity,
     followGatedDrops,
     myDrops: isSelf ? myDrops : [],
     groupChat,
   });
+}
+
+// #hashtag extraction — word chars (letters/digits/underscore) after a lone
+// '#', lowercased, de-duped, capped so one post can't spam the trending table.
+// (\w rather than \p{L}: the client build's regex transform can't handle
+// unicode property escapes, and both sides must capture the same tags.)
+const HASHTAG_RE = /(?:^|[^\w&])#(\w{1,79})/g;
+function parseHashtags(text: string): string[] {
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  HASHTAG_RE.lastIndex = 0;
+  while ((m = HASHTAG_RE.exec(text)) !== null) {
+    const tag = m[1].toLowerCase();
+    if (!/^\d+$/.test(tag)) out.add(tag); // skip bare "#123" (reads as a number)
+    if (out.size >= 10) break;
+  }
+  return Array.from(out);
 }
 
 async function createPost(
@@ -795,12 +907,26 @@ async function createPost(
   if (rateLimited(r.walletAddress, 'post', 10))
     return res.status(429).json({ error: 'slow down — 10 posts per minute max' });
   const { text, imageUrl, mediaType, replyToId } = req.body || {};
+  const quotedPostId = req.body?.quotedPostId ? Number(req.body.quotedPostId) : null;
   const trimmed = (text || '').trim();
-  if (!trimmed && !imageUrl) return res.status(400).json({ error: 'empty post' });
+  if (!trimmed && !imageUrl && !quotedPostId)
+    return res.status(400).json({ error: 'empty post' });
   if (trimmed.length > 500) return res.status(400).json({ error: 'post too long (500 max)' });
   // media must come from our own uploader (our bucket only) — no hotlinks
   if (imageUrl && !isOwnSocialMediaUrl(imageUrl))
     return res.status(400).json({ error: 'media must be uploaded through SAGE Social' });
+
+  // quote-repost target must exist and be visible; can't quote a deleted post
+  let quoted: { id: number } | null = null;
+  if (quotedPostId) {
+    const q = await prisma.socialPost.findUnique({
+      where: { id: quotedPostId },
+      select: { id: true, deletedAt: true },
+    });
+    if (!q || q.deletedAt)
+      return res.status(404).json({ error: 'the post you are quoting no longer exists' });
+    quoted = { id: q.id };
+  }
 
   // unfurl the first URL into a Twitter-style preview card (best-effort;
   // capped at ~5s so a slow site can't stall posting)
@@ -814,6 +940,7 @@ async function createPost(
     }
   }
 
+  const tags = parseHashtags(trimmed);
   const post = await prisma.socialPost.create({
     data: {
       authorAddress: r.walletAddress,
@@ -821,6 +948,7 @@ async function createPost(
       imageUrl: imageUrl || null,
       mediaType: imageUrl ? (mediaType === 'video' ? 'video' : 'image') : null,
       replyToId: replyToId ? Number(replyToId) : null,
+      quotedPostId: quoted?.id ?? null,
       linkUrl: link?.url || null,
       linkTitle: link?.title || null,
       linkDesc: link?.desc || null,
@@ -828,12 +956,30 @@ async function createPost(
     },
     include: postInclude(r.walletAddress),
   });
-  if (replyToId) {
-    await prisma.socialPost.update({
-      where: { id: Number(replyToId) },
-      data: { replyCount: { increment: 1 } },
-    });
-  }
+  // counters + hashtag index, best-effort (never block the created post)
+  const followups: Prisma.PrismaPromise<any>[] = [];
+  if (replyToId)
+    followups.push(
+      prisma.socialPost.update({
+        where: { id: Number(replyToId) },
+        data: { replyCount: { increment: 1 } },
+      })
+    );
+  if (quoted)
+    followups.push(
+      prisma.socialPost.update({
+        where: { id: quoted.id },
+        data: { quoteCount: { increment: 1 } },
+      })
+    );
+  if (tags.length)
+    followups.push(
+      prisma.socialHashtag.createMany({
+        data: tags.map((tag) => ({ postId: post.id, tag })),
+        skipDuplicates: true,
+      })
+    );
+  if (followups.length) await prisma.$transaction(followups);
   const verified = await pfpVerifiedMap([post]);
   res.json({ post: serializePost(post, r.walletAddress, verified) });
 }
@@ -995,8 +1141,12 @@ async function createDropPost(
     data: {
       authorAddress: r.walletAddress,
       text: `${verb}: “${drop.name}”${drop.description ? ` — ${drop.description.slice(0, 140)}` : ''}`,
-      imageUrl: drop.bannerImageS3Path,
-      mediaType: 'image',
+      // The feed post is one of the few surfaces that can actually play
+      // video (PostCard renders <video> for mediaType:'video') — post the
+      // real clip there instead of the static banner poster used everywhere
+      // else that can't.
+      imageUrl: drop.bannerVideoS3Path || drop.bannerImageS3Path,
+      mediaType: drop.bannerVideoS3Path ? 'video' : 'image',
       dropId,
       dropKind: kind,
       dropPrice: price,
@@ -1164,6 +1314,12 @@ async function recordTip(req: NextApiRequest, res: NextApiResponse, r: { walletA
   // The SAGE transfer happens client-side (wallet-signed); the server checks
   // the mined tx actually paid the AUTHOR before crediting, and the unique
   // txHash column stops the same transfer being recorded twice.
+  // Money-moving actions had no rate limit at all (unlike createPost's
+  // existing 10/min) — each call still needs a real, distinct on-chain
+  // payment to do anything, but nothing stopped a buggy/malicious client
+  // from hammering the RPC provider and DB with rapid repeated attempts.
+  if (rateLimited(r.walletAddress, 'tip', 15))
+    return res.status(429).json({ error: 'slow down — 15 tips per minute max' });
   const { postId, txHash } = req.body || {};
   const currency = req.body?.currency === 'ETH' ? 'ETH' : 'SAGE';
   const id = Number(postId);
@@ -1252,6 +1408,8 @@ async function getBoostInfo(res: NextApiResponse) {
 
 async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   if (!(await requireVerified(r.walletAddress, res))) return;
+  if (rateLimited(r.walletAddress, 'boost', 10))
+    return res.status(429).json({ error: 'slow down — 10 boosts per minute max' });
   const { postId, txHash, dailyUsd, days } = req.body || {};
   const id = Number(postId);
   const daily = Number(dailyUsd);
@@ -1264,6 +1422,20 @@ async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletA
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
 
+  // Same global claim purchaseVerification() uses — both pay
+  // TREASURY_ADDRESS, so a txHash must be exclusive across BOTH actions,
+  // not just unique within SocialBoost's own table.
+  try {
+    await prisma.socialTreasuryTxClaim.create({
+      data: { txHash, action: 'BoostPost', claimedBy: r.walletAddress },
+    });
+  } catch (e: any) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return res.status(400).json({ error: 'this payment was already used' });
+    }
+    throw e;
+  }
+
   // total = daily × days in USD, PAID IN ETH to the treasury (Uniswap rate,
   // 5% price-drift tolerance)
   const totalUsd = daily * nDays;
@@ -1272,6 +1444,7 @@ async function boostPost(req: NextApiRequest, res: NextApiResponse, r: { walletA
   try {
     amount = await verifyPayment(txHash, r.walletAddress, TREASURY_ADDRESS, requiredEth * 0.95, 'ETH');
   } catch (e: any) {
+    await prisma.socialTreasuryTxClaim.delete({ where: { txHash } }).catch(() => {});
     return res.status(400).json({ error: `payment not verified: ${e.message}` });
   }
 
@@ -1339,16 +1512,57 @@ async function collectPost(
   r: { walletAddress: string }
 ) {
   if (!(await requireVerified(r.walletAddress, res))) return;
+  if (rateLimited(r.walletAddress, 'collect', 15))
+    return res.status(429).json({ error: 'slow down — 15 collects per minute max' });
   const { postId, txHash, payWith } = req.body || {};
   const id = Number(postId);
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
   if (post.collectPrice === null) return res.status(400).json({ error: 'post is not collectible' });
+  // recordTip already blocks self-tips for the same reason (pumping your own
+  // collectCount/leaderboard rank); collectPost had no equivalent guard —
+  // for a free (price 0) collectible post an author could mint themselves
+  // an unlimited-looking "sold out" collector count for nothing.
+  if (post.authorAddress.toLowerCase() === r.walletAddress.toLowerCase()) {
+    return res.status(400).json({ error: 'you cannot collect your own post' });
+  }
 
-  const already = await prisma.socialCollect.findUnique({
-    where: { postId_collectorAddress: { postId: id, collectorAddress: r.walletAddress } },
-  });
-  if (already) return res.status(400).json({ error: 'already collected' });
+  // ATOMIC CLAIM: reserve the (postId, collectorAddress) slot BEFORE any of
+  // the slow work below (on-chain payment verification, minting) — this is
+  // what actually closes the race. The old code checked "already collected"
+  // here and only relied on the DB's unique constraint at the very end,
+  // AFTER minting — so two concurrent requests both sailed past this check,
+  // both verified payment, and both minted a REAL on-chain NFT to the
+  // caller's own wallet before the second one's final insert finally hit the
+  // unique-constraint wall. One paid collect = arbitrarily many mints.
+  // mintTxHash/tokenId/contractAddress are nullable specifically so this
+  // placeholder can exist before a mint has happened.
+  let claim: { id: number };
+  try {
+    claim = await prisma.socialCollect.create({
+      data: {
+        postId: id,
+        collectorAddress: r.walletAddress,
+        amount: 0,
+        currency: post.collectCurrency === 'ETH' ? 'ETH' : 'POINTS',
+        pointsSpent: null,
+        payTxHash: null,
+        mintTxHash: null,
+        contractAddress: null,
+        tokenId: null,
+      },
+      select: { id: true },
+    });
+  } catch (e: any) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return res.status(400).json({ error: 'already collected' });
+    }
+    throw e;
+  }
+  // From here on, any early return MUST release the claim (delete the
+  // placeholder row) so a failed attempt doesn't permanently lock this
+  // wallet out of ever collecting this post.
+  const releaseClaim = () => prisma.socialCollect.delete({ where: { id: claim.id } }).catch(() => {});
 
   // ETH-priced posts (image art): the buyer pays the AUTHOR directly with a
   // wallet tx; we verify it on-chain (amount + recipient + replay via the
@@ -1359,9 +1573,23 @@ async function collectPost(
   if (post.collectCurrency === 'ETH') {
     currency = 'ETH';
     if (post.collectPrice > 0) {
-      if (!txHash) return res.status(400).json({ error: 'payment tx required' });
-      const dupe = await prisma.socialCollect.findUnique({ where: { payTxHash: txHash } });
-      if (dupe) return res.status(400).json({ error: 'this payment was already used' });
+      if (!txHash) {
+        await releaseClaim();
+        return res.status(400).json({ error: 'payment tx required' });
+      }
+      try {
+        // Claims payTxHash on OUR OWN just-created row — payTxHash is
+        // globally unique, so this atomically rejects a txHash already
+        // claimed by ANY other collect (same post or a different one),
+        // still before any minting happens.
+        await prisma.socialCollect.update({ where: { id: claim.id }, data: { payTxHash: txHash } });
+      } catch (e: any) {
+        await releaseClaim();
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          return res.status(400).json({ error: 'this payment was already used' });
+        }
+        throw e;
+      }
       try {
         // 5% tolerance for rounding between quote and signed value
         amount = await verifyPayment(
@@ -1372,6 +1600,7 @@ async function collectPost(
           'ETH'
         );
       } catch (e: any) {
+        await releaseClaim();
         return res.status(400).json({ error: `payment not verified: ${e.message}` });
       }
       ethTxHash = txHash;
@@ -1381,16 +1610,15 @@ async function collectPost(
     try {
       mintEth = await mintSocialCollectServerSide(r.walletAddress, tokenUriEth);
     } catch (e: any) {
+      await releaseClaim();
       return res.status(500).json({ error: `mint failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
     }
     await prisma.$transaction([
-      prisma.socialCollect.create({
+      prisma.socialCollect.update({
+        where: { id: claim.id },
         data: {
-          postId: id,
-          collectorAddress: r.walletAddress,
           amount,
           currency,
-          pointsSpent: null,
           payTxHash: ethTxHash,
           mintTxHash: mintEth.txHash,
           contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
@@ -1415,8 +1643,10 @@ async function collectPost(
       );
       const bal = Number(e.utils.formatEther(await token.balanceOf(r.walletAddress)));
       const minHold = process.env.NEXT_PUBLIC_APP_MODE === 'production' ? 1 : 0;
-      if (bal < minHold)
+      if (bal < minHold) {
+        await releaseClaim();
         return res.status(400).json({ error: `hold at least ${minHold} SAGE to collect` });
+      }
     } catch (e) {
       console.error('collect hold-check RPC failed', e);
     }
@@ -1424,6 +1654,7 @@ async function collectPost(
     try {
       await debitPixelsAtomic(r.walletAddress, post.authorAddress, id, pointsPrice);
     } catch (e: any) {
+      await releaseClaim();
       return res
         .status(e?.message === 'pixels-conflict' ? 409 : 400)
         .json({ error: e?.message === 'pixels-conflict' ? 'pixels are busy — try again' : e.message });
@@ -1439,19 +1670,18 @@ async function collectPost(
   } catch (e: any) {
     // the debit already happened — put the pixels back before failing
     if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id, pointsSpent).catch(() => {});
+    await releaseClaim();
     return res.status(500).json({ error: `mint failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
   }
 
   // (the pixels ledger rows were written atomically in debitPixelsAtomic)
   await prisma.$transaction([
-    prisma.socialCollect.create({
+    prisma.socialCollect.update({
+      where: { id: claim.id },
       data: {
-        postId: id,
-        collectorAddress: r.walletAddress,
         amount,
         currency,
         pointsSpent,
-        payTxHash: null,
         mintTxHash: mint.txHash,
         contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
         tokenId: mint.tokenId,
@@ -1572,7 +1802,6 @@ async function getVerificationInfo(res: NextApiResponse) {
   const prices = await verificationPrices();
   res.json({
     priceUsd: VERIFICATION_PRICE_USD,
-    priceSage: prices.sage,
     priceEth: prices.eth,
     treasury: TREASURY_ADDRESS,
     pointsPerSage: POINTS_PER_SAGE,
@@ -1584,22 +1813,39 @@ async function purchaseVerification(
   res: NextApiResponse,
   r: { walletAddress: string }
 ) {
+  if (rateLimited(r.walletAddress, 'purchase-verification', 5))
+    return res.status(429).json({ error: 'slow down and try again in a minute' });
   const { txHash } = req.body || {};
   if (!txHash) return res.status(400).json({ error: 'payment tx required' });
   const me = await prisma.user.findUnique({
     where: { walletAddress: r.walletAddress },
-    select: { verifiedAt: true },
+    select: { verifiedAt: true, bannedAt: true },
   });
+  if (me?.bannedAt) return res.status(403).json({ error: 'This account is banned' });
   if (me?.verifiedAt) return res.status(400).json({ error: 'already verified' });
-  const dupe = await prisma.user.findFirst({ where: { verifiedTxHash: txHash } });
-  if (dupe) return res.status(400).json({ error: 'this payment was already used' });
-  const currency = req.body?.currency === 'ETH' ? 'ETH' : 'SAGE';
+  // Claim this txHash in the GLOBAL treasury-payment registry, not just
+  // against User.verifiedTxHash — that only caught reuse across OTHER
+  // verification purchases. boostPost() pays the same TREASURY_ADDRESS and
+  // used to check uniqueness only in its own table, so one real payment
+  // could be redeemed here AND as a boost. This claim is atomic (txHash is
+  // the primary key) and shared across every treasury-paying action.
+  try {
+    await prisma.socialTreasuryTxClaim.create({
+      data: { txHash, action: 'PurchaseVerification', claimedBy: r.walletAddress },
+    });
+  } catch (e: any) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return res.status(400).json({ error: 'this payment was already used' });
+    }
+    throw e;
+  }
+  // ETH-only — see verificationPrices()'s comment for why SAGE was dropped.
   const prices = await verificationPrices();
-  const price = currency === 'ETH' ? prices.eth : prices.sage;
   try {
     // 5% tolerance: the quoted price can drift between quote and mined tx
-    await verifyPayment(txHash, r.walletAddress, TREASURY_ADDRESS, price * 0.95, currency);
+    await verifyPayment(txHash, r.walletAddress, TREASURY_ADDRESS, prices.eth * 0.95, 'ETH');
   } catch (e: any) {
+    await prisma.socialTreasuryTxClaim.delete({ where: { txHash } }).catch(() => {});
     return res.status(400).json({ error: `payment not verified: ${e.message}` });
   }
   await prisma.user.update({
@@ -1809,7 +2055,13 @@ async function excludeBanned<T>(rows: T[], addressOf: (r: T) => string): Promise
 async function userCards(addresses: string[]) {
   const users = await prisma.user.findMany({
     where: { walletAddress: { in: addresses } },
-    select: { walletAddress: true, username: true, profilePicture: true, verifiedAt: true },
+    select: {
+      walletAddress: true,
+      username: true,
+      profilePicture: true,
+      verifiedAt: true,
+      isAgent: true,
+    },
   });
   const map: Record<string, any> = {};
   for (const u of users)
@@ -1818,25 +2070,33 @@ async function userCards(addresses: string[]) {
       username: u.username,
       profilePicture: u.profilePicture,
       verified: !!u.verifiedAt,
+      isAgent: !!u.isAgent, // sage-mcp AI agent — see AgentBadge.tsx
     };
   return map;
 }
 
-// Pixels leaderboard is contract-based: batch pointsOf() over the user base
-// (bounded + cached — one RPC sweep per minute at most).
-let pixelsBoardCache: { rows: { address: string; net: bigint }[]; at: number } | null = null;
-async function pixelsLeaderboard(): Promise<{ address: string; net: bigint }[]> {
+// Pixels leaderboard is contract-based: batch pointsOf() + dailyRateOf() over
+// the user base (bounded + cached — one RPC sweep per minute at most). `rate`
+// (pixels/day) lets the client extrapolate the balance live between fetches, so
+// the numbers tick up in real time without hammering the RPC.
+let pixelsBoardCache: { rows: { address: string; net: bigint; rate: bigint }[]; at: number } | null = null;
+async function pixelsLeaderboard(): Promise<{ address: string; net: bigint; rate: bigint }[]> {
   if (pixelsBoardCache && Date.now() - pixelsBoardCache.at < 60_000) return pixelsBoardCache.rows;
   if (!parameters.SAGE_POINTS_ADDRESS) return [];
   const users = await prisma.user.findMany({ select: { walletAddress: true }, take: 300 });
-  const rows: { address: string; net: bigint }[] = [];
+  const rows: { address: string; net: bigint; rate: bigint }[] = [];
   // chunked so we don't blast the RPC with 300 parallel calls
   for (let i = 0; i < users.length; i += 25) {
     const chunk = users.slice(i, i + 25);
-    const balances = await Promise.all(
-      chunk.map((u) => pixelsOf(u.walletAddress).catch(() => BigInt(0)))
+    const results = await Promise.all(
+      chunk.map((u) =>
+        Promise.all([
+          pixelsOf(u.walletAddress).catch(() => BigInt(0)),
+          pixelsDailyRate(u.walletAddress).catch(() => BigInt(0)),
+        ])
+      )
     );
-    chunk.forEach((u, j) => rows.push({ address: u.walletAddress, net: balances[j] }));
+    chunk.forEach((u, j) => rows.push({ address: u.walletAddress, net: results[j][0], rate: results[j][1] }));
   }
   rows.sort((a, b) => (b.net > a.net ? 1 : b.net < a.net ? -1 : 0));
   pixelsBoardCache = { rows, at: Date.now() }; // FULL ranking; callers slice
@@ -1848,11 +2108,13 @@ async function getLeaderboardBoard(req: NextApiRequest, res: NextApiResponse) {
   const board = String(req.query.board || 'topPoints');
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const limit = Math.min(50, Number(req.query.limit) || 25);
-  let rows: { address: string; value: number }[] = [];
+  let rows: { address: string; value: number; rate?: number }[] = [];
   if (board === 'topPoints') {
     rows = (await pixelsLeaderboard())
       .slice(offset, offset + limit)
-      .map((r) => ({ address: r.address, value: Number(r.net) }));
+      // rate (pixels/day) is included ONLY for topPoints so the client can
+      // stream the balance up live between the 60s server refreshes
+      .map((r) => ({ address: r.address, value: Number(r.net), rate: Number(r.rate) }));
   } else if (board === 'topEarners' || board === 'topTippers') {
     const key = board === 'topEarners' ? 'toAddress' : 'fromAddress';
     const g = await prisma.socialTip.groupBy({
@@ -1888,14 +2150,21 @@ async function getLeaderboardBoard(req: NextApiRequest, res: NextApiResponse) {
   const cards = await userCards(rows.map((r) => r.address));
   res.json({
     rows: rows.map((r) => ({
-      user: cards[r.address] || { address: r.address, username: null, verified: false },
+      user: cards[r.address] || { address: r.address, username: null, verified: false, isAgent: false },
       count: r.value,
+      ...(r.rate !== undefined ? { rate: r.rate } : {}),
     })),
     nextOffset: rows.length === limit ? offset + limit : null,
   });
 }
 
 async function getLeaderboard(res: NextApiResponse) {
+  const payload = await withMemoCache('leaderboard', 20000, () => computeLeaderboard());
+  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+  res.json(payload);
+}
+
+async function computeLeaderboard() {
   const [tipped, tippers, burners, followed, pointsPool, totalUsers, tokenVol, nftVolEth, nftVolPixels] = await Promise.all([
     prisma.socialTip.groupBy({
       by: ['toAddress'],
@@ -1941,8 +2210,7 @@ async function getLeaderboard(res: NextApiResponse) {
     ...burnersOk.map((b) => b.fromAddress),
     ...followedOk.map((f) => f.followingAddress),
   ]);
-  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
-  res.json({
+  return {
     topEarners: tippedOk.map((t) => ({ user: cards[t.toAddress], sage: t._sum.amount || 0 })),
     topTippers: tippersOk.map((t) => ({ user: cards[t.fromAddress], sage: t._sum.amount || 0 })),
     topBurners: burnersOk.map((b) => ({ user: cards[b.fromAddress], sage: b._sum.amount || 0 })),
@@ -1957,7 +2225,7 @@ async function getLeaderboard(res: NextApiResponse) {
       nftVolumeEth: nftVolEth._sum.amount || 0,
       nftVolumePixels: Number(nftVolPixels._sum.pointsSpent || 0),
     },
-  });
+  };
 }
 
 async function getUserMints(address: string, res: NextApiResponse) {
@@ -2099,9 +2367,18 @@ async function getActivity(res: NextApiResponse, r: { walletAddress: string }) {
   res.json({
     activity: items.map((i) => ({
       ...i,
-      actor: cards[i.actor] || { address: i.actor, username: null, verified: false },
+      actor: cards[i.actor] || { address: i.actor, username: null, verified: false, isAgent: false },
     })),
   });
+}
+
+/** Stamp "Activity opened now" so the unread counter resets to 0. Called when
+ *  the user views the Activity tab (mirrors marking DMs read). */
+async function markActivitySeen(res: NextApiResponse, r: { walletAddress: string }) {
+  await prisma.user
+    .update({ where: { walletAddress: r.walletAddress }, data: { lastSeenActivityAt: new Date() } })
+    .catch(() => {});
+  res.json({ ok: true });
 }
 
 // ───────────────────────────── messaging (premium DMs) ─────────────────────────────
@@ -2117,7 +2394,7 @@ async function getMyFollowing(res: NextApiResponse, r: { walletAddress: string }
   const cards = await userCards(follows.map((f) => f.followingAddress));
   res.json({
     users: follows.map(
-      (f) => cards[f.followingAddress] || { address: f.followingAddress, username: null, verified: false }
+      (f) => cards[f.followingAddress] || { address: f.followingAddress, username: null, verified: false, isAgent: false }
     ),
   });
 }
@@ -2140,7 +2417,7 @@ async function getConversations(res: NextApiResponse, r: { walletAddress: string
   const partners = Array.from(byPartner.keys());
   const cards = await userCards(partners);
   const dms = partners.map((p) => ({
-    partner: cards[p] || { address: p, username: null, verified: false },
+    partner: cards[p] || { address: p, username: null, verified: false, isAgent: false },
     lastMessage: byPartner.get(p)!.last.text.slice(0, 80),
     lastAt: byPartner.get(p)!.last.createdAt,
     unread: byPartner.get(p)!.unread,
@@ -2206,6 +2483,79 @@ async function sendMessage(req: NextApiRequest, res: NextApiResponse, r: { walle
 }
 
 
+// ─────────────────────── followers / following / hashtags ───────────────────────
+
+/** Serialize a page of post rows the same way the feed does (pfp verification
+ *  + drop timing), so every list endpoint returns identically-shaped cards. */
+async function serializePostPage(posts: any[], viewer: string | null): Promise<any[]> {
+  const verified = await pfpVerifiedMap(posts);
+  return attachDropTiming(posts.map((p) => serializePost(p, viewer, verified)));
+}
+
+/** A paginated follower/following list for a profile, with viewer follow-state. */
+async function getFollowList(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  mode: 'followers' | 'following'
+) {
+  const addr = canon(String(req.query.address || ''));
+  if (!addr) return res.status(400).json({ error: 'bad address' });
+  const viewer = canon((await getRequester(req))?.walletAddress);
+  const cursor = req.query.cursor ? new Date(String(req.query.cursor)) : undefined;
+  const where =
+    mode === 'followers' ? { followingAddress: addr } : { followerAddress: addr };
+  const rows = await prisma.socialFollow.findMany({
+    where: cursor ? { ...where, createdAt: { lt: cursor } } : where,
+    orderBy: { createdAt: 'desc' },
+    take: 31,
+  });
+  const nextCursor = rows.length > 30 ? rows[29].createdAt.toISOString() : null;
+  const page = rows.slice(0, 30);
+  const addrs = page.map((f) => (mode === 'followers' ? f.followerAddress : f.followingAddress));
+  const cards = await userCards(addrs);
+  // mark which of these the viewer already follows, in one query
+  let viewerFollows = new Set<string>();
+  if (viewer && addrs.length) {
+    const vf = await prisma.socialFollow.findMany({
+      where: { followerAddress: viewer, followingAddress: { in: addrs } },
+      select: { followingAddress: true },
+    });
+    viewerFollows = new Set(vf.map((f) => f.followingAddress));
+  }
+  res.json({
+    users: addrs.map((a) => ({
+      ...(cards[a] || { address: a, username: null, verified: false, isAgent: false }),
+      followedByViewer: viewerFollows.has(a),
+    })),
+    nextCursor,
+  });
+}
+
+/** Posts carrying a #tag, newest first — the topic feed. */
+async function getHashtagFeed(req: NextApiRequest, res: NextApiResponse) {
+  const tag = String(req.query.tag || '').trim().toLowerCase().replace(/^#/, '');
+  if (!tag) return res.status(400).json({ error: 'tag required' });
+  const viewer = canon((await getRequester(req))?.walletAddress);
+  const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
+  const tagRows = await prisma.socialHashtag.findMany({
+    where: { tag },
+    orderBy: { postId: 'desc' },
+    take: 41,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    select: { id: true, postId: true },
+  });
+  const nextCursor = tagRows.length > 40 ? tagRows[39].id : null;
+  const ids = tagRows.slice(0, 40).map((t) => t.postId);
+  const posts = await prisma.socialPost.findMany({
+    where: { id: { in: ids }, deletedAt: null, Author: { bannedAt: null } },
+    include: postInclude(viewer),
+  });
+  // preserve the tag-row (newest-first) ordering the id list already had
+  const order = new Map(ids.map((id, i) => [id, i]));
+  posts.sort((a, b) => (order.get(a.id)! - order.get(b.id)!));
+  res.json({ tag, posts: await serializePostPage(posts, viewer), nextCursor });
+}
+
 // ─────────────────────── delete / search / global ticker ───────────────────────
 
 async function deletePost(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string; role: Role }) {
@@ -2245,7 +2595,13 @@ async function search(q: string, req: NextApiRequest, res: NextApiResponse) {
           { walletAddress: { startsWith: query, mode: 'insensitive' } },
         ],
       },
-      select: { walletAddress: true, username: true, profilePicture: true, verifiedAt: true },
+      select: {
+        walletAddress: true,
+        username: true,
+        profilePicture: true,
+        verifiedAt: true,
+        isAgent: true,
+      },
       take: 10,
     }),
     prisma.socialPost.findMany({
@@ -2262,6 +2618,7 @@ async function search(q: string, req: NextApiRequest, res: NextApiResponse) {
       username: u.username,
       profilePicture: u.profilePicture,
       verified: !!u.verifiedAt,
+      isAgent: !!u.isAgent, // sage-mcp AI agent — see AgentBadge.tsx
     })),
     posts: posts.map((p) => serializePost(p, viewer, verified)),
   });
@@ -2269,7 +2626,12 @@ async function search(q: string, req: NextApiRequest, res: NextApiResponse) {
 
 /** The right-rail ticker: everything the network just did, money first. */
 async function getGlobalActivity(res: NextApiResponse) {
-  res.setHeader('Cache-Control', 'no-store');
+  const payload = await withMemoCache('globalActivity', 8000, () => computeGlobalActivity());
+  res.setHeader('Cache-Control', 'public, s-maxage=20, stale-while-revalidate=60');
+  res.json(payload);
+}
+
+async function computeGlobalActivity() {
   const [tips, collects, boosts, follows, posts] = await Promise.all([
     prisma.socialTip.findMany({ orderBy: { id: 'desc' }, take: 10 }),
     prisma.socialCollect.findMany({
@@ -2322,16 +2684,15 @@ async function getGlobalActivity(res: NextApiResponse) {
     ...events.map((e) => e.actor),
     ...events.map((e) => e.target).filter(Boolean),
   ] as string[]);
-  res.setHeader('Cache-Control', 'public, s-maxage=20, stale-while-revalidate=60');
-  res.json({
+  return {
     events: events.map((e) => ({
       ...e,
-      actor: cards[e.actor] || { address: e.actor, username: null, verified: false },
+      actor: cards[e.actor] || { address: e.actor, username: null, verified: false, isAgent: false },
       target: e.target
-        ? cards[e.target] || { address: e.target, username: null, verified: false }
+        ? cards[e.target] || { address: e.target, username: null, verified: false, isAgent: false }
         : null,
     })),
-  });
+  };
 }
 
 
@@ -2633,6 +2994,80 @@ async function requestCollectVoucher(
   res.json({ ok: true, minter: minterAddress, postId: id, uri, signature });
 }
 
+/**
+ * Client IP for the faucet's once-per-network gate. Behind Cloudflare (prod)
+ * cf-connecting-ip is authoritative; otherwise the LAST x-forwarded-for hop
+ * is the one appended by Google's front end (earlier hops are spoofable).
+ */
+function faucetClientIp(req: NextApiRequest): string | null {
+  const cf = req.headers['cf-connecting-ip'];
+  if (typeof cf === 'string' && cf) return cf;
+  const xff = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(xff) ? xff[xff.length - 1] : xff;
+  if (!raw) return req.socket?.remoteAddress || null;
+  const hops = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return hops[hops.length - 1] || null;
+}
+
+/** Salted hash — raw IPs are never stored. */
+function hashFaucetIp(ip: string): string {
+  return createHash('sha256').update(`${process.env.NEXTAUTH_SECRET}:${ip}`).digest('hex');
+}
+
+/**
+ * Issues a one-time SocialFaucet claim voucher. The contract enforces
+ * once-per-WALLET on-chain; this is where once-per-NETWORK is enforced —
+ * a FaucetClaim row is reserved (unique on both columns) BEFORE signing, so
+ * two requests racing from the same IP or wallet can't both walk away with
+ * a valid voucher.
+ */
+async function requestFaucetVoucher(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  r: { walletAddress: string }
+) {
+  const faucetAddress = parameters.SOCIAL_FAUCET_ADDRESS;
+  if (!faucetAddress) return res.status(400).json({ error: 'the faucet is not enabled here' });
+  const ip = faucetClientIp(req);
+  if (!ip) return res.status(400).json({ error: 'could not determine your network' });
+  const ipHash = hashFaucetIp(ip);
+  const wallet = r.walletAddress;
+
+  let byWallet, byIp;
+  try {
+    [byWallet, byIp] = await Promise.all([
+      prisma.faucetClaim.findUnique({ where: { walletAddress: wallet } }),
+      prisma.faucetClaim.findUnique({ where: { ipHash } }),
+    ]);
+  } catch (e: any) {
+    console.error('faucet claim lookup failed', e);
+    return res.status(503).json({ error: 'The faucet is temporarily unavailable — try again shortly.' });
+  }
+  if (byWallet) return res.status(403).json({ error: 'This wallet has already claimed from the faucet.' });
+  if (byIp) return res.status(403).json({ error: 'A claim was already made from this network.' });
+
+  try {
+    await prisma.faucetClaim.create({ data: { ipHash, walletAddress: wallet } });
+  } catch (e: any) {
+    if (e?.code === 'P2002') {
+      // unique-constraint race — someone else reserved this IP/wallet between the check and the write
+      return res.status(403).json({ error: 'A claim was already made from this network.' });
+    }
+    console.error('faucet claim reservation failed', e);
+    return res.status(503).json({ error: 'The faucet is temporarily unavailable — try again shortly.' });
+  }
+
+  const chainId = Number(parameters.CHAIN_ID);
+  try {
+    const signature = await signFaucetVoucher(faucetAddress, chainId, wallet);
+    return res.json({ signature });
+  } catch (e: any) {
+    // signing failed — release the reservation so the wallet/IP isn't burned for nothing
+    await prisma.faucetClaim.delete({ where: { walletAddress: wallet } }).catch(() => {});
+    return res.status(500).json({ error: `voucher signing failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
+  }
+}
+
 
 // ───────────────────── alpha group chats (premium perk) ─────────────────────
 
@@ -2666,7 +3101,7 @@ async function getGroupChat(req: NextApiRequest, res: NextApiResponse, r: { wall
     owner === r.walletAddress
       ? posterAddrs
           .filter((a) => a !== owner)
-          .map((a) => cards[a] || { address: a, username: null, verified: false })
+          .map((a) => cards[a] || { address: a, username: null, verified: false, isAgent: false })
       : [];
   res.json({
     enabled: chat.enabled,
@@ -2674,7 +3109,7 @@ async function getGroupChat(req: NextApiRequest, res: NextApiResponse, r: { wall
     members,
     messages: messages.reverse().map((m) => ({
       id: m.id,
-      from: cards[m.fromAddress] || { address: m.fromAddress, username: null, verified: false },
+      from: cards[m.fromAddress] || { address: m.fromAddress, username: null, verified: false, isAgent: false },
       text: m.text,
       createdAt: m.createdAt,
       mine: m.fromAddress === r.walletAddress,
@@ -2839,13 +3274,24 @@ const FACTORY_ABI = [
   'function pairOf(address) view returns (address)',
 ];
 
+// SAGE's bonding curve lives in the ORIGINAL factory (SAGE_PRICE_FACTORY_ADDRESS);
+// its trades and reads must resolve there. Every newer token is on the current
+// SOCIAL_TOKEN_FACTORY_ADDRESS. Mirrors factoryAddressForToken() in
+// utilities/socialToken.ts. No-op off mainnet (no token matches the SAGE addr).
+function factoryForToken(token: string): string {
+  if (token && token.toLowerCase() === SAGE_PRICE_TOKEN_ADDRESS.toLowerCase()) {
+    return SAGE_PRICE_FACTORY_ADDRESS;
+  }
+  return parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
+}
+
 /** Records a mined buy/sell so the chart, trades feed and holders stay live. */
 async function recordTrade(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   const { tokenAddress, side, txHash } = req.body || {};
   const token = canon(tokenAddress);
-  const factory = parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
   if (!token || !txHash || (side !== 'buy' && side !== 'sell'))
     return res.status(400).json({ error: 'tokenAddress, side, txHash required' });
+  const factory = factoryForToken(token);
   if (!factory) return res.status(400).json({ error: 'trading not enabled here' });
   const dupe = await prisma.socialTokenTrade.findUnique({ where: { txHash } });
   if (dupe) return res.json({ ok: true, already: true });
@@ -3018,10 +3464,241 @@ async function getTokenHoldersPage(req: NextApiRequest, res: NextApiResponse) {
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     holders: page.map(([addr, bal]) => ({
-      user: cards[addr] || { address: addr, username: null, verified: false },
+      user: cards[addr] || { address: addr, username: null, verified: false, isAgent: false },
       balance: bal,
     })),
     nextOffset: offset + limit < all.length ? offset + limit : null,
+  });
+}
+
+/**
+ * Post-graduation trade indexing. Once a token graduates, trading moves to
+ * its Uniswap pair and recordTrade never sees another trade — the chart,
+ * board mcap, and holder lists silently freeze at the last curve trade
+ * (SAGE showed $46k on its card while the pool priced it at $230k). This
+ * lazily sweeps the pair's Swap events into SocialTokenTrade whenever the
+ * token page is viewed:
+ *  - throttled by memoCache (one sweep per 30s per instance — the page polls
+ *    at 1s, the RPC must not)
+ *  - idempotent (txHash is unique; createMany skipDuplicates)
+ *  - cursor persisted in SocialTokenLaunch.poolSyncedBlock; the first sweep
+ *    binary-searches the pair's creation block so it never scans pre-pool
+ *    history (~0.1s blocks make "from launch" ranges enormous)
+ *  - bounded per sweep (MAX_CHUNKS windows) — a long gap catches up across
+ *    consecutive sweeps rather than stalling one request
+ */
+// the chain RPC times out eth_getLogs past ~a few 10k blocks ("log query
+// timed out" at 200k) — 20k stays comfortably inside. Sweeps are AWAITED by
+// the request (Cloud Run CPU-throttles post-response work, so fire-and-forget
+// background sweeps silently stall), which is why each sweep is tightly
+// capped: ≤6 log windows and ≤250 decoded swaps (SAGE's pool had 6,371 swaps
+// at backfill time — an uncapped first sweep meant ~13k RPC lookups in one
+// request). The cursor persists mid-backlog, so a big history converges over
+// consecutive throttled sweeps while the page is being watched.
+// 5s throttle: the token page polls at 1s, and with the client-side pair-Swap
+// tape painting candles at block speed, the server sweep only needs to keep
+// the DURABLE record near-live — one bounded sweep per 5s per token per
+// instance does that without turning every poll into an RPC round-trip.
+const POOL_SYNC_THROTTLE_MS = 5_000;
+const POOL_SYNC_CHUNK = 20_000; // blocks per eth_getLogs call
+const POOL_SYNC_MAX_CHUNKS = 6;
+const POOL_SYNC_MAX_SWAPS = 250; // decoded swaps per sweep (each costs lookups)
+const POOL_SYNC_LOOKUP_BATCH = 50; // parallel tx/block lookups at a time
+// in-flight guard: withMemoCache only caches AFTER compute settles, so the
+// 1s-polled page would otherwise stack concurrent sweeps while one is running
+const poolSyncInFlight = new Map<string, Promise<void>>();
+function syncPoolTrades(launchId: number, token: string, pair: string): Promise<void> {
+  const key = `poolsync:${token.toLowerCase()}`;
+  const running = poolSyncInFlight.get(key);
+  if (running) return running;
+  const sweep = syncPoolTradesInner(key, launchId, token, pair).finally(() =>
+    poolSyncInFlight.delete(key)
+  );
+  poolSyncInFlight.set(key, sweep);
+  return sweep;
+}
+
+async function syncPoolTradesInner(
+  memoKey: string,
+  launchId: number,
+  token: string,
+  pair: string
+): Promise<void> {
+  await withMemoCache(memoKey, POOL_SYNC_THROTTLE_MS, async () => {
+    try {
+      const { ethers } = await import('ethers');
+      const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+      const launch = await prisma.socialTokenLaunch.findUnique({
+        where: { id: launchId },
+        select: { poolSyncedBlock: true },
+      });
+      const head = await provider.getBlockNumber();
+      let from: number;
+      if (launch?.poolSyncedBlock) {
+        from = launch.poolSyncedBlock + 1;
+      } else {
+        // first sweep: find the pair's creation block (getCode flips from
+        // '0x' to bytecode), so we only ever scan post-graduation history
+        let lo = 1,
+          hi = head;
+        while (lo < hi) {
+          const mid = Math.floor((lo + hi) / 2);
+          const code = await provider.getCode(pair, mid).catch(() => '0x');
+          if (code && code !== '0x') hi = mid;
+          else lo = mid + 1;
+        }
+        from = lo;
+      }
+      if (from > head) return true;
+
+      const pairC = new ethers.Contract(
+        pair,
+        [
+          'event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)',
+          'function token0() view returns (address)',
+        ],
+        provider
+      );
+      const tokenIs0 = (await pairC.token0()).toLowerCase() === token.toLowerCase();
+
+      // phase 1: collect raw swap logs, chunk by chunk, until the block or
+      // swap cap is hit. If the swap cap lands mid-chunk, the cursor stops at
+      // the last FULLY processed block so the overflow re-scans next sweep
+      // (txHash dedupe makes the overlap free).
+      let scannedTo = from - 1;
+      let logs: any[] = [];
+      let capped = false;
+      for (let c = 0; c < POOL_SYNC_MAX_CHUNKS && scannedTo < head && !capped; c++) {
+        const chunkFrom = scannedTo + 1;
+        const chunkTo = Math.min(chunkFrom + POOL_SYNC_CHUNK - 1, head);
+        const chunkLogs = await pairC.queryFilter(pairC.filters.Swap(), chunkFrom, chunkTo);
+        if (logs.length + chunkLogs.length > POOL_SYNC_MAX_SWAPS) {
+          const room = POOL_SYNC_MAX_SWAPS - logs.length;
+          const kept = chunkLogs.slice(0, room);
+          logs = logs.concat(kept);
+          // stop the cursor before the first dropped swap's block
+          const firstDropped = chunkLogs[room];
+          scannedTo = Math.max(scannedTo, firstDropped.blockNumber - 1);
+          capped = true;
+        } else {
+          logs = logs.concat(chunkLogs);
+          scannedTo = chunkTo;
+        }
+      }
+
+      // phase 2: decode + batched tx/block lookups (trader = tx.from; block
+      // lookups deduped — arb bursts put many swaps in one block)
+      const rows: {
+        tokenAddress: string;
+        trader: string;
+        side: string;
+        ethAmount: number;
+        tokenAmount: number;
+        priceEth: number;
+        txHash: string;
+        createdAt: Date;
+      }[] = [];
+      const blockTs = new Map<number, number>();
+      for (let i = 0; i < logs.length; i += POOL_SYNC_LOOKUP_BATCH) {
+        const batch = logs.slice(i, i + POOL_SYNC_LOOKUP_BATCH);
+        const uniqueBlocks = Array.from(
+          new Set(batch.map((l) => l.blockNumber).filter((b) => !blockTs.has(b)))
+        );
+        const [txs, blocks] = await Promise.all([
+          Promise.all(batch.map((l) => provider.getTransaction(l.transactionHash))),
+          Promise.all(uniqueBlocks.map((b) => provider.getBlock(b))),
+        ]);
+        blocks.forEach((b) => blockTs.set(b.number, b.timestamp));
+        batch.forEach((log, j) => {
+          const a = log.args!;
+          const tokIn = Number(ethers.utils.formatEther(tokenIs0 ? a.amount0In : a.amount1In));
+          const tokOut = Number(ethers.utils.formatEther(tokenIs0 ? a.amount0Out : a.amount1Out));
+          const ethIn = Number(ethers.utils.formatEther(tokenIs0 ? a.amount1In : a.amount0In));
+          const ethOut = Number(ethers.utils.formatEther(tokenIs0 ? a.amount1Out : a.amount0Out));
+          const isBuy = tokOut > 0; // pool pays out tokens → someone bought
+          const tokenAmount = isBuy ? tokOut : tokIn;
+          const ethAmount = isBuy ? ethIn : ethOut;
+          if (tokenAmount <= 0 || ethAmount <= 0) return; // dust/flash edge
+          rows.push({
+            tokenAddress: token,
+            trader: ethers.utils.getAddress(txs[j].from),
+            side: isBuy ? 'buy' : 'sell',
+            ethAmount,
+            tokenAmount,
+            priceEth: (ethAmount / tokenAmount) * 1_000_000,
+            txHash: log.transactionHash,
+            createdAt: new Date((blockTs.get(log.blockNumber) || 0) * 1000),
+          });
+        });
+      }
+      if (rows.length) {
+        await prisma.socialTokenTrade.createMany({ data: rows, skipDuplicates: true });
+      }
+      // At a 5s cadence, writing the cursor on every EMPTY sweep would be a
+      // steady DB write per token for nothing. Advance it only when trades
+      // landed or the unwritten gap has grown past a re-scan budget — quiet
+      // sweeps just re-read a small (txHash-deduped) window instead.
+      //
+      // GREATEST(), not a plain write: Cloud Run runs several instances, each
+      // with its OWN in-memory poolSyncInFlight/memoCache, so two instances
+      // CAN sweep the same token concurrently. A slow sweep that started from
+      // an older cursor can finish after a faster one already advanced it —
+      // a plain `update` would then clobber the cursor BACKWARD with a
+      // smaller value (observed live: cursor regressed ~147k blocks, ~40min
+      // of new trades silently stopped being picked up). GREATEST makes the
+      // write commutative — whichever sweep's result lands last, the cursor
+      // only ever moves forward.
+      if (scannedTo >= from && (rows.length || scannedTo - from > 2_000)) {
+        await prisma.$executeRaw`
+          UPDATE "SocialTokenLaunch"
+          SET "poolSyncedBlock" = GREATEST(COALESCE("poolSyncedBlock", 0), ${scannedTo})
+          WHERE id = ${launchId}
+        `;
+      }
+    } catch (e) {
+      console.error(`pool trade sync failed for ${token}`, e);
+    }
+    return true;
+  });
+}
+
+/**
+ * Cursor-paginated raw trade ledger for one token — {trader, side, tokenAmount,
+ * createdAt} only, ordered by id. Purely a mirror of on-chain Swap/Bought/Sold
+ * events already public on the pair/factory, so this is unauthenticated.
+ *
+ * Built for the SagePoints keeper: it needs every wallet that ever held the
+ * token to check its pixel checkpoint, and a chain log scan for that is
+ * exactly what took the keeper down (an unbounded eth_getLogs timed out) and,
+ * even chunked/windowed, permanently loses any wallet whose one relevant
+ * transfer scrolls out of the window before a run catches it — which is what
+ * silently zeroed ~150 outage-era buyers' pixel accrual. This table is the
+ * fix: it's an ever-growing, real-time-updated, non-expiring record (today's
+ * pool-swap indexer keeps it current), so paging through it once is a
+ * complete and permanent substitute for a chain scan, with no RPC log-query
+ * budget to blow and no sliding window to fall out of.
+ */
+async function getTokenTradeLedger(req: NextApiRequest, res: NextApiResponse) {
+  const token = canon(String(req.query.address || ''));
+  if (!token) return res.status(400).json({ error: 'bad address' });
+  const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
+  const pageSize = 5000;
+  const rows = await prisma.socialTokenTrade.findMany({
+    where: { tokenAddress: token },
+    orderBy: { id: 'asc' },
+    take: pageSize,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    select: { id: true, trader: true, side: true, tokenAmount: true, createdAt: true },
+  });
+  res.setHeader('Cache-Control', 'public, max-age=30');
+  res.json({
+    trades: rows.map((r) => ({
+      trader: r.trader,
+      side: r.side,
+      tokenAmount: r.tokenAmount,
+      createdAt: r.createdAt,
+    })),
+    nextCursor: rows.length === pageSize ? rows[rows.length - 1].id : null,
   });
 }
 
@@ -3035,31 +3712,12 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
   });
   if (!launch) return res.status(404).json({ error: 'token not found' });
 
-  const trades = await prisma.socialTokenTrade.findMany({
-    where: { tokenAddress: token },
-    orderBy: { id: 'asc' },
-    take: 500,
-  });
-
-  // holders derived from recorded trades (buys add, sells subtract) — a
-  // testnet approximation; the chain is authoritative for real balances
-  const balances = new Map<string, number>();
-  for (const t of trades) {
-    const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
-    balances.set(t.trader, (balances.get(t.trader) || 0) + d);
-  }
-  const holders = Array.from(balances.entries())
-    .filter(([, b]) => b > 0.000001)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20);
-  const holderCards = await userCards(holders.map(([a]) => a));
-
   // live curve state for the bonding-curve progress bar + price
   let curve: { realTokenReserves: number; complete: boolean; priceEth: number; pair: string | null } | null = null;
   try {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
-    const f = new ethers.Contract(parameters.SOCIAL_TOKEN_FACTORY_ADDRESS, FACTORY_ABI, provider);
+    const f = new ethers.Contract(factoryForToken(token), FACTORY_ABI, provider);
     const [c, pool] = await Promise.all([
       f.curves(token),
       f.pairOf(token).catch(() => ethers.constants.AddressZero),
@@ -3086,6 +3744,40 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
   } catch (e) {
     console.error('curve read failed', e);
   }
+  // graduated → pull any new pool swaps into the trades table BEFORE reading
+  // trades, so this response already includes them. Awaited deliberately:
+  // Cloud Run throttles CPU after the response, so fire-and-forget sweeps
+  // stall — instead the sweep is capped small (see POOL_SYNC_*) and throttled
+  // to one per 30s per instance, so at most one poll in thirty pays ~a few
+  // seconds and the rest skip straight through on the memo cache.
+  if (curve?.complete && curve.pair) {
+    await syncPoolTrades(launch.id, token, curve.pair);
+  }
+
+  // last 500 trades, chronological. DESC-then-reverse: with post-graduation
+  // indexing a busy token holds thousands of rows, and taking the FIRST 500
+  // froze the chart at ancient history — the newest trades are the chart.
+  const trades = (
+    await prisma.socialTokenTrade.findMany({
+      where: { tokenAddress: token },
+      orderBy: { id: 'desc' },
+      take: 500,
+    })
+  ).reverse();
+
+  // holders derived from recorded trades (buys add, sells subtract) — a
+  // testnet approximation; the chain is authoritative for real balances
+  const balances = new Map<string, number>();
+  for (const t of trades) {
+    const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
+    balances.set(t.trader, (balances.get(t.trader) || 0) + d);
+  }
+  const holders = Array.from(balances.entries())
+    .filter(([, b]) => b > 0.000001)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20);
+  const holderCards = await userCards(holders.map(([a]) => a));
+
   const INITIAL_REAL = 793_100_000; // pump.fun-shaped initial real reserves
   const soldPct = curve ? Math.min(100, ((INITIAL_REAL - curve.realTokenReserves) / INITIAL_REAL) * 100) : 0;
 
@@ -3127,7 +3819,8 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
     uniswapPair: curve?.pair ?? null,
     bondingProgressPct: Math.round(soldPct * 10) / 10,
     holderCount: holders.length,
-    tradeCount: trades.length,
+    // real total — `trades` is the last-500 chart window, not the count
+    tradeCount: await prisma.socialTokenTrade.count({ where: { tokenAddress: token } }),
     series: trades.map((t) => ({ t: t.createdAt, price: t.priceEth })),
     trades: await (async () => {
       const recent = trades.slice(-30).reverse();
@@ -3142,7 +3835,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
       }));
     })(),
     holders: holders.map(([addr, bal]) => ({
-      user: holderCards[addr] || { address: addr, username: null, verified: false },
+      user: holderCards[addr] || { address: addr, username: null, verified: false, isAgent: false },
       balance: bal,
     })),
   });
