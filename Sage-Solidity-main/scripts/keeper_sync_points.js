@@ -62,15 +62,33 @@ const RATE = 25; // rateScaled → 0.25/day
 const CAP = 100000; // whole SAGE
 const DAY = 86400;
 
-const BATCH = 50; // parallel RPC reads
+const BATCH = 20; // parallel RPC reads — this RPC rate-limits sustained 50-wide bursts
 const DRY = process.env.DRY_RUN === '1';
 
 const accrue = (whole, seconds) => (Math.min(whole, CAP) * RATE * seconds) / (100 * DAY);
 
+// The ledger has grown past 1,000 distinct wallets — a single stalled call in
+// a Promise.all batch throws away every other call in that batch (and the
+// whole run, since main() has no outer retry). Retry with backoff on each
+// individual call so one rate-limited request doesn't sink hundreds of
+// already-succeeded ones. Mirrors withRetry() in keeper_reconcile.js.
+async function withRetry(fn, tries = 4, baseDelayMs = 1500) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** i));
+    }
+  }
+  throw lastErr;
+}
+
 async function batched(items, fn) {
   const out = [];
   for (let i = 0; i < items.length; i += BATCH) {
-    out.push(...(await Promise.all(items.slice(i, i + BATCH).map(fn))));
+    out.push(...(await Promise.all(items.slice(i, i + BATCH).map((item) => withRetry(() => fn(item))))));
   }
   return out;
 }
