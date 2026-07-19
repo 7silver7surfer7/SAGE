@@ -314,24 +314,37 @@ export interface FollowListPage {
   nextCursor: string | null;
 }
 
-const LIST_ENDPOINTS = ['getFeed', 'getUserPosts', 'getHashtagFeed'];
+// Every cached endpoint whose payload can contain a SocialPost, in any shape:
+// {posts: []} (feeds/profiles/hashtags/search), {replies: []} + {post} (a
+// thread). A post the user can SEE came out of one of these caches, so a
+// like/repost patch that skips any of them leaves that surface visually dead.
+const POST_CACHE_ENDPOINTS = ['getFeed', 'getUserPosts', 'getHashtagFeed', 'searchSocial', 'getPostThread'];
 
-// Patches EVERY currently-cached instance of the {posts: SocialPost[]} list
-// endpoints above, instead of a guessed set of query args. getFeed's global
-// tab keys its cache on a fresh random `seed` per page load and paginated
-// pages key on `cursor`, so a patch aimed at a fixed shape like {scope}
-// silently misses the actual mounted query — that's why like/repost looked
-// broken on the timeline itself and only "worked" on a post's own detail
-// page (getPostThread is keyed on postId alone, so it always matches).
-function patchAllListCaches(dispatch: any, getState: any, apply: (draft: any) => void) {
+// Patches EVERY currently-cached instance of the endpoints above, instead of
+// a guessed set of query args. getFeed's global tab keys its cache on a fresh
+// random `seed` per page load and paginated pages key on `cursor`, so a patch
+// aimed at a fixed shape like {scope} silently misses the actual mounted
+// query — that's why like/repost looked broken on the timeline. Likewise a
+// patch aimed at getPostThread(likedPostId) misses a liked REPLY, which lives
+// in the replies[] of its PARENT's thread cache — enumerating live cache
+// entries is the only aim that can't miss.
+function patchAllPostCaches(dispatch: any, getState: any, apply: (draft: any) => void) {
   const patches: { undo: () => void }[] = [];
   const queries = (getState() as any).api?.queries || {};
   for (const key in queries) {
     const q = queries[key];
-    if (!q || !LIST_ENDPOINTS.includes(q.endpointName)) continue;
+    if (!q || !POST_CACHE_ENDPOINTS.includes(q.endpointName)) continue;
     patches.push(dispatch((socialApi.util.updateQueryData as any)(q.endpointName, q.originalArgs, apply)));
   }
   return patches;
+}
+
+// apply() for like/repost toggles: flip the post wherever it appears in this
+// cache entry — feed/search page, thread root, or thread reply.
+function flipEverywhere(draft: any, postId: number, flip: (p: SocialPost | undefined) => void) {
+  flip(draft.posts?.find((x: SocialPost) => x.id === postId));
+  flip(draft.replies?.find((x: SocialPost) => x.id === postId));
+  if (draft.post?.id === postId) flip(draft.post);
 }
 
 const socialApi = baseApi.injectEndpoints({
@@ -366,7 +379,13 @@ const socialApi = baseApi.injectEndpoints({
     }),
     getPostThread: builder.query<{ post: SocialPost; replies: SocialPost[] }, number>({
       query: (id) => ({ url: `social?action=GetPost&id=${id}` }),
-      providesTags: (_r, _e, id) => [{ type: 'SocialPost', id }],
+      // tag the replies too: a like on a reply invalidates SocialPost:<replyId>,
+      // and if only the root were tagged that invalidation would match nothing
+      // — the thread would never refetch and the reply's ♥ would stay frozen
+      providesTags: (r, _e, id) => [
+        { type: 'SocialPost' as const, id },
+        ...(r?.replies || []).map((p) => ({ type: 'SocialPost' as const, id: p.id })),
+      ],
     }),
     getSocialProfile: builder.query<SocialProfile, string>({
       query: (address) => ({ url: `social?action=GetProfile&address=${address}` }),
@@ -621,23 +640,15 @@ const socialApi = baseApi.injectEndpoints({
     toggleLike: builder.mutation<{ liked: boolean }, number>({
       query: (postId) => ({ url: 'social?action=ToggleLike', method: 'POST', body: { postId } }),
       // optimistic: paginated feed pages beyond the newest are append-only in
-      // the cache, so patch them directly instead of waiting for a refetch —
-      // and patch the post-detail thread too, or ♥ looks dead on /post/[id]
+      // the cache, so patch them directly instead of waiting for a refetch
       async onQueryStarted(postId, { dispatch, getState, queryFulfilled }) {
         const flip = (p: SocialPost | undefined) => {
           if (!p) return;
           p.likedByViewer = !p.likedByViewer;
           p.likeCount += p.likedByViewer ? 1 : -1;
         };
-        const patches = patchAllListCaches(dispatch, getState, (draft: any) =>
-          flip(draft.posts?.find((x: SocialPost) => x.id === postId))
-        );
-        patches.push(
-          dispatch(
-            socialApi.util.updateQueryData('getPostThread', postId, (draft) => {
-              flip(draft.post);
-            })
-          )
+        const patches = patchAllPostCaches(dispatch, getState, (draft: any) =>
+          flipEverywhere(draft, postId, flip)
         );
         try {
           await queryFulfilled;
@@ -655,15 +666,8 @@ const socialApi = baseApi.injectEndpoints({
           p.repostedByViewer = !p.repostedByViewer;
           p.repostCount += p.repostedByViewer ? 1 : -1;
         };
-        const patches = patchAllListCaches(dispatch, getState, (draft: any) =>
-          flip(draft.posts?.find((x: SocialPost) => x.id === postId))
-        );
-        patches.push(
-          dispatch(
-            socialApi.util.updateQueryData('getPostThread', postId, (draft) => {
-              flip(draft.post);
-            })
-          )
+        const patches = patchAllPostCaches(dispatch, getState, (draft: any) =>
+          flipEverywhere(draft, postId, flip)
         );
         try {
           await queryFulfilled;
