@@ -93,7 +93,11 @@ async function fetchLedger(tokenAddress) {
 async function main() {
   const pk = process.env.POINTS_ORACLE_PK || process.env.DEPLOYER_PK;
   if (!pk) throw new Error('POINTS_ORACLE_PK (or DEPLOYER_PK) required');
-  const p = new ethers.providers.StaticJsonRpcProvider(RPC, CHAIN);
+  // explicit timeout: a bare URL string leaves ethers' fetch with none at
+  // all — a single stalled request hangs the whole run instead of failing
+  // cleanly (this script is stateless/idempotent, so a clean failure is
+  // always safe — the next scheduled tick just recomputes from scratch).
+  const p = new ethers.providers.StaticJsonRpcProvider({ url: RPC, timeout: 30000 }, CHAIN);
   const w = new ethers.Wallet(pk, p);
 
   // ── holder discovery: the DB ledger, not the chain ──
