@@ -7,6 +7,7 @@ import {
   SAGE_PRICE_FACTORY_ADDRESS,
 } from '@/constants/config';
 import { getEthUsd } from '@/utilities/sagePrice';
+import { chainTokenRows } from '@/utilities/dexIndexer';
 
 /**
  * DexScreener-style token screener over every SocialTokenLaunch. One payload
@@ -49,11 +50,21 @@ function factoryForToken(token: string): string {
 }
 
 type DexRow = {
+  // 'launch' = born on our factory (full metadata); 'chain' = discovered by the
+  // chain-wide Uniswap indexer (no image/creator/socials, pair-derived stats)
+  source: 'launch' | 'chain';
   tokenAddress: string;
+  pairAddress: string | null; // chain rows always carry their pair; launch rows null
   name: string;
   symbol: string;
   imageUrl: string | null;
   creator: { address: string; username: string | null; verified: boolean };
+  links: {
+    website: string | null;
+    twitter: string | null;
+    telegram: string | null;
+    discord: string | null;
+  };
   createdAt: string;
   graduated: boolean;
   priceEth: number; // ETH per 1M tokens — the app-wide convention
@@ -160,6 +171,13 @@ async function computeScreener(): Promise<ScreenerPayload> {
     include: { Creator: { select: { username: true, verifiedAt: true } } },
   });
 
+  // chain-wide Uniswap tokens (DB-only read, indexed out-of-band) — kicked off
+  // here so it overlaps the launch aggregates + RPC fan-out below
+  const chainTokensPromise = chainTokenRows().catch((e) => {
+    console.error('dex chainTokenRows failed', e);
+    return [] as Awaited<ReturnType<typeof chainTokenRows>>;
+  });
+
   // One pass over the ledger: windowed counts/volume via FILTER, current and
   // window-open prices via FILTERed ordered array_agg (index [1] = first row).
   const aggs = await prisma.$queryRaw<TradeAgg[]>`
@@ -227,6 +245,8 @@ async function computeScreener(): Promise<ScreenerPayload> {
     let trending = volume24hUsd + 5 * (txns24h.buys + txns24h.sells);
     if (now - l.createdAt.getTime() < 24 * 3600 * 1000) trending *= 1.5;
     return {
+      source: 'launch' as const,
+      pairAddress: null,
       tokenAddress: l.tokenAddress,
       name: l.name,
       symbol: l.symbol,
@@ -257,6 +277,43 @@ async function computeScreener(): Promise<ScreenerPayload> {
       spark: sparkFor(sparkByToken.get(key), nowBucket),
     };
   });
+
+  // Merge in every chain-wide Uniswap token the indexer knows. Launch tokens
+  // that graduated also have a pair on the same factory — skip those here so
+  // one token never shows twice (the launch row wins: it has the richer
+  // metadata).
+  const launchTokens = new Set(launches.map((l) => l.tokenAddress.toLowerCase()));
+  const chainTokens = await chainTokensPromise;
+  for (const c of chainTokens) {
+    if (launchTokens.has(c.tokenAddress.toLowerCase())) continue;
+    const volume24hUsd = c.volume24hEth * ethUsd;
+    rows.push({
+      source: 'chain' as const,
+      pairAddress: c.pairAddress,
+      tokenAddress: c.tokenAddress,
+      name: c.name,
+      symbol: c.symbol,
+      imageUrl: null,
+      creator: { address: c.tokenAddress, username: null, verified: false },
+      links: { website: null, twitter: null, telegram: null, discord: null },
+      createdAt: c.createdAt.toISOString(),
+      graduated: true, // it IS a live Uniswap pair — graduated by definition
+      priceEth: c.priceEth,
+      priceUsd: (c.priceEth / 1e6) * ethUsd,
+      // external tokens' supply isn't known without a totalSupply read, so a
+      // pump.fun-style fixed-1B mcap would be a lie here — 0 means "unknown";
+      // liquidity is the honest headline for chain rows
+      mcapUsd: 0,
+      liquidityUsd: c.liquidityEth * ethUsd,
+      change5m: null,
+      change1h: null,
+      change24h: c.change24h,
+      txns24h: c.txns24h,
+      volume24hUsd,
+      trending: volume24hUsd + 5 * (c.txns24h.buys + c.txns24h.sells),
+      spark: c.spark,
+    });
+  }
   rows.sort((a, b) => b.trending - a.trending);
 
   return { ethUsd, updatedAt: new Date().toISOString(), rows };
@@ -319,8 +376,49 @@ type ExternalRow = {
   mcapUsd: number;
 };
 
-const lookupCache = new Map<string, { rows: ExternalRow[]; at: number }>();
-const LOOKUP_TTL_MS = 60_000;
+// Two-tier cache. The authoritative tier is the DexLookupCache table so every
+// Cloud Run instance shares ONE upstream fetch per query (an in-memory-only
+// memo multiplies DexScreener spend by the instance count and lets a 429 storm
+// re-hit upstream per keystroke per instance). Failures cache too (ok=false,
+// shorter TTL) so a dead upstream is retried at most once per 30s globally.
+// The tiny in-memory L1 in front only exists so many users typing the same
+// hot query (450ms debounce each) doesn't become a DB read per keystroke.
+const LOOKUP_OK_TTL_MS = 60_000; // fresh successful rows (empty included)
+const LOOKUP_FAIL_TTL_MS = 30_000; // ok=false marker — serve cached, skip upstream
+const LOOKUP_L1_TTL_MS = 10_000;
+
+const lookupL1 = new Map<string, { rows: ExternalRow[]; at: number }>();
+
+function lookupL1Set(key: string, rows: ExternalRow[]) {
+  lookupL1.set(key, { rows, at: Date.now() });
+  // unbounded per-query keys would leak on a crawler — keep the newest 500
+  if (lookupL1.size > 500) {
+    const oldest = Array.from(lookupL1.entries()).sort((a, b) => a[1].at - b[1].at)[0];
+    if (oldest) lookupL1.delete(oldest[0]);
+  }
+}
+
+/** upsert the shared cache row, then prune the table if a crawler bloated it */
+async function lookupCachePut(key: string, rows: ExternalRow[], ok: boolean) {
+  await prisma.dexLookupCache.upsert({
+    where: { q: key },
+    create: { q: key, rows: rows as any, ok, at: new Date() },
+    update: { rows: rows as any, ok, at: new Date() },
+  });
+  // fire-and-forget: a count is cheap at this scale, and the delete of the
+  // oldest 500 only ever runs once the table crosses 2000 rows
+  prisma.dexLookupCache
+    .count()
+    .then((n) => {
+      if (n > 2000) {
+        return prisma.$executeRaw`
+          DELETE FROM "DexLookupCache"
+          WHERE "q" IN (SELECT "q" FROM "DexLookupCache" ORDER BY "at" ASC LIMIT 500)`;
+      }
+      return undefined;
+    })
+    .catch(() => {});
+}
 
 async function dexscreenerFetch(url: string): Promise<any> {
   const ctrl = new AbortController();
@@ -370,8 +468,20 @@ async function lookup(qRaw: string): Promise<{ rows: ExternalRow[] }> {
   const q = qRaw.trim().slice(0, 100);
   if (q.length < 2) return { rows: [] };
   const key = q.toLowerCase();
-  const hit = lookupCache.get(key);
-  if (hit && Date.now() - hit.at < LOOKUP_TTL_MS) return { rows: hit.rows };
+
+  const l1 = lookupL1.get(key);
+  if (l1 && Date.now() - l1.at < LOOKUP_L1_TTL_MS) return { rows: l1.rows };
+
+  // shared cross-instance tier — also our stale-if-error source below
+  const cached = await prisma.dexLookupCache.findUnique({ where: { q: key } }).catch(() => null);
+  if (cached) {
+    const age = Date.now() - cached.at.getTime();
+    if (age < (cached.ok ? LOOKUP_OK_TTL_MS : LOOKUP_FAIL_TTL_MS)) {
+      const rows = (cached.rows as unknown as ExternalRow[]) || [];
+      lookupL1Set(key, rows);
+      return { rows };
+    }
+  }
 
   const isEvm = /^0x[0-9a-fA-F]{40}$/.test(q);
   const isBase58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(q);
@@ -400,17 +510,17 @@ async function lookup(qRaw: string): Promise<{ rows: ExternalRow[] }> {
     }
   } catch (e) {
     console.error('dexscreener lookup failed', e);
-    // stale-if-error: an expired cache entry beats an empty panel
-    if (hit) return { rows: hit.rows };
-    return { rows: [] };
+    // stale-if-error: last-good rows beat an empty panel. Either way write an
+    // ok=false marker so EVERY instance stays off upstream for 30s — a 429
+    // storm must not translate into a retry per keystroke.
+    const stale = (cached?.rows as unknown as ExternalRow[] | undefined) || [];
+    lookupCachePut(key, stale, false).catch(() => {});
+    lookupL1Set(key, stale);
+    return { rows: stale };
   }
   const rows = normalizePairs(pairs);
-  lookupCache.set(key, { rows, at: Date.now() });
-  // unbounded per-query keys would leak on a crawler — keep the newest 500
-  if (lookupCache.size > 500) {
-    const oldest = Array.from(lookupCache.entries()).sort((a, b) => a[1].at - b[1].at)[0];
-    if (oldest) lookupCache.delete(oldest[0]);
-  }
+  lookupCachePut(key, rows, true).catch(() => {});
+  lookupL1Set(key, rows);
   return { rows };
 }
 

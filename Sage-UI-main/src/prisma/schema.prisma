@@ -926,3 +926,62 @@ model PixelJournal {
   createdAt     DateTime @default(now())
   @@index([walletAddress, createdAt])
 }
+
+// ─── Chain-wide DEX indexer (every pair on the chain, 2026-07-20) ────────────
+// The screener's native tier only knows tokens launched through OUR factory;
+// these tables hold the WHOLE chain's Uniswap V2 universe (17.5k pairs on
+// mainnet at build time). Discovery = PairCreated scan with a persisted
+// cursor; per-pair stats/swaps sync lazily (viewed pairs) plus a bounded
+// stalest-first rotation — same shapes as the pool-trade indexer.
+
+model DexPair {
+  id              Int      @id @default(autoincrement())
+  pairAddress     String   @unique @db.Char(42)
+  baseToken       String   @db.Char(42) // the non-WETH side
+  quoteToken      String   @db.Char(42) // WETH
+  baseIsToken0    Boolean
+  baseName        String   @db.VarChar(80)
+  baseSymbol      String   @db.VarChar(40)
+  baseDecimals    Int      @default(18)
+  createdAtBlock  Int
+  createdAt       DateTime
+  // last block whose Swap events were folded into DexSwap (null = never)
+  swapSyncedBlock Int?
+  // ETH per 1M base tokens — same convention as SocialTokenTrade.priceEth
+  priceEth        Float    @default(0)
+  liquidityEth    Float    @default(0) // WETH reserve (x1 side)
+  updatedAt       DateTime @updatedAt
+  @@index([baseToken])
+  @@index([updatedAt])
+}
+
+model DexSwap {
+  id          Int      @id @default(autoincrement())
+  pairAddress String   @db.Char(42)
+  logKey      String   @unique @db.VarChar(80) // txHash:logIndex — idempotent re-scans
+  txHash      String   @db.Char(66)
+  trader      String   @db.Char(42)
+  side        String   @db.VarChar(4) // buy | sell (of the base token)
+  ethAmount   Float
+  tokenAmount Float
+  priceEth    Float // ETH per 1M base tokens
+  createdAt   DateTime
+  @@index([pairAddress, createdAt])
+}
+
+// tiny cursor store for the indexer's global scans (key: 'pair-discovery')
+model DexIndexState {
+  key    String @id @db.VarChar(40)
+  cursor Int    @default(0)
+}
+
+// cross-instance cache for the DexScreener global lookup: one row per query,
+// shared by every Cloud Run instance (the in-memory memo triples upstream
+// spend at 3 instances), and failures cache too (ok=false) so a 429 storm
+// can't retry the same dead query every keystroke
+model DexLookupCache {
+  q  String   @id @db.VarChar(120)
+  rows Json
+  ok Boolean  @default(true)
+  at DateTime @default(now())
+}

@@ -225,7 +225,13 @@ export default function DexPage() {
                     <tr
                       key={r.tokenAddress}
                       className={`dex-page__row${flash ? ` flash-${flash}` : ''}`}
-                      onClick={() => router.push(`/social/token/${r.tokenAddress}`)}
+                      onClick={() =>
+                        router.push(
+                          r.source === 'chain' && r.pairAddress
+                            ? `/dex/pair/${r.pairAddress}`
+                            : `/social/token/${r.tokenAddress}`
+                        )
+                      }
                     >
                       <td className='dex-page__cell dex-page__cell--rank'>{i + 1}</td>
                       <td className='dex-page__cell dex-page__cell--token'>
@@ -240,7 +246,11 @@ export default function DexPage() {
                         <b className='dex-page__symbol'>{r.symbol}</b>
                         <span className='dex-page__name'>{r.name}</span>
                         <span className='dex-page__age'>{ageOf(r.createdAt)}</span>
-                        {r.graduated && <span className='dex-page__grad'>🎓</span>}
+                        {r.source === 'chain' ? (
+                          <span className='dex-page__source'>CHAIN</span>
+                        ) : (
+                          r.graduated && <span className='dex-page__grad'>🎓</span>
+                        )}
                         {(
                           [
                             [r.links.website, '🌐'],
@@ -275,7 +285,10 @@ export default function DexPage() {
                       </td>
                       <td className='dex-page__cell dex-page__cell--num'>{fmt(r.volume24hUsd)}</td>
                       <td className='dex-page__cell dex-page__cell--num'>{fmt(r.liquidityUsd)}</td>
-                      <td className='dex-page__cell dex-page__cell--num'>{fmt(r.mcapUsd)}</td>
+                      <td className='dex-page__cell dex-page__cell--num'>
+                        {/* chain rows: supply unknown, mcapUsd 0 means "unknown", not $0 */}
+                        {r.source === 'chain' ? '—' : fmt(r.mcapUsd)}
+                      </td>
                       <td className='dex-page__cell dex-page__cell--spark'>
                         <Sparkline points={r.spark} positive={(r.change24h ?? 0) >= 0} />
                       </td>

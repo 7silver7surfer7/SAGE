@@ -39,6 +39,40 @@ export interface DexRow {
   trending: number;
   /** 24 price points (priceEth), oldest->newest, gaps forward-filled, [] if no trades */
   spark: number[];
+  /** 'launch' = created on SAGE Social; 'chain' = indexed from the chain's Uniswap pairs */
+  source: 'launch' | 'chain';
+  /** Uniswap pair for chain-indexed rows (drives /dex/pair/[address]); null for curve tokens */
+  pairAddress: string | null;
+}
+
+// ── chain-indexed pair detail (/dex/pair/[address]) ─────────────────────────
+
+export interface DexPairInfo {
+  pairAddress: string;
+  baseToken: string;
+  baseName: string;
+  baseSymbol: string;
+  createdAt: string;
+  /** ETH per 1M base tokens (app-wide convention) */
+  priceEth: number;
+  liquidityEth: number;
+}
+
+export interface DexPairSwap {
+  trader: string;
+  /** side of the BASE token */
+  side: 'buy' | 'sell';
+  ethAmount: number;
+  tokenAmount: number;
+  /** ETH per 1M base tokens at this swap */
+  priceEth: number;
+  createdAt: string;
+}
+
+export interface PairDetailResponse {
+  pair: DexPairInfo;
+  ethUsd: number;
+  swaps: DexPairSwap[];
 }
 
 export interface DexScreenerResponse {
@@ -78,7 +112,10 @@ const dexApi = baseApi.injectEndpoints({
       // server memoizes per-query for 60s; keep client entries briefly too
       keepUnusedDataFor: 60,
     }),
+    getDexPairDetail: builder.query<PairDetailResponse, string>({
+      query: (address) => ({ url: `dex-index?action=PairDetail&address=${address}` }),
+    }),
   }),
 });
 
-export const { useGetDexScreenerQuery, useLookupDexQuery } = dexApi;
+export const { useGetDexScreenerQuery, useLookupDexQuery, useGetDexPairDetailQuery } = dexApi;
