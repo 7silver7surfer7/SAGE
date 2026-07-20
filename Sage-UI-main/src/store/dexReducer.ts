@@ -47,13 +47,38 @@ export interface DexScreenerResponse {
   rows: DexRow[];
 }
 
+/** A token from ANYWHERE — any chain, any dex — via DexScreener's public API. */
+export interface ExternalDexRow {
+  chainId: string;
+  dexId: string;
+  pairAddress: string;
+  /** dexscreener.com pair page — external tokens link out, we don't chart them */
+  url: string;
+  name: string;
+  symbol: string;
+  imageUrl: string | null;
+  priceUsd: number;
+  change5m: number | null;
+  change1h: number | null;
+  change24h: number | null;
+  txns24h: { buys: number; sells: number };
+  volume24hUsd: number;
+  liquidityUsd: number;
+  mcapUsd: number;
+}
+
 const dexApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (builder) => ({
     getDexScreener: builder.query<DexScreenerResponse, void>({
       query: () => ({ url: 'dex?action=Screener' }),
     }),
+    lookupDex: builder.query<{ rows: ExternalDexRow[] }, string>({
+      query: (q) => ({ url: `dex?action=Lookup&q=${encodeURIComponent(q)}` }),
+      // server memoizes per-query for 60s; keep client entries briefly too
+      keepUnusedDataFor: 60,
+    }),
   }),
 });
 
-export const { useGetDexScreenerQuery } = dexApi;
+export const { useGetDexScreenerQuery, useLookupDexQuery } = dexApi;

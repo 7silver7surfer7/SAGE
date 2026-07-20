@@ -291,6 +291,129 @@ async function screener(): Promise<ScreenerPayload> {
   return data;
 }
 
+// ── global lookup: every token on every chain, via DexScreener's public API ──
+//
+// The native screener only knows tokens launched through OUR factory. For
+// everything else — a pump.fun Solana coin, a Base memecoin, even a token on
+// Robinhood Chain that never touched our site (DexScreener indexes this
+// chain natively) — we pass the query through api.dexscreener.com (free, no
+// key, ~300 req/min). /search finds tokens the /tokens endpoint misses
+// (observed live with a day-old pump.fun coin), so search IS the primary.
+// Per-query memo (60s) keeps us far from their rate limit; a 10s abort keeps
+// their availability out of our request path's worst case.
+type ExternalRow = {
+  chainId: string;
+  dexId: string;
+  pairAddress: string;
+  url: string; // dexscreener.com pair page — external tokens link OUT
+  name: string;
+  symbol: string;
+  imageUrl: string | null;
+  priceUsd: number;
+  change5m: number | null;
+  change1h: number | null;
+  change24h: number | null;
+  txns24h: { buys: number; sells: number };
+  volume24hUsd: number;
+  liquidityUsd: number;
+  mcapUsd: number;
+};
+
+const lookupCache = new Map<string, { rows: ExternalRow[]; at: number }>();
+const LOOKUP_TTL_MS = 60_000;
+
+async function dexscreenerFetch(url: string): Promise<any> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`dexscreener HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizePairs(pairs: any[]): ExternalRow[] {
+  // one row per (chain, base token): keep the deepest pool — the same token
+  // often trades in dozens of pairs and the illiquid ones are noise
+  const best = new Map<string, any>();
+  for (const p of pairs || []) {
+    if (!p?.baseToken?.address || !p?.chainId) continue;
+    const key = `${p.chainId}:${p.baseToken.address.toLowerCase()}`;
+    const prev = best.get(key);
+    if (!prev || Number(p.liquidity?.usd || 0) > Number(prev.liquidity?.usd || 0)) best.set(key, p);
+  }
+  return Array.from(best.values())
+    .sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0))
+    .slice(0, 20)
+    .map((p) => ({
+      chainId: String(p.chainId),
+      dexId: String(p.dexId || ''),
+      pairAddress: String(p.pairAddress || ''),
+      url: String(p.url || ''),
+      name: String(p.baseToken?.name || p.baseToken?.symbol || '?'),
+      symbol: String(p.baseToken?.symbol || '?'),
+      imageUrl: p.info?.imageUrl || null,
+      priceUsd: Number(p.priceUsd || 0),
+      change5m: p.priceChange?.m5 ?? null,
+      change1h: p.priceChange?.h1 ?? null,
+      change24h: p.priceChange?.h24 ?? null,
+      txns24h: { buys: Number(p.txns?.h24?.buys || 0), sells: Number(p.txns?.h24?.sells || 0) },
+      volume24hUsd: Number(p.volume?.h24 || 0),
+      liquidityUsd: Number(p.liquidity?.usd || 0),
+      mcapUsd: Number(p.marketCap ?? p.fdv ?? 0),
+    }));
+}
+
+async function lookup(qRaw: string): Promise<{ rows: ExternalRow[] }> {
+  const q = qRaw.trim().slice(0, 100);
+  if (q.length < 2) return { rows: [] };
+  const key = q.toLowerCase();
+  const hit = lookupCache.get(key);
+  if (hit && Date.now() - hit.at < LOOKUP_TTL_MS) return { rows: hit.rows };
+
+  const isEvm = /^0x[0-9a-fA-F]{40}$/.test(q);
+  const isBase58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(q);
+  let pairs: any[] = [];
+  try {
+    // search first — it finds young/tiny tokens the /tokens endpoint misses
+    const s = await dexscreenerFetch(
+      `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`
+    );
+    pairs = s?.pairs || [];
+    if (pairs.length === 0 && (isEvm || isBase58)) {
+      const t = await dexscreenerFetch(`https://api.dexscreener.com/latest/dex/tokens/${q}`);
+      pairs = t?.pairs || [];
+    }
+    if (pairs.length === 0 && (isEvm || isBase58)) {
+      // last resort: the per-chain pair endpoint sometimes still serves
+      // tokens the global search has aged out. Probe the likely chains for
+      // the address format, in parallel; first non-empty wins.
+      const chains = isBase58 ? ['solana'] : ['ethereum', 'base', 'bsc', 'robinhood', 'arbitrum'];
+      const probes = await Promise.all(
+        chains.map((c) =>
+          dexscreenerFetch(`https://api.dexscreener.com/token-pairs/v1/${c}/${q}`).catch(() => [])
+        )
+      );
+      pairs = probes.find((p) => Array.isArray(p) && p.length > 0) || [];
+    }
+  } catch (e) {
+    console.error('dexscreener lookup failed', e);
+    // stale-if-error: an expired cache entry beats an empty panel
+    if (hit) return { rows: hit.rows };
+    return { rows: [] };
+  }
+  const rows = normalizePairs(pairs);
+  lookupCache.set(key, { rows, at: Date.now() });
+  // unbounded per-query keys would leak on a crawler — keep the newest 500
+  if (lookupCache.size > 500) {
+    const oldest = Array.from(lookupCache.entries()).sort((a, b) => a[1].at - b[1].at)[0];
+    if (oldest) lookupCache.delete(oldest[0]);
+  }
+  return { rows };
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const action = String(req.query.action || 'Screener');
   try {
@@ -298,6 +421,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       case 'Screener':
         res.setHeader('Cache-Control', 'no-store');
         return res.json(await screener());
+      case 'Lookup':
+        // per-query results are memoized server-side; let the edge share them
+        res.setHeader('Cache-Control', 'public, max-age=30');
+        return res.json(await lookup(String(req.query.q || '')));
       default:
         return res.status(400).json({ error: 'unknown action' });
     }

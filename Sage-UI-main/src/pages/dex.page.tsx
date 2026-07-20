@@ -4,7 +4,7 @@ import Logotype from '@/components/Logotype';
 import LoaderDots from '@/components/LoaderDots';
 import SearchIcon from '@/components/Icons/SearchIcon';
 import Sparkline from '@/components/Dex/Sparkline';
-import { useGetDexScreenerQuery, DexRow } from '@/store/dexReducer';
+import { useGetDexScreenerQuery, useLookupDexQuery, DexRow } from '@/store/dexReducer';
 
 const WATCHLIST_KEY = 'dex-watchlist';
 
@@ -58,6 +58,17 @@ export default function DexPage() {
   const router = useRouter();
   const { data, isLoading } = useGetDexScreenerQuery(undefined, { pollingInterval: 5000 });
   const [search, setSearch] = useState('');
+  // global lookup rides the same search box, debounced — any token on any
+  // chain via DexScreener's public API (including Robinhood-chain tokens
+  // that never launched here)
+  const [globalQ, setGlobalQ] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setGlobalQ(search.trim()), 450);
+    return () => clearTimeout(t);
+  }, [search]);
+  const { data: globalData, isFetching: globalLoading } = useLookupDexQuery(globalQ, {
+    skip: globalQ.length < 2,
+  });
   const [tab, setTab] = useState<Tab>('all');
   const [sort, setSort] = useState<Sort>('trending');
   const [watchlist, setWatchlist] = useState<string[]>([]);
@@ -287,7 +298,82 @@ export default function DexPage() {
             </table>
           </div>
         ) : (
-          <div className='dex-page__empty'>No tokens match.</div>
+          <div className='dex-page__empty'>
+            {globalQ.length >= 2 && (globalLoading || (globalData?.rows.length ?? 0) > 0)
+              ? 'Nothing local — results from everywhere below.'
+              : 'No tokens match.'}
+          </div>
+        )}
+
+        {/* every token everywhere: any chain, any dex, via DexScreener */}
+        {globalQ.length >= 2 && (
+          <div className='dex-page__global'>
+            <div className='dex-page__global-head'>
+              EVERYWHERE — ALL CHAINS <span>via DexScreener</span>
+            </div>
+            {globalLoading && !globalData ? (
+              <LoaderDots />
+            ) : (globalData?.rows.length ?? 0) === 0 ? (
+              <div className='dex-page__empty'>No matches anywhere for “{globalQ}”.</div>
+            ) : (
+              <div className='dex-page__table-wrap'>
+                <table className='dex-page__table'>
+                  <thead>
+                    <tr>
+                      <th className='dex-page__th'>TOKEN</th>
+                      <th className='dex-page__th'>CHAIN / DEX</th>
+                      <th className='dex-page__th dex-page__th--num'>PRICE</th>
+                      <th className='dex-page__th dex-page__th--num'>5M</th>
+                      <th className='dex-page__th dex-page__th--num'>1H</th>
+                      <th className='dex-page__th dex-page__th--num'>24H</th>
+                      <th className='dex-page__th dex-page__th--num'>TXNS</th>
+                      <th className='dex-page__th dex-page__th--num'>VOLUME</th>
+                      <th className='dex-page__th dex-page__th--num'>LIQUIDITY</th>
+                      <th className='dex-page__th dex-page__th--num'>MCAP</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {globalData!.rows.map((r) => (
+                      <tr
+                        key={`${r.chainId}:${r.pairAddress}`}
+                        className='dex-page__row'
+                        onClick={() => window.open(r.url, '_blank', 'noopener')}
+                      >
+                        <td className='dex-page__cell dex-page__cell--token'>
+                          {r.imageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img className='dex-page__badge' src={r.imageUrl} alt={r.name} width={24} height={24} />
+                          ) : (
+                            <span className='dex-page__badge dex-page__badge--ph'>
+                              {r.symbol.slice(0, 2).toUpperCase()}
+                            </span>
+                          )}
+                          <b className='dex-page__symbol'>{r.symbol}</b>
+                          <span className='dex-page__name'>{r.name}</span>
+                        </td>
+                        <td className='dex-page__cell'>
+                          <span className='dex-page__chain'>{r.chainId}</span>
+                          <span className='dex-page__name'>{r.dexId}</span>
+                        </td>
+                        <td className='dex-page__cell dex-page__cell--num dex-page__cell--price'>
+                          {fmtPrice(r.priceUsd)}
+                        </td>
+                        <PctCell value={r.change5m} />
+                        <PctCell value={r.change1h} />
+                        <PctCell value={r.change24h} />
+                        <td className='dex-page__cell dex-page__cell--num dex-page__cell--txns'>
+                          <span className='up'>{r.txns24h.buys}</span>/<span className='down'>{r.txns24h.sells}</span>
+                        </td>
+                        <td className='dex-page__cell dex-page__cell--num'>{fmt(r.volume24hUsd)}</td>
+                        <td className='dex-page__cell dex-page__cell--num'>{fmt(r.liquidityUsd)}</td>
+                        <td className='dex-page__cell dex-page__cell--num'>{fmt(r.mcapUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         )}
       </section>
     </div>
