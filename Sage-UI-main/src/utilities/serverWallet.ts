@@ -138,22 +138,76 @@ export async function signCollectVoucher(
 }
 
 /**
+ * EIP-712 voucher for SocialFaucet — a wallet's ONE lifetime SAGE claim. The
+ * server signs only after it has confirmed (in its own DB) that neither this
+ * wallet nor this request's IP hash has claimed before; the contract then
+ * independently enforces the once-per-wallet half on-chain. Domain must
+ * match the contract's EIP712('SAGESocialFaucet','1').
+ */
+export async function signFaucetVoucher(
+  faucetAddress: string,
+  chainId: number,
+  claimant: string
+): Promise<string> {
+  const signer = getServerSigner();
+  const domain = {
+    name: 'SAGESocialFaucet',
+    version: '1',
+    chainId,
+    verifyingContract: faucetAddress,
+  };
+  const types = {
+    FaucetVoucher: [{ name: 'claimant', type: 'address' }],
+  };
+  return (signer as any)._signTypedData(domain, types, { claimant });
+}
+
+/**
  * SERVER-side platform signer (the operator key — same one the crons and
  * points oracle use). Exists for chain writes that happen without an admin's
  * wallet present, e.g. adding a minter to a drop's on-chain whitelist the
  * moment they claim an IP-gated mint spot. Never import from client code.
  */
 function getProvider() {
-  const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+  // explicit timeout: a bare URL string leaves ethers' fetch with none at
+  // all, so one stalled RPC request hangs the API route (and the user's
+  // toast) forever instead of failing cleanly
+  const provider = new ethers.providers.StaticJsonRpcProvider({
+    url: parameters.RPC_URL,
+    timeout: 30000,
+  });
   // Robinhood Chain rejects EIP-1559 (type-2) fee fields — force legacy
   // gasPrice so server-signed txs (mints, whitelist adds, contractURI) don't
   // fail estimation with a type-2 payload. Same patch the deploy scripts use.
+  // ×1.5 headroom: the node treats legacy gasPrice as the fee CAP, and the
+  // base fee moves between quote and inclusion — sending at exactly
+  // getGasPrice() failed live with "max fee per gas less than block base
+  // fee" on a 0.02% base-fee uptick (2026-07-20, pixels collect). Only the
+  // real base fee is charged, so the premium costs nothing when fees are flat.
   const getGasPrice = provider.getGasPrice.bind(provider);
   provider.getFeeData = async () => {
-    const gasPrice = await getGasPrice();
+    const gasPrice = (await getGasPrice()).mul(150).div(100);
     return { gasPrice, maxFeePerGas: null, maxPriorityFeePerGas: null, lastBaseFeePerGas: null };
   };
   return provider;
+}
+
+/**
+ * tx.wait() with no deadline can outlive the HTTP request that triggered it
+ * (a dropped tx never mines — e.g. a nonce collision with the CI keeper,
+ * which signs with this same key). Bound every server-side wait so the
+ * caller gets a clean, retryable error instead of an eternal spinner.
+ */
+async function waitBounded(tx: ethers.ContractTransaction, ms = 60000): Promise<ethers.ContractReceipt> {
+  let timer: NodeJS.Timeout;
+  const deadline = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => rej(new Error(`tx ${tx.hash} unconfirmed after ${ms / 1000}s`)), ms);
+  });
+  try {
+    return await Promise.race([tx.wait(), deadline]);
+  } finally {
+    clearTimeout(timer!);
+  }
 }
 
 export function getServerSigner(): ethers.Wallet {
@@ -188,7 +242,7 @@ export async function addToWhitelistOnChain(
 ): Promise<string> {
   const wl = new ethers.Contract(whitelistAddress, sageWhitelistJson.abi, getServerSigner());
   const tx = await wl.addAddresses(wallets);
-  await tx.wait();
+  await waitBounded(tx);
   return tx.hash;
 }
 
@@ -204,7 +258,7 @@ export async function setContractMetadataOnChain(
   const abi = ['function setContractMetadata(string _contractMetadata)'];
   const nft = new ethers.Contract(nftContractAddress, abi, getServerSigner());
   const tx = await nft.setContractMetadata(metadataUrl);
-  await tx.wait();
+  await waitBounded(tx);
   return tx.hash;
 }
 
@@ -292,7 +346,7 @@ export async function mintSocialCollectServerSide(
   if (!contractAddress) throw new Error('collecting is not enabled on this network yet');
   const nft = new ethers.Contract(contractAddress, sageNftJson.abi, getServerSigner());
   const tx = await nft.safeMint(to, tokenUri);
-  const receipt = await tx.wait();
+  const receipt = await waitBounded(tx);
   const ev = receipt.events?.find((e: any) => e.event === 'Transfer');
   if (!ev) throw new Error('mint succeeded but no Transfer event found');
   return { txHash: tx.hash, tokenId: ev.args.tokenId.toNumber() };
@@ -311,7 +365,7 @@ export async function setCollectionWhitelistOnChain(
   const onChain = await c.getCollection(collectionId);
   if (onChain?.whitelist?.toLowerCase() === whitelistAddress.toLowerCase()) return 'unchanged';
   const tx = await c.setWhitelist(collectionId, whitelistAddress);
-  await tx.wait();
+  await waitBounded(tx);
   return tx.hash;
 }
 
@@ -356,13 +410,13 @@ export async function transferPixelsOnChain(
 ): Promise<string> {
   const c = pointsContract(getServerSigner());
   const tx = await c.transferPoints(from, to, amount, reason);
-  await tx.wait();
+  await waitBounded(tx);
   return tx.hash;
 }
 
 export async function creditPixelsOnChain(to: string, amount: bigint, reason: string): Promise<string> {
   const c = pointsContract(getServerSigner());
   const tx = await c.creditTo(to, amount, reason);
-  await tx.wait();
+  await waitBounded(tx);
   return tx.hash;
 }
