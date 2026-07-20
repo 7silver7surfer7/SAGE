@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Grant role.minter — SocialCollectMinter</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  input { width: 100%; font-size: 1rem; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; margin-top: 12px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem; }
+  .warn { color: #b45309; } .err { color: #dc2626; } .ok { color: #0c9d68; }
+</style>
+</head>
+<body>
+  <h1>Grant role.minter 🗝️</h1>
+  <p class="sub">Lets the deployed <code>SocialCollectMinter</code> mint SAGE Social
+  collect-NFTs when collectors redeem their voucher (paying their own gas). One
+  <code>grantRole</code> tx on SageStorage — must be signed by the multisig
+  (<code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code>), the only DEFAULT_ADMIN holder.</p>
+
+  <button id="connectBtn">connect wallet</button>
+  <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
+  <div class="row"><span>SageStorage</span><code>0x43E26D8B5c559DECb09d65F325e1405589775BA2</code></div>
+
+  <div class="card">
+    <p class="row"><span>SocialCollectMinter address (from the deploy script output)</span></p>
+    <input id="minterAddr" placeholder="0x…" spellcheck="false" />
+    <button id="grantBtn" disabled>grant role.minter</button>
+    <div class="status" id="status">Connect the multisig wallet, paste the minter address, grant.</div>
+  </div>
+
+<script>
+  const CHAIN_ID = '0x1237'; // 4663 (Robinhood Chain mainnet)
+  const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
+  const MULTISIG = '0x3e099af007cab8233d44782d8e6fe80fecdc321e';
+  const ROLE = '43c12360602d49748153591f2df5a853821ec8410115f225b90a7a49bd5d2bb9'; // keccak256("role.minter")
+  const GRANT_SEL = '0x2f2ff15d'; // grantRole(bytes32,address)
+  const HASROLE_SEL = '0x91d14854'; // hasRole(bytes32,address)
+
+  const $ = (id) => document.getElementById(id);
+  let account = null;
+
+  function pad(addr) { return addr.toLowerCase().replace('0x', '').padStart(64, '0'); }
+  function validAddr(a) { return /^0x[0-9a-fA-F]{40}$/.test(a); }
+
+  $('connectBtn').onclick = async () => {
+    if (!window.ethereum) { $('status').textContent = 'MetaMask not found.'; return; }
+    const chainId = await ethereum.request({ method: 'eth_chainId' });
+    if (chainId.toLowerCase() !== CHAIN_ID) {
+      try { await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] }); }
+      catch { $('status').textContent = 'Switch MetaMask to Robinhood Chain mainnet (4663) first.'; return; }
+    }
+    const accts = await ethereum.request({ method: 'eth_requestAccounts' });
+    account = accts[0];
+    $('connected').textContent = account;
+    if (account.toLowerCase() !== MULTISIG) {
+      $('status').innerHTML = '<span class="warn">This is not the multisig wallet — the grant will revert. Switch accounts.</span>';
+    } else {
+      $('status').textContent = 'Multisig connected. Paste the minter address and grant.';
+    }
+    $('grantBtn').disabled = false;
+  };
+
+  $('grantBtn').onclick = async () => {
+    const minter = $('minterAddr').value.trim();
+    if (!validAddr(minter)) { $('status').innerHTML = '<span class="err">That is not a valid address.</span>'; return; }
+    $('grantBtn').disabled = true;
+    try {
+      // pre-check: already granted?
+      const already = await ethereum.request({ method: 'eth_call', params: [{
+        to: STORAGE, data: HASROLE_SEL + ROLE + pad(minter) }, 'latest'] });
+      if (already && already.endsWith('1')) {
+        $('status').innerHTML = '<span class="ok">Already granted — nothing to do.</span>';
+        return;
+      }
+      const txHash = await ethereum.request({ method: 'eth_sendTransaction', params: [{
+        from: account, to: STORAGE, data: GRANT_SEL + ROLE + pad(minter) }] });
+      $('status').textContent = 'Sent: ' + txHash + '\nWaiting for confirmation…';
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const rc = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+        if (rc) {
+          $('status').innerHTML = rc.status === '0x1'
+            ? '<span class="ok">Granted ✓ — the minter can now safeMint. Set SOCIAL_COLLECT_MINTER_ADDRESS in the app config and deploy.</span>'
+            : '<span class="err">Transaction reverted — is the connected wallet really the multisig?</span>';
+          return;
+        }
+      }
+      $('status').innerHTML = '<span class="warn">Still pending — check the explorer for ' + txHash + '</span>';
+    } catch (e) {
+      $('status').innerHTML = '<span class="err">' + (e.message || e) + '</span>';
+    } finally {
+      $('grantBtn').disabled = false;
+    }
+  };
+</script>
+</body>
+</html>

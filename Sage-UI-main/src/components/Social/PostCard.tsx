@@ -14,12 +14,14 @@ import { parameters } from '@/constants/config';
 import { toDecimalString } from '@/utilities/decimalString';
 import {
   SocialPost,
+  QuotedPost,
   useDeletePostMutation,
   useToggleLikeMutation,
   useToggleRepostMutation,
   useRecordTipMutation,
   useSetCollectibleMutation,
   useCollectPostMutation,
+  useConfirmCollectMintMutation,
   useRequestCollectVoucherMutation,
   useEditPostMutation,
   usePinPostMutation,
@@ -28,8 +30,10 @@ import {
 import { useGetAuctionStateQuery } from '@/store/auctionsReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import VerifiedBadge from './VerifiedBadge';
+import AgentBadge from './AgentBadge';
 import VerificationModal from './VerificationModal';
 import BoostModal from './BoostModal';
+import ImageLightbox from './ImageLightbox';
 
 /** live countdown text for the drop bar — "2d 4h", "3h 12m", "4m 09s" */
 function countdownText(msLeft: number): string {
@@ -84,26 +88,50 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-/** URLs in post text become real (tappable) links, Twitter-style. */
-const URL_SPLIT_RE = /(https?:\/\/[^\s<>"')]+)/g;
-function linkifyText(text: string) {
-  return text.split(URL_SPLIT_RE).map((part, i) =>
-    /^https?:\/\//.test(part) ? (
-      <a
-        key={i}
-        className='social-post__link'
-        href={part}
-        target='_blank'
-        rel='noreferrer noopener'
-        onClick={(e) => e.stopPropagation()}
-      >
-        {part.replace(/^https?:\/\/(www\.)?/, '').slice(0, 40)}
-        {part.replace(/^https?:\/\/(www\.)?/, '').length > 40 ? '…' : ''}
-      </a>
-    ) : (
-      part
-    )
-  );
+/**
+ * Post text → tappable tokens, Twitter-style: URLs open in a new tab, #hashtags
+ * route to the topic feed. Split on both patterns in one pass so ordering is
+ * preserved (a capturing group keeps the delimiters in the split result).
+ */
+const TOKEN_SPLIT_RE = /(https?:\/\/[^\s<>"')]+|(?:^|\s)#\w{1,79})/g;
+function linkifyText(text: string, onTag?: (tag: string) => void) {
+  return text.split(TOKEN_SPLIT_RE).map((part, i) => {
+    if (part == null) return null;
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a
+          key={i}
+          className='social-post__link'
+          href={part}
+          target='_blank'
+          rel='noreferrer noopener'
+          onClick={(e) => e.stopPropagation()}
+        >
+          {part.replace(/^https?:\/\/(www\.)?/, '').slice(0, 40)}
+          {part.replace(/^https?:\/\/(www\.)?/, '').length > 40 ? '…' : ''}
+        </a>
+      );
+    }
+    const tagMatch = part.match(/^(\s*)#(\w{1,79})$/);
+    if (tagMatch && !/^\d+$/.test(tagMatch[2])) {
+      const tag = tagMatch[2].toLowerCase();
+      return (
+        <span key={i}>
+          {tagMatch[1]}
+          <a
+            className='social-post__hashtag'
+            onClick={(e) => {
+              e.stopPropagation();
+              onTag?.(tag);
+            }}
+          >
+            #{tagMatch[2]}
+          </a>
+        </span>
+      );
+    }
+    return part;
+  });
 }
 
 function domainOf(url: string): string {
@@ -150,6 +178,38 @@ const PinIcon = () => (
     <path d='M16 3l5 5-4.5 4.5L18 16l-1.5 1.5L12 13l-6 6H4v-2l6-6-4.5-4.5L7 5l3.5 2.5L15 3z' />
   </svg>
 );
+/** The embedded card for a quote-repost — a compact, tappable mini-post. */
+function QuotedCard({ quoted }: { quoted: QuotedPost }) {
+  const router = useRouter();
+  const name = quoted.author.username
+    ? transformTitle(quoted.author.username)
+    : shortenAddress(quoted.author.address);
+  return (
+    <div
+      className='social-post__quoted'
+      onClick={(e) => {
+        e.stopPropagation();
+        router.push(`/social/post/${quoted.id}`);
+      }}
+    >
+      <div className='social-post__quoted-head'>
+        <div className='social-post__quoted-avatar'>
+          <PfpImage src={quoted.author.profilePicture} />
+        </div>
+        <span className='social-post__quoted-name'>{name}</span>
+        {quoted.author.verified && <VerifiedBadge size={12} />}
+        {quoted.author.isAgent && <AgentBadge />}
+        <span className='social-post__quoted-time'>· {timeAgo(quoted.createdAt)}</span>
+      </div>
+      {quoted.text && <p className='social-post__quoted-text'>{quoted.text}</p>}
+      {quoted.imageUrl && quoted.mediaType !== 'video' && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className='social-post__quoted-img' src={quoted.imageUrl} alt='' />
+      )}
+    </div>
+  );
+}
+
 interface Props {
   post: SocialPost;
   onReply?: (post: SocialPost) => void;
@@ -165,6 +225,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [recordTip] = useRecordTipMutation();
   const [setCollectible] = useSetCollectibleMutation();
   const [collectPost] = useCollectPostMutation();
+  const [confirmCollectMint] = useConfirmCollectMintMutation();
   const [requestVoucher] = useRequestCollectVoucherMutation();
   const [deletePost] = useDeletePostMutation();
   const [pinPost] = usePinPostMutation();
@@ -178,7 +239,14 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const [editText, setEditText] = useState('');
   const [localEdit, setLocalEdit] = useState<{ text: string; editedAt: string } | null>(null);
   const [showBoost, setShowBoost] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // the media box adapts to the image's real proportions (measured on load)
+  // instead of forcing every image into one fixed-height crop — a portrait
+  // painting no longer gets cropped down to a sliver. Starts square (1) as a
+  // neutral placeholder before the real ratio is known.
+  const [mediaRatio, setMediaRatio] = useState(1);
+  useEffect(() => setMediaRatio(1), [post.imageUrl]);
   const { openConnectModal } = useConnectModal();
 
   // client-side hide (mute): persists in localStorage so a hidden post stays
@@ -207,7 +275,10 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
   const onShareX = (e: React.MouseEvent) => {
     e.stopPropagation();
     setMenuOpen(false);
-    const text = encodeURIComponent(`${post.text?.slice(0, 180) || 'on SAGE Social'}\n\n${postUrl()}`);
+    // Full post text, uncut — X's own composer handles its character limit
+    // (and lets the user trim it there); truncating here just silently cut
+    // posts off mid-sentence even though posts can run up to 500 chars.
+    const text = encodeURIComponent(`${post.text || 'on SAGE Social'}\n\n${postUrl()}`);
     window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
   };
   const onHide = (e: React.MouseEvent) => {
@@ -324,6 +395,12 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
     e.stopPropagation();
     if (!requireAuth()) return;
     await toggleRepost(post.id);
+  };
+  const onQuote = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen(false);
+    if (!requireAuth()) return;
+    router.push(`/social/compose?quote=${post.id}`);
   };
 
   const onTip = async (e: React.MouseEvent) => {
@@ -475,6 +552,42 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
         toast.update(t, { render: 'Payment sent — minting…', isLoading: true });
       }
       const r = await collectPost({ postId: post.id, payWith, txHash }).unwrap();
+      if (r.voucher && r.minter) {
+        // voucher mode: payment is settled server-side; the MINT is the
+        // collector's own tx (their gas). If the wallet isn't connected the
+        // voucher isn't lost — CollectPost re-issues it on the next click
+        // without charging again.
+        if (!signer) {
+          toast.update(t, {
+            render: 'Payment settled — reconnect your wallet to mint (you pay only gas)',
+            type: 'info',
+            isLoading: false,
+            autoClose: 8000,
+          });
+          openConnectModal?.();
+          setBusy(false);
+          return;
+        }
+        toast.update(t, { render: 'Payment settled — confirm the mint in your wallet (you pay only gas)', isLoading: true });
+        const mintTxHash = await redeemCollectVoucher(
+          r.minter,
+          r.voucher.postId,
+          r.voucher.uri,
+          r.voucher.signature,
+          signer as any
+        );
+        const confirmed = await confirmCollectMint({ postId: post.id, txHash: mintTxHash }).unwrap().catch(() => null);
+        toast.update(t, {
+          render: `Minted ⬡ SAGE Social #${post.id} is in your wallet${
+            confirmed?.tokenId != null ? ` (token ${confirmed.tokenId})` : ''
+          }${r.pointsSpent ? ` — ${r.pointsSpent} pixels` : ''}`,
+          type: 'success',
+          isLoading: false,
+          autoClose: 7000,
+        });
+        setBusy(false);
+        return;
+      }
       toast.update(t, {
         render: `Minted ⬡ SAGE Social #${post.id} is in your wallet (token ${r.tokenId}${
           r.pointsSpent ? `, ${r.pointsSpent} pixels` : ''
@@ -525,6 +638,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             {displayName}
           </span>
           {post.author.verified && <VerifiedBadge />}
+          {post.author.isAgent && <AgentBadge />}
           <span className='social-post__handle'>{shortenAddress(post.author.address)}</span>
           <span className='social-post__dot'>·</span>
           <span className='social-post__time'>{timeAgo(post.createdAt)}</span>
@@ -557,6 +671,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
                 <div className='social-post__menu' onClick={(e) => e.stopPropagation()}>
                   <button onClick={onShareCopy}>Copy link</button>
                   <button onClick={onShareX}>Share on 𝕏</button>
+                  <button onClick={onQuote}>Quote post</button>
                   <button onClick={onHide}>Hide this post</button>
                   {isAdminViewer && !isOwnPost && (
                     <button
@@ -643,7 +758,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
         ) : (
           (localEdit?.text ?? post.text) && (
             <p className='social-post__text'>
-              {linkifyText(localEdit?.text ?? post.text)}
+              {linkifyText(localEdit?.text ?? post.text, (tag) => router.push(`/social/tag/${tag}`))}
               {(localEdit?.editedAt || post.editedAt) && (
                 <span className='social-post__edited' title='This post was edited'>
                   {' '}· edited
@@ -652,6 +767,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
             </p>
           )
         )}
+        {post.quoted && <QuotedCard quoted={post.quoted} />}
         {post.linkUrl && !post.imageUrl && (
           <a
             className='social-post__linkcard'
@@ -674,13 +790,26 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
           </a>
         )}
         {post.imageUrl && (
-          <div className='social-post__media' onClick={(e) => e.stopPropagation()}>
+          <div
+            className='social-post__media'
+            onClick={(e) => e.stopPropagation()}
+            style={post.mediaType === 'video' ? undefined : { aspectRatio: String(mediaRatio) }}
+          >
             {post.mediaType === 'video' ? (
               // eslint-disable-next-line jsx-a11y/media-has-caption
               <video src={post.imageUrl} controls playsInline preload='metadata' />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={post.imageUrl} alt='' />
+              <img
+                src={post.imageUrl}
+                alt=''
+                onClick={() => setLightboxSrc(post.imageUrl as string)}
+                onLoad={(e) => {
+                  const { naturalWidth, naturalHeight } = e.currentTarget;
+                  if (naturalWidth && naturalHeight) setMediaRatio(naturalWidth / naturalHeight);
+                }}
+                style={{ cursor: 'zoom-in' }}
+              />
             )}
           </div>
         )}
@@ -845,6 +974,7 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
       </div>
       {showVerify && <VerificationModal onClose={() => setShowVerify(false)} />}
       {showBoost && <BoostModal postId={post.id} onClose={() => setShowBoost(false)} />}
+      <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </article>
   );
 }

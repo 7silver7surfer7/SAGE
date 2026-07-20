@@ -195,6 +195,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => setCollectible(request, response, r));
       case 'CollectPost':
         return await withAuth(request, response, (r) => collectPost(request, response, r));
+      case 'ConfirmCollectMint':
+        return await withAuth(request, response, (r) => confirmCollectMint(request, response, r));
       case 'GetOwnedNfts':
         return await withAuth(request, response, (r) => getOwnedNfts(response, r));
       case 'SetNftPfp':
@@ -1556,6 +1558,36 @@ async function collectPost(
     });
   } catch (e: any) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      // Voucher-mode resume: the wallet already PAID (its claim row survived)
+      // but never redeemed its mint — e.g. it closed the tab before the
+      // wallet prompt. Re-issue the same voucher WITHOUT charging again; the
+      // contract's redeemed[(postId,collector)] key makes double-redeeming
+      // impossible, so handing the voucher out twice is harmless.
+      if (parameters.SOCIAL_COLLECT_MINTER_ADDRESS) {
+        const existing = await prisma.socialCollect.findFirst({
+          where: { postId: id, collectorAddress: r.walletAddress },
+        });
+        const paid =
+          existing &&
+          !existing.mintTxHash &&
+          (existing.payTxHash !== null || existing.pointsSpent !== null || post.collectPrice === 0);
+        if (paid) {
+          const uri = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
+          const signature = await signCollectVoucher(
+            parameters.SOCIAL_COLLECT_MINTER_ADDRESS,
+            Number(parameters.CHAIN_ID),
+            id,
+            r.walletAddress,
+            uri
+          );
+          return res.json({
+            ok: true,
+            voucher: { postId: id, uri, signature },
+            minter: parameters.SOCIAL_COLLECT_MINTER_ADDRESS,
+            resumed: true,
+          });
+        }
+      }
       return res.status(400).json({ error: 'already collected' });
     }
     throw e;
@@ -1564,6 +1596,44 @@ async function collectPost(
   // placeholder row) so a failed attempt doesn't permanently lock this
   // wallet out of ever collecting this post.
   const releaseClaim = () => prisma.socialCollect.delete({ where: { id: claim.id } }).catch(() => {});
+
+  // Voucher mode (SOCIAL_COLLECT_MINTER_ADDRESS set): the server's job ends
+  // at settling payment + signing an EIP-712 voucher — the COLLECTOR submits
+  // the mint tx and pays its gas (SocialCollectMinter redeems the voucher and
+  // safeMints to them). The oracle wallet spends nothing. Falls back to the
+  // legacy server-side mint when unset.
+  const issueVoucher = async (
+    settled: { amount: number; currency: 'ETH' | 'POINTS'; payTxHash: string | null; pointsSpent: bigint | null }
+  ) => {
+    const uri = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
+    const signature = await signCollectVoucher(
+      parameters.SOCIAL_COLLECT_MINTER_ADDRESS,
+      Number(parameters.CHAIN_ID),
+      id,
+      r.walletAddress,
+      uri
+    );
+    await prisma.$transaction([
+      prisma.socialCollect.update({
+        where: { id: claim.id },
+        data: {
+          amount: settled.amount,
+          currency: settled.currency,
+          payTxHash: settled.payTxHash,
+          pointsSpent: settled.pointsSpent,
+          // mintTxHash/tokenId stay null until ConfirmCollectMint sees the
+          // collector's redeem tx
+        },
+      }),
+      prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
+    ]);
+    return res.json({
+      ok: true,
+      voucher: { postId: id, uri, signature },
+      minter: parameters.SOCIAL_COLLECT_MINTER_ADDRESS,
+      pointsSpent: settled.pointsSpent?.toString() ?? null,
+    });
+  };
 
   // ETH-priced posts (image art): the buyer pays the AUTHOR directly with a
   // wallet tx; we verify it on-chain (amount + recipient + replay via the
@@ -1605,6 +1675,9 @@ async function collectPost(
         return res.status(400).json({ error: `payment not verified: ${e.message}` });
       }
       ethTxHash = txHash;
+    }
+    if (parameters.SOCIAL_COLLECT_MINTER_ADDRESS) {
+      return issueVoucher({ amount, currency, payTxHash: ethTxHash, pointsSpent: null });
     }
     const tokenUriEth = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
     let mintEth: Awaited<ReturnType<typeof mintSocialCollectServerSide>>;
@@ -1663,6 +1736,10 @@ async function collectPost(
     pointsSpent = pointsPrice;
   }
 
+  if (parameters.SOCIAL_COLLECT_MINTER_ADDRESS) {
+    return issueVoucher({ amount, currency: 'POINTS', payTxHash: null, pointsSpent });
+  }
+
   // server-mints the post NFT to the collector (platform holds role.minter)
   const tokenUri = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
   let mint: Awaited<ReturnType<typeof mintSocialCollectServerSide>>;
@@ -1691,6 +1768,67 @@ async function collectPost(
     prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
   ]);
   res.json({ ok: true, tokenId: mint.tokenId, mintTxHash: mint.txHash, pointsSpent: pointsSpent?.toString() ?? null });
+}
+
+/**
+ * Voucher-mode bookkeeping: after the collector's own mintWithVoucher tx
+ * mines, they report the hash and we verify it on-chain (right contract,
+ * succeeded, redeemed THIS post for THIS wallet) and finalize the collect
+ * row with the minted tokenId. Purely record-keeping — the NFT already
+ * exists on-chain whether or not this ever gets called; a "pending" row just
+ * means the collector never told us.
+ */
+async function confirmCollectMint(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  r: { walletAddress: string }
+) {
+  const { postId, txHash } = req.body || {};
+  const id = Number(postId);
+  if (!id || !txHash) return res.status(400).json({ error: 'postId and txHash required' });
+  const minter = parameters.SOCIAL_COLLECT_MINTER_ADDRESS;
+  if (!minter) return res.status(400).json({ error: 'voucher minting is not enabled' });
+  const row = await prisma.socialCollect.findFirst({
+    where: { postId: id, collectorAddress: r.walletAddress },
+  });
+  if (!row) return res.status(404).json({ error: 'no collect claim for this post' });
+  if (row.mintTxHash) return res.json({ ok: true, tokenId: row.tokenId, already: true });
+
+  const { ethers } = await import('ethers');
+  const provider = new ethers.providers.StaticJsonRpcProvider({
+    url: parameters.RPC_URL,
+    timeout: 30000,
+  });
+  const receipt = await provider.getTransactionReceipt(String(txHash));
+  if (!receipt || receipt.status !== 1) {
+    return res.status(400).json({ error: 'mint tx not found or reverted' });
+  }
+  // Collected(uint256 indexed postId, address indexed collector) from OUR minter
+  const collectedTopic = ethers.utils.id('Collected(uint256,address)');
+  const collected = receipt.logs.find(
+    (l) =>
+      l.address.toLowerCase() === minter.toLowerCase() &&
+      l.topics[0] === collectedTopic &&
+      ethers.BigNumber.from(l.topics[1]).toNumber() === id &&
+      l.topics[2].toLowerCase().endsWith(r.walletAddress.slice(2).toLowerCase())
+  );
+  if (!collected) {
+    return res.status(400).json({ error: 'tx did not redeem this post for your wallet' });
+  }
+  // the minted tokenId rides the NFT contract's Transfer(0x0 → collector)
+  const transferTopic = ethers.utils.id('Transfer(address,address,uint256)');
+  const mintLog = receipt.logs.find(
+    (l) =>
+      l.address.toLowerCase() === parameters.SOCIAL_COLLECTS_ADDRESS.toLowerCase() &&
+      l.topics[0] === transferTopic &&
+      ethers.BigNumber.from(l.topics[1]).isZero()
+  );
+  const tokenId = mintLog ? ethers.BigNumber.from(mintLog.topics[3]).toNumber() : null;
+  await prisma.socialCollect.update({
+    where: { id: row.id },
+    data: { mintTxHash: String(txHash), contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS, tokenId },
+  });
+  res.json({ ok: true, tokenId });
 }
 
 async function getOwnedNfts(res: NextApiResponse, r: { walletAddress: string }) {

@@ -703,11 +703,28 @@ const socialApi = baseApi.injectEndpoints({
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
     }),
     collectPost: builder.mutation<
-      { ok: boolean; tokenId: number; mintTxHash: string; pointsSpent: string | null },
+      {
+        ok: boolean;
+        // legacy server-mint response…
+        tokenId?: number;
+        mintTxHash?: string;
+        pointsSpent: string | null;
+        // …or voucher mode: the collector redeems this themselves (their gas)
+        voucher?: { postId: number; uri: string; signature: string };
+        minter?: string;
+        resumed?: boolean;
+      },
       { postId: number; txHash?: string; payWith?: 'SAGE' | 'POINTS' }
     >({
       query: (body) => ({ url: 'social?action=CollectPost', method: 'POST', body }),
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }, 'SocialFeed'],
+    }),
+    confirmCollectMint: builder.mutation<
+      { ok: boolean; tokenId: number | null; already?: boolean },
+      { postId: number; txHash: string }
+    >({
+      query: (body) => ({ url: 'social?action=ConfirmCollectMint', method: 'POST', body }),
+      invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }],
     }),
     setNftPfp: builder.mutation<
       { ok: boolean; profilePicture: string; pfpVerified: boolean },
@@ -1025,6 +1042,7 @@ export const {
   useBoostPostMutation,
   useSetCollectibleMutation,
   useCollectPostMutation,
+  useConfirmCollectMintMutation,
   useSetNftPfpMutation,
   useSetFollowGateMutation,
   usePurchaseVerificationMutation,
