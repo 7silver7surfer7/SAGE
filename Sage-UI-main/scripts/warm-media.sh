@@ -13,7 +13,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BASE_URL="${BASE_URL:-https://sageart.xyz}"
-PROD_URL=$(grep "^DATABASE_CONNECTION_POOL_URL=" .env.deploy | cut -d= -f2-)
+# strip optional shell quotes: the value is quoted in .env.deploy because the
+# Dockerfile SOURCES that file with sh and the URL contains '&' (unquoted, sh
+# would background the assignment and the var would vanish at build time)
+PROD_URL=$(grep "^DATABASE_CONNECTION_POOL_URL=" .env.deploy | cut -d= -f2- | sed "s/^['\"]//; s/['\"]$//")
 
 # every video txid referenced by a live (approved) drop's games
 TXIDS=$(psql "$PROD_URL" -t -A -c "
