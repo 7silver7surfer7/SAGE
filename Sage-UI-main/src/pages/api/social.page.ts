@@ -25,6 +25,7 @@ import {
   pixelsDailyRate,
   transferPixelsOnChain,
 } from '@/utilities/serverWallet';
+import { pixelsSource, dbBankSweep } from '@/utilities/pixelsLedger';
 
 /**
  * SAGE Social — a wallet-native BlueSky clone. Identity is the SIWE wallet
@@ -142,6 +143,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getTokenDetail(String(request.query.address || ''), response);
       case 'GetTokenTradeLedger':
         return await getTokenTradeLedger(request, response);
+      case 'SyncPixelBank':
+        return await syncPixelBank(response);
       case 'GetTokens':
         return await getTokens(request, response);
       case 'GetMyTokenHoldings':
@@ -3931,6 +3934,21 @@ async function syncPoolTradesInner(
  * complete and permanent substitute for a chain scan, with no RPC log-query
  * budget to blow and no sliding window to fall out of.
  */
+
+/**
+ * The DB keeper's trigger — the zero-gas replacement for the seedSettled
+ * cron. Public and unauthenticated by design (like the trade-indexer nudge):
+ * the CI cron pokes it with a bare curl, no DB creds or keys in CI. Banking
+ * is idempotent and self-correcting, so an extra poke can never corrupt
+ * state — the throttle just caps RPC read load. No-op until PIXELS_SOURCE=db.
+ */
+async function syncPixelBank(res: NextApiResponse) {
+  if (pixelsSource() !== 'db') {
+    return res.json({ mode: 'chain', note: 'DB ledger not active — on-chain keeper owns accrual' });
+  }
+  const result = await withMemoCache('pixel-bank-sweep', 60_000, () => dbBankSweep());
+  res.json({ mode: 'db', ...result });
+}
 async function getTokenTradeLedger(req: NextApiRequest, res: NextApiResponse) {
   const token = canon(String(req.query.address || ''));
   if (!token) return res.status(400).json({ error: 'bad address' });

@@ -892,3 +892,31 @@ model BidHistory {
   Auction               Auction @relation(fields: [auctionId], references: [id])
   Bidder                User @relation(fields: [bidderAddress], references: [walletAddress])
 }
+// ─── Off-chain pixels ledger (migration prep, 2026-07-20) ────────────────────
+// Mirrors SagePoints v3's exact streaming design so accrual needs NO writes:
+// points-at-read-time = settled + min(checkpointSage, cap) × rate × elapsed.
+// The keeper's job (bank the stream + reset the checkpoint when a balance
+// changes) becomes a free DB update instead of a gas-costing seedSettled tx.
+// Snapshot copies each wallet's on-chain (settled, checkpointSage, lastSync)
+// verbatim, so the math continues seamlessly from the same state. While
+// PIXELS_SOURCE=chain (the default) these tables are shadow-only.
+model PixelAccount {
+  walletAddress String   @id @db.Char(42)
+  settled       BigInt   @default(0) // banked whole pixels
+  checkpointSage BigInt  @default(0) // whole SAGE sustained since lastSync
+  lastSync      DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Append-only journal — the auditability that replaces on-chain transparency.
+// Every settled-balance mutation writes a row: migration snapshots, keeper
+// banking, collect spends/earns, refunds, promos.
+model PixelJournal {
+  id            Int      @id @default(autoincrement())
+  walletAddress String   @db.Char(42)
+  delta         BigInt   // signed whole pixels
+  kind          String   @db.VarChar(20) // snapshot|bank|spend|credit|refund
+  reason        String   @db.VarChar(120)
+  createdAt     DateTime @default(now())
+  @@index([walletAddress, createdAt])
+}

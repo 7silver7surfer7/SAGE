@@ -1,5 +1,12 @@
 import { ethers } from 'ethers';
 import { parameters } from '@/constants/config';
+import {
+  pixelsSource,
+  dbPointsOf,
+  dbDailyRate,
+  dbTransferPixels,
+  dbCreditPixels,
+} from '@/utilities/pixelsLedger';
 import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
 import sageCollectionJson from '@/constants/abis/Collection/SageCollection.sol/SageCollection.json';
 import sageNftJson from '@/constants/abis/NFT/SageNFT.sol/SageNFT.json';
@@ -385,22 +392,31 @@ function pointsContract(signer?: ethers.Signer) {
   return new ethers.Contract(addr, SAGE_POINTS_ABI, signer || getProvider());
 }
 
+// These four functions are the ONLY seam between the app and the pixels
+// system — every read (balances, leaderboard, rates) and every write
+// (collect spends, credits, refunds) funnels through them. PIXELS_SOURCE=db
+// swaps the on-chain SagePoints contract for the DB ledger (pixelsLedger.ts)
+// with zero call-site changes; the default 'chain' keeps the contract
+// authoritative. Cutover gate: scripts/pixels-migration/compare.mjs.
+
 /** Live streamed pixel balance for a wallet (integer pixels). */
 export async function pixelsOf(address: string): Promise<bigint> {
+  if (pixelsSource() === 'db') return dbPointsOf(address);
   const bal = await pointsContract().pointsOf(address);
   return BigInt(bal.toString());
 }
 
 /** Pixels/day the wallet currently earns from its SAGE balance. */
 export async function pixelsDailyRate(address: string): Promise<bigint> {
+  if (pixelsSource() === 'db') return dbDailyRate(address);
   const rate = await pointsContract().dailyRateOf(address);
   return BigInt(rate.toString());
 }
 
 /**
- * Buyer pays seller in pixels — one on-chain tx via the controller wallet.
- * Reverts (throws) with "insufficient pixels" when the buyer can't cover it,
- * so the contract is the single source of truth for spendability.
+ * Buyer pays seller in pixels. Chain mode: one on-chain tx via the
+ * controller wallet. DB mode: one atomic DB transaction, zero gas. Both
+ * throw with "insufficient pixels" when the buyer can't cover it.
  */
 export async function transferPixelsOnChain(
   from: string,
@@ -408,6 +424,7 @@ export async function transferPixelsOnChain(
   amount: bigint,
   reason: string
 ): Promise<string> {
+  if (pixelsSource() === 'db') return dbTransferPixels(from, to, amount, reason);
   const c = pointsContract(getServerSigner());
   const tx = await c.transferPoints(from, to, amount, reason);
   await waitBounded(tx);
@@ -415,6 +432,7 @@ export async function transferPixelsOnChain(
 }
 
 export async function creditPixelsOnChain(to: string, amount: bigint, reason: string): Promise<string> {
+  if (pixelsSource() === 'db') return dbCreditPixels(to, amount, reason);
   const c = pointsContract(getServerSigner());
   const tx = await c.creditTo(to, amount, reason);
   await waitBounded(tx);
