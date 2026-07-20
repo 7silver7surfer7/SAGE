@@ -4146,14 +4146,37 @@ async function getTokenTradeLedger(req: NextApiRequest, res: NextApiResponse) {
 }
 
 /** Everything the pump.fun-style token page needs. */
+// One shared 2s response cache per token + in-flight dedupe: the token page
+// is the platform's hottest endpoint (every watcher polls it), and the
+// payload is viewer-agnostic — N simultaneous watchers now cost ONE rebuild
+// per 2s per instance instead of N. The dedupe map matters as much as the
+// TTL: on expiry a thundering herd of polls would otherwise all rebuild at
+// once (withMemoCache only caches AFTER a compute settles).
+const tokenDetailInFlight = new Map<string, Promise<unknown | null>>();
 async function getTokenDetail(address: string, res: NextApiResponse) {
   const token = canon(address);
   if (!token) return res.status(400).json({ error: 'bad address' });
+  const key = `tokendetail:${token}`;
+  const payload = await withMemoCache(key, 2_000, () => {
+    const running = tokenDetailInFlight.get(key);
+    if (running) return running;
+    const p = computeTokenDetail(token).finally(() => tokenDetailInFlight.delete(key));
+    tokenDetailInFlight.set(key, p);
+    return p;
+  });
+  if (!payload) return res.status(404).json({ error: 'token not found' });
+  // short shared cache (browsers + any future CDN rule); the candle tape
+  // streams client-side from chain events, so 2s of staleness shows nowhere
+  res.setHeader('Cache-Control', 'public, max-age=1, s-maxage=2, stale-while-revalidate=2');
+  return res.json(payload);
+}
+
+async function computeTokenDetail(token: string): Promise<unknown | null> {
   const launch = await prisma.socialTokenLaunch.findUnique({
     where: { tokenAddress: token },
     include: { Creator: { select: { username: true, profilePicture: true, verifiedAt: true } } },
   });
-  if (!launch) return res.status(404).json({ error: 'token not found' });
+  if (!launch) return null;
 
   // live curve state for the bonding-curve progress bar + price
   let curve: { realTokenReserves: number; complete: boolean; priceEth: number; pair: string | null } | null = null;
@@ -4231,9 +4254,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
   const INITIAL_PRICE = 2_000_000 / 1_073_000_000;
   const price24hAgoEth = before24h ? before24h.priceEth : trades.length ? INITIAL_PRICE : curve?.priceEth || 0;
 
-  // live trading view (1s client poll) — a CDN cache here would freeze the tape
-  res.setHeader('Cache-Control', 'no-store');
-  res.json({
+  return {
     token: {
       tokenAddress: launch.tokenAddress,
       name: launch.name,
@@ -4277,7 +4298,7 @@ async function getTokenDetail(address: string, res: NextApiResponse) {
       user: holderCards[addr] || { address: addr, username: null, verified: false, isAgent: false },
       balance: bal,
     })),
-  });
+  };
 }
 
 

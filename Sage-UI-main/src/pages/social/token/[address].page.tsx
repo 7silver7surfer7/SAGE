@@ -47,9 +47,18 @@ export default function TokenDetailPage() {
   const { walletAddress, isSignedIn } = useSAGEAccount();
   const { data: signer } = useSigner();
   const provider = useProvider();
+  // pause the reconcile poll while the tab is hidden — parked tabs were a
+  // pure server cost (RTK 1.6 predates skipPollingIfUnfocused, so hand-roll)
+  const [tabVisible, setTabVisible] = useState(true);
+  useEffect(() => {
+    const on = () => setTabVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', on);
+    return () => document.removeEventListener('visibilitychange', on);
+  }, []);
   const { data, isFetching, refetch } = useGetTokenDetailQuery(address, {
     skip: !address,
-    pollingInterval: 10_000, // reconcile only — the candle tape streams from chain events
+    // reconcile only — the candle tape streams from chain events
+    pollingInterval: tabVisible ? 10_000 : 0,
   });
   const [recordTrade] = useRecordTradeMutation();
   // holders/trades columns scroll forever (paginated + merged per token)
