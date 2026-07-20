@@ -304,7 +304,8 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
         <p className='social-verify__fine'>
           pump.fun&apos;s exact fee schedule: 1.25% on the curve (0.30% yours); post-graduation
           tiers stagger by market cap — your share peaks at 0.95% past $85k, gliding to 0.05%
-          by $20M. Claimable any time. 1B supply, auto-graduates to Uniswap (LP burned).
+          by $20M. Claimable any time. 1B supply, auto-graduates to Uniswap (LP held by the
+          SAGE treasury, so the pool&apos;s 0.30% swap fee is collectable instead of lost).
         </p>
       </div>
     </div>
