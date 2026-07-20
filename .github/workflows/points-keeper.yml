@@ -1,19 +1,12 @@
+# Cutover replacement for .github/workflows/points-keeper.yml — copy over it
+# at step 5 of CUTOVER.md. After PIXELS_SOURCE=db, accrual banking is a free
+# DB write inside the app; CI's whole job shrinks to poking two public
+# endpoints on a schedule. No node, no secrets, no gas.
 name: SagePoints keeper
 
-# Keeps on-chain pixel balances tracking real SAGE holdings: a new buyer starts
-# accruing from their purchase, more buys bump it up, a sale banks-and-stops it.
-#
-# v3: holder discovery comes from the app's own trade ledger (an ever-growing,
-# real-time-updated DB table), not a chain log scan — a prior chain-scanning
-# design either timed out on full history or silently lost any wallet whose
-# one relevant transfer scrolled out of a bounded lookback window before a run
-# caught it. Only syncs holders whose balance drifted from their on-chain
-# checkpoint, so a quiet run sends no tx. Stateless (no watermark) — safe on
-# ephemeral runners.
 on:
   schedule:
-    - cron: '*/10 * * * *' # every 10 minutes
-    - cron: '17 * * * *' # reconcile: hourly, offset to avoid overlapping the keeper
+    - cron: '*/10 * * * *'
   workflow_dispatch: {}
 
 concurrency:
@@ -21,53 +14,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  keeper:
-    if: github.event.schedule != '17 * * * *'
+  poke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install ethers
-        run: npm install --no-save ethers@5 dotenv
-      # The post-graduation trade indexer is LAZY — it sweeps a token's
-      # Uniswap Swap events into the trades table only when its token page is
-      # viewed. Nudge every token's page endpoint FIRST, before the keeper
-      # reads that same table as its holder ledger, so charts/mcaps/holder
-      # lists AND pixel accrual all work off data that's ≤10min fresh even
-      # with zero visitors. Graduation-gated server-side; un-graduated tokens
-      # no-op.
-      - name: Nudge post-graduation trade indexer
+      # freshest trade ledger first (same nudge as before) so the bank sweep
+      # sees just-graduated pool trades
+      - name: Nudge trade indexer
         run: |
           for a in $(curl -sL "https://sageart.xyz/api/social/?action=GetTokens" | jq -r '.tokens[].tokenAddress' 2>/dev/null); do
             curl -sL -o /dev/null --max-time 60 "https://sageart.xyz/api/social/?action=GetTokenDetail&address=$a" || true
           done
-      - name: Run keeper
-        run: node Sage-Solidity-main/scripts/keeper_sync_points.js
-        env:
-          # reuse the existing pixel-oracle secret (same wallet is the v3
-          # controller/owner): Settings → Secrets → Actions → POINTS_ORACLE_PK
-          POINTS_ORACLE_PK: ${{ secrets.POINTS_ORACLE_PK }}
-
-  reconcile:
-    # Safety net for the trade-ledger-driven keeper above: that keeper can only
-    # discover wallets that traded through this app, so a wallet that received
-    # SAGE via pure transfer/airdrop (never a trade) never enters its ledger
-    # scan and would accrue zero pixels forever. This job replays the FULL
-    # genesis-to-head Transfer-log history to reconstruct every address's real
-    # balance timeline and seeds anyone the fast keeper missed. Heavier
-    # (chunked eth_getLogs across ~250 EOAs) so it runs hourly, not every 10min.
-    if: github.event.schedule == '17 * * * *' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install ethers
-        run: npm install --no-save ethers@5 dotenv
-      - name: Run reconciliation
-        run: node Sage-Solidity-main/scripts/keeper_reconcile.js
-        env:
-          POINTS_ORACLE_PK: ${{ secrets.POINTS_ORACLE_PK }}
+      - name: Bank pixel accrual (DB ledger — zero gas)
+        run: |
+          out=$(curl -sL --max-time 120 "https://sageart.xyz/api/social/?action=SyncPixelBank")
+          echo "$out"
+          echo "$out" | grep -q '"mode":"db"' || { echo "::error::ledger not in db mode — did the cutover env flip land?"; exit 1; }
