@@ -8,8 +8,8 @@
 // chart, swaps tape. tabular-nums everywhere; hairline dividers; every
 // chrome color routes through m.t(); green/red strictly for direction.
 
-$dex-up: #2fd67f;
-$dex-down: #ff5a6a;
+$_dex-up: #2fd67f;
+$_dex-down: #ff5a6a;
 
 .dex-pair {
   @include m.page;
@@ -18,10 +18,10 @@ $dex-down: #ff5a6a;
   // direction colors ride bare .up/.down (stat counts, trade sides) —
   // scoped under .dex-pair so they can't leak into other pages
   .up {
-    color: $dex-up;
+    color: $_dex-up;
   }
   .down {
-    color: $dex-down;
+    color: $_dex-down;
   }
 }
 

@@ -37,6 +37,19 @@ function rpc(): ethers.providers.StaticJsonRpcProvider {
   return new ethers.providers.StaticJsonRpcProvider({ url: parameters.RPC_URL, timeout: 30000 });
 }
 
+// On-chain names/symbols are attacker-controlled bytes: some carry lone
+// UTF-16 surrogate halves (broken emoji — hit live: 0xD83D in a memecoin
+// name), and a naive .slice can CREATE one by cutting a pair in two. Either
+// way Prisma/Postgres reject the string, which would kill a whole discovery
+// batch. Strip NULs + unpaired surrogates, truncate code-point-aware.
+function cleanLabel(s: string, max: number): string {
+  const noNul = String(s).replace(/\u0000/g, '');
+  const fixed = noNul
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, '$1');
+  return Array.from(fixed).slice(0, max).join('');
+}
+
 // Retry with backoff on each individual call (keeper_reconcile.js's shape):
 // this RPC rate-limits a few hundred calls into a burst, and a clean fail-fast
 // would throw away a whole already-mostly-succeeded sweep for one 429.
@@ -174,8 +187,8 @@ export async function syncPairDiscovery(
         baseToken: f.baseToken,
         quoteToken: f.quoteToken,
         baseIsToken0: f.baseIsToken0,
-        baseName: meta[i].name.slice(0, 80),
-        baseSymbol: meta[i].symbol.slice(0, 40),
+        baseName: cleanLabel(meta[i].name, 80),
+        baseSymbol: cleanLabel(meta[i].symbol, 40),
         baseDecimals: Number.isFinite(meta[i].decimals) ? meta[i].decimals : 18,
         createdAtBlock: f.blockNumber,
         createdAt: new Date((ts.get(f.blockNumber) || 0) * 1000),

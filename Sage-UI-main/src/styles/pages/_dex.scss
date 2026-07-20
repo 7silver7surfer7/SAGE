@@ -9,8 +9,8 @@
 // through m.t() so both theme variants render; the direction pair stays
 // hardcoded green/red in both.
 
-$dex-up: #2fd67f;
-$dex-down: #ff5a6a;
+$_dex-up: #2fd67f;
+$_dex-down: #ff5a6a;
 
 .dex-page {
   @include m.page;
@@ -19,10 +19,10 @@ $dex-down: #ff5a6a;
   // direction colors ride bare .up/.down classes (pct cells, buy/sell
   // counts) — scoped under .dex-page so they can't leak into other pages
   .up {
-    color: $dex-up;
+    color: $_dex-up;
   }
   .down {
-    color: $dex-down;
+    color: $_dex-down;
   }
 }
 
@@ -390,11 +390,11 @@ $dex-down: #ff5a6a;
 }
 
 .dex-spark--up {
-  color: $dex-up;
+  color: $_dex-up;
 }
 
 .dex-spark--down {
-  color: $dex-down;
+  color: $_dex-down;
 }
 
 .dex-page__star {

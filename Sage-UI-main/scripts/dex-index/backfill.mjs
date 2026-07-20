@@ -30,6 +30,18 @@ const PAIR_CREATED = ethers.utils.id('PairCreated(address,address,address,uint25
 const ERC20 = ['function name() view returns (string)', 'function symbol() view returns (string)', 'function decimals() view returns (uint8)'];
 const PAIR = ['function getReserves() view returns (uint112, uint112, uint32)'];
 
+// On-chain names/symbols are attacker-controlled bytes: some carry lone
+// UTF-16 surrogate halves (broken emoji), and a naive .slice can CREATE one
+// by cutting a pair in two — either way Prisma/Postgres reject the string.
+// Code-point-aware truncation + strip unpaired surrogates + strip NULs.
+function cleanLabel(s, max) {
+  const noNul = String(s).replace(/\u0000/g, '');
+  const fixed = noNul
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, '$1');
+  return Array.from(fixed).slice(0, max).join('');
+}
+
 async function withRetry(fn, tries = 4, base = 1500) {
   let last;
   for (let i = 0; i < tries; i++) {
@@ -98,8 +110,8 @@ async function main() {
           baseToken: base,
           quoteToken: baseIsToken0 ? e.token1 : e.token0,
           baseIsToken0,
-          baseName: String(name).slice(0, 80),
-          baseSymbol: String(symbol).slice(0, 40),
+          baseName: cleanLabel(name, 80),
+          baseSymbol: cleanLabel(symbol, 40),
           baseDecimals: Number(decimals),
           createdAtBlock: e.block,
           createdAt: new Date((ts.get(e.block) || 0) * 1000),
