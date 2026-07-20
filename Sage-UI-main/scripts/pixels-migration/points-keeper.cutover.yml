@@ -1,0 +1,31 @@
+# Cutover replacement for .github/workflows/points-keeper.yml — copy over it
+# at step 5 of CUTOVER.md. After PIXELS_SOURCE=db, accrual banking is a free
+# DB write inside the app; CI's whole job shrinks to poking two public
+# endpoints on a schedule. No node, no secrets, no gas.
+name: SagePoints keeper
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: points-keeper
+  cancel-in-progress: false
+
+jobs:
+  poke:
+    runs-on: ubuntu-latest
+    steps:
+      # freshest trade ledger first (same nudge as before) so the bank sweep
+      # sees just-graduated pool trades
+      - name: Nudge trade indexer
+        run: |
+          for a in $(curl -sL "https://sageart.xyz/api/social/?action=GetTokens" | jq -r '.tokens[].tokenAddress' 2>/dev/null); do
+            curl -sL -o /dev/null --max-time 60 "https://sageart.xyz/api/social/?action=GetTokenDetail&address=$a" || true
+          done
+      - name: Bank pixel accrual (DB ledger — zero gas)
+        run: |
+          out=$(curl -sL --max-time 120 "https://sageart.xyz/api/social/?action=SyncPixelBank")
+          echo "$out"
+          echo "$out" | grep -q '"mode":"db"' || { echo "::error::ledger not in db mode — did the cutover env flip land?"; exit 1; }
