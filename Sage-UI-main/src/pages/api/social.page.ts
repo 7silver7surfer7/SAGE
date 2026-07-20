@@ -1519,13 +1519,11 @@ async function collectPost(
   const post = await prisma.socialPost.findUnique({ where: { id } });
   if (!post) return res.status(404).json({ error: 'post not found' });
   if (post.collectPrice === null) return res.status(400).json({ error: 'post is not collectible' });
-  // recordTip already blocks self-tips for the same reason (pumping your own
-  // collectCount/leaderboard rank); collectPost had no equivalent guard —
-  // for a free (price 0) collectible post an author could mint themselves
-  // an unlimited-looking "sold out" collector count for nothing.
-  if (post.authorAddress.toLowerCase() === r.walletAddress.toLowerCase()) {
-    return res.status(400).json({ error: 'you cannot collect your own post' });
-  }
+  // Self-collects are allowed (artists often keep #1 of their own edition).
+  // Unlike self-tips (still blocked — they'd pump tip totals for free), a
+  // self-collect is bounded by the (postId, collectorAddress) unique claim
+  // below to a single +1 on collectCount, and a paid self-collect still pays
+  // the platform's cut — so there's no meaningful pump vector.
 
   // ATOMIC CLAIM: reserve the (postId, collectorAddress) slot BEFORE any of
   // the slow work below (on-chain payment verification, minting) — this is
