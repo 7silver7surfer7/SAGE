@@ -185,6 +185,31 @@ export async function dbCreditPixels(to: string, amount: bigint, reason: string)
 }
 
 /**
+ * The whole pixels leaderboard from ONE SQL read — no RPC. Uses each
+ * account's checkpoint as the live-balance proxy: the bank sweep
+ * re-checkpoints within ~10min of any balance change, so a freshly-traded
+ * wallet's row is off by at most minutes of accrual until the next sweep —
+ * invisible at leaderboard granularity, and worth it: the per-wallet
+ * RPC version pinned cold instances for 30-60s.
+ */
+export async function dbLeaderboardRows(): Promise<
+  { address: string; net: bigint; rate: bigint }[]
+> {
+  const accounts = await prisma.pixelAccount.findMany();
+  const now = Date.now();
+  const rows = accounts.map((a) => {
+    let held = a.checkpointSage > CAP_SAGE ? CAP_SAGE : a.checkpointSage;
+    return {
+      address: a.walletAddress,
+      net: a.settled + streamOf(a.checkpointSage, a.checkpointSage, a.lastSync, now),
+      rate: (held * RATE_SCALED) / HUNDRED,
+    };
+  });
+  rows.sort((a, b) => (b.net > a.net ? 1 : b.net < a.net ? -1 : 0));
+  return rows;
+}
+
+/**
  * Bounded drift sweep — the DB keeper. Checks the stalest N accounts plus
  * anyone who traded SAGE in the last two hours, banks every wallet whose live
  * balance moved off its checkpoint. Free (view calls + DB writes). Poked by

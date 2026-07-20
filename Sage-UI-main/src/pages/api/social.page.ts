@@ -25,7 +25,7 @@ import {
   pixelsDailyRate,
   transferPixelsOnChain,
 } from '@/utilities/serverWallet';
-import { pixelsSource, dbBankSweep } from '@/utilities/pixelsLedger';
+import { pixelsSource, dbBankSweep, dbLeaderboardRows } from '@/utilities/pixelsLedger';
 
 /**
  * SAGE Social — a wallet-native BlueSky clone. Identity is the SIWE wallet
@@ -2255,6 +2255,16 @@ async function pixelsLeaderboard(): Promise<{ address: string; net: bigint; rate
   // pays the on-chain cost inline — everyone after that never waits on RPC.
   if (!parameters.SAGE_POINTS_ADDRESS) return [];
   const computeFresh = async () => {
+    // DB-ledger mode: the ENTIRE board comes from one SQL read — no RPC at
+    // all. PixelAccount is the candidate set (the bank sweep creates rows as
+    // it discovers holders), and the streaming math runs in-memory with the
+    // checkpoint as the live-balance proxy (the sweep re-checkpoints within
+    // ~10min of any balance change, so the error window is minutes-of-accrual
+    // on freshly-traded wallets — invisible at leaderboard granularity).
+    // This is what makes cold instances start fast: the old per-wallet
+    // pixelsOf/dailyRate loop was 1,000+ RPC calls per rebuild and pinned
+    // fresh instances for 30-60s on a rate-limited RPC.
+    if (pixelsSource() === 'db') return dbLeaderboardRows();
     const traders = await prisma.socialTokenTrade.findMany({
       where: { tokenAddress: parameters.ASHTOKEN_ADDRESS },
       select: { trader: true },
@@ -3808,9 +3818,33 @@ async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: 
     }
     return cached.rows;
   }
-  const rows = await computeFresh();
-  holdersCache.set(key, { rows, at: Date.now() });
-  return rows;
+  // Cold instance: NEVER block the request on the live-verification sweep —
+  // with candidates now spanning transfer recipients too (~900 wallets), a
+  // cold rebuild is 45+ RPC rounds and pinned fresh instances for 30-60s
+  // (observed live as "token page takes forever" right after deploys). Kick
+  // the real sweep off in the background and serve the cheap ledger
+  // approximation (one SQL, no RPC) for the seconds until it lands; its
+  // known flaws (aggregator-split phantoms) live for under a minute.
+  if (!holdersRefreshing.has(key)) {
+    holdersRefreshing.add(key);
+    computeFresh()
+      .then((rows) => holdersCache.set(key, { rows, at: Date.now() }))
+      .catch((e) => console.error('holders cold build failed', e))
+      .finally(() => holdersRefreshing.delete(key));
+  }
+  const trades = await prisma.socialTokenTrade.findMany({
+    where: { tokenAddress: token },
+    select: { trader: true, side: true, tokenAmount: true },
+  });
+  const nets = new Map<string, number>();
+  for (const t of trades) {
+    const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
+    nets.set(t.trader, (nets.get(t.trader) || 0) + d);
+  }
+  return Array.from(nets.entries())
+    .filter(([, b]) => b > 0.000001)
+    .sort((a, b) => b[1] - a[1])
+    .map(([addr, bal]) => ({ addr, bal }));
 }
 
 async function getTokenHoldersPage(req: NextApiRequest, res: NextApiResponse) {
