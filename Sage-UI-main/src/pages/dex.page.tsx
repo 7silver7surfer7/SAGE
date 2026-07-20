@@ -230,6 +230,28 @@ export default function DexPage() {
                         <span className='dex-page__name'>{r.name}</span>
                         <span className='dex-page__age'>{ageOf(r.createdAt)}</span>
                         {r.graduated && <span className='dex-page__grad'>🎓</span>}
+                        {(
+                          [
+                            [r.links.website, '🌐'],
+                            [r.links.twitter, '𝕏'],
+                            [r.links.telegram, '✈️'],
+                            [r.links.discord, '💬'],
+                          ] as const
+                        ).map(
+                          ([href, icon]) =>
+                            href && (
+                              <a
+                                key={icon}
+                                className='dex-page__social'
+                                href={href}
+                                target='_blank'
+                                rel='noreferrer noopener'
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {icon}
+                              </a>
+                            )
+                        )}
                       </td>
                       <td className='dex-page__cell dex-page__cell--num dex-page__cell--price'>
                         {fmtPrice(r.priceUsd)}

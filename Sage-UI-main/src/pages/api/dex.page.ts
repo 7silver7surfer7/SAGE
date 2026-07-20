@@ -237,6 +237,12 @@ async function computeScreener(): Promise<ScreenerPayload> {
         verified: Boolean(l.Creator?.verifiedAt),
       },
       createdAt: l.createdAt.toISOString(),
+      links: {
+        website: l.website ?? null,
+        twitter: l.twitter ?? null,
+        telegram: l.telegram ?? null,
+        discord: l.discord ?? null,
+      },
       graduated: st.graduated,
       priceEth,
       priceUsd: perToken * ethUsd,

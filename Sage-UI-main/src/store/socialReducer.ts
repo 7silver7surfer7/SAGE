@@ -278,6 +278,9 @@ export interface TokenDetail {
     bannerUrl: string | null;
     description: string | null;
     website: string | null;
+    twitter: string | null;
+    telegram: string | null;
+    discord: string | null;
     airdropEnabled: boolean;
     creator: SocialUserCard;
   };
@@ -726,6 +729,43 @@ const socialApi = baseApi.injectEndpoints({
       query: (body) => ({ url: 'social?action=ConfirmCollectMint', method: 'POST', body }),
       invalidatesTags: (_r, _e, arg) => [{ type: 'SocialPost', id: arg.postId }],
     }),
+    updateTokenInfo: builder.mutation<
+      {
+        ok: boolean;
+        website: string | null;
+        twitter: string | null;
+        telegram: string | null;
+        discord: string | null;
+        description: string | null;
+      },
+      {
+        tokenAddress: string;
+        website?: string;
+        twitter?: string;
+        telegram?: string;
+        discord?: string;
+        description?: string;
+      }
+    >({
+      query: (body) => ({ url: 'social?action=UpdateTokenInfo', method: 'POST', body }),
+      // repaint the token page with the fresh links on success
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            socialApi.util.updateQueryData('getTokenDetail', arg.tokenAddress, (draft) => {
+              draft.token.website = data.website;
+              draft.token.twitter = data.twitter;
+              draft.token.telegram = data.telegram;
+              draft.token.discord = data.discord;
+              draft.token.description = data.description;
+            })
+          );
+        } catch {
+          /* server rejected — nothing to patch */
+        }
+      },
+    }),
     setNftPfp: builder.mutation<
       { ok: boolean; profilePicture: string; pfpVerified: boolean },
       number
@@ -1043,6 +1083,7 @@ export const {
   useSetCollectibleMutation,
   useCollectPostMutation,
   useConfirmCollectMintMutation,
+  useUpdateTokenInfoMutation,
   useSetNftPfpMutation,
   useSetFollowGateMutation,
   usePurchaseVerificationMutation,

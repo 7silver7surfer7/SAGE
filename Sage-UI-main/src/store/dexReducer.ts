@@ -14,6 +14,12 @@ export interface DexRow {
   creator: DexCreator;
   /** launch time — drives the AGE column */
   createdAt: string;
+  links: {
+    website: string | null;
+    twitter: string | null;
+    telegram: string | null;
+    discord: string | null;
+  };
   graduated: boolean;
   /** ETH per 1M tokens (existing app convention) */
   priceEth: number;

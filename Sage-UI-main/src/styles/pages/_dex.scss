@@ -363,6 +363,19 @@ $dex-down: #ff5a6a;
   font-size: 12px;
 }
 
+.dex-page__social {
+  font-size: 11px;
+  text-decoration: none;
+  opacity: 0.5;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
 // ── sparkline + star ────────────────────────────────────────────────────────
 
 .dex-spark {
