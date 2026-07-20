@@ -4317,7 +4317,19 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
   // market header numbers (pump.fun-style): USD mcap, ATH, 24h change.
   // priceEth is ETH per 1M tokens → mcap = price × 1000 (1B supply) × ETH/USD
   const ethUsd = await boostEthUsd();
-  const athPriceEth = trades.reduce((m, t) => Math.max(m, t.priceEth), curve?.priceEth || 0);
+  // TRUE all-time high — an aggregate over the FULL trade ledger, not the
+  // last-500 chart window (which quietly turned "ATH" into "recent high":
+  // SAGE displayed $111k while its real peak was ~$579k). Max'd with the
+  // live spot so a fresh peak shows before its trade row lands.
+  const athPriceEth = Math.max(
+    (
+      await prisma.socialTokenTrade.aggregate({
+        where: { tokenAddress: token },
+        _max: { priceEth: true },
+      })
+    )._max.priceEth ?? 0,
+    curve?.priceEth || 0
+  );
   const dayAgo = Date.now() - 24 * 3600 * 1000;
   const before24h = [...trades].reverse().find((t) => +t.createdAt <= dayAgo);
   // baseline: last trade before the 24h window; if the token is younger than
