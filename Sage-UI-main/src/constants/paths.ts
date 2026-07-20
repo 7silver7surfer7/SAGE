@@ -3,13 +3,14 @@ const basePathDrops = '/drops';
 const basePathCreators = '/creators';
 const basePathAbout = '/about';
 const basePathPress = '/press';
-const basePathHowToBuyAsh = '/howtobuyash';
+const basePathHowToBuyAsh = '/howtobuysage';
 
 const basePathGames = '/games';
 const basePathAuctions = `${basePathGames}/auctions`;
 const basePathLotteries = `${basePathGames}/lotteries`;
 const basePathAgentApi = '/agent-api';
 const basePathTokens = '/tokens';
+const basePathDex = '/dex';
 
 const basePathProfile = '/profile';
 
@@ -26,4 +27,5 @@ export {
   basePathHowToBuyAsh,
   basePathAgentApi,
   basePathTokens,
+  basePathDex,
 };

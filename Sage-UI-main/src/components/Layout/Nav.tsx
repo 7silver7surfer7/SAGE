@@ -17,6 +17,7 @@ export default function Nav() {
     pushToDrops,
     pushToHome,
     pushToTokens,
+    pushToDex,
     pushToAgentApi,
     pushToHowToBuyAsh,
     pushToSocial,
@@ -52,6 +53,10 @@ export default function Nav() {
     {
       name: 'Tokens',
       routeFunction: pushToTokens,
+    },
+    {
+      name: 'DEX',
+      routeFunction: pushToDex,
     },
     {
       name: 'Agent API',
