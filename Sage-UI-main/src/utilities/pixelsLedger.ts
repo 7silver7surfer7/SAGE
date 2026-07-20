@@ -45,17 +45,25 @@ async function liveSageWhole(address: string): Promise<bigint> {
   return BigInt(bal.div(ethers.constants.WeiPerEther).toString());
 }
 
-/** The contract's pendingStream: held × rate × elapsed / (100 × 86400). */
-function streamOf(checkpointSage: bigint, lastSync: Date, nowMs: number): bigint {
+/**
+ * The contract's pendingStream: held × rate × elapsed / (100 × 86400), where
+ * held = min(LIVE balance, checkpoint) — the SUSTAINED balance. A seller
+ * stops accruing the moment their balance drops, even before any bank/sync
+ * touches them (the contract's flash-farm protection; verified live when the
+ * checkpoint-only version over-counted four sold-out wallets by 3k–16k).
+ */
+function streamOf(liveWhole: bigint, checkpointSage: bigint, lastSync: Date, nowMs: number): bigint {
   const elapsed = BigInt(Math.max(0, Math.floor(nowMs / 1000) - Math.floor(lastSync.getTime() / 1000)));
-  const held = checkpointSage > CAP_SAGE ? CAP_SAGE : checkpointSage;
+  let held = liveWhole < checkpointSage ? liveWhole : checkpointSage;
+  if (held > CAP_SAGE) held = CAP_SAGE;
   return (held * RATE_SCALED * elapsed) / (HUNDRED * DAY);
 }
 
 export async function dbPointsOf(address: string): Promise<bigint> {
   const acct = await prisma.pixelAccount.findUnique({ where: { walletAddress: address } });
   if (!acct) return BigInt(0);
-  return acct.settled + streamOf(acct.checkpointSage, acct.lastSync, Date.now());
+  const live = await liveSageWhole(address).catch(() => acct.checkpointSage);
+  return acct.settled + streamOf(live, acct.checkpointSage, acct.lastSync, Date.now());
 }
 
 export async function dbDailyRate(address: string): Promise<bigint> {
@@ -79,7 +87,7 @@ export async function dbBank(address: string, liveWhole: bigint): Promise<void> 
   const now = new Date();
   await prisma.$transaction(async (tx) => {
     const acct = await tx.pixelAccount.findUnique({ where: { walletAddress: address } });
-    const stream = acct ? streamOf(acct.checkpointSage, acct.lastSync, now.getTime()) : BigInt(0);
+    const stream = acct ? streamOf(liveWhole, acct.checkpointSage, acct.lastSync, now.getTime()) : BigInt(0);
     await tx.pixelAccount.upsert({
       where: { walletAddress: address },
       create: { walletAddress: address, settled: BigInt(0), checkpointSage: liveWhole, lastSync: now },
@@ -107,6 +115,12 @@ export async function dbTransferPixels(
   reason: string
 ): Promise<string> {
   const now = new Date();
+  // live balances for the sustained-stream rule — fetched BEFORE the DB tx so
+  // no RPC round-trip happens while rows are locked
+  const [liveFrom, liveTo] = await Promise.all([
+    liveSageWhole(from).catch(() => BigInt(0)),
+    liveSageWhole(to).catch(() => BigInt(0)),
+  ]);
   const journalId = await prisma.$transaction(async (tx) => {
     // row locks so two concurrent spends can't both pass the balance check
     await tx.$queryRaw`
@@ -116,7 +130,7 @@ export async function dbTransferPixels(
     const acctFrom = await tx.pixelAccount.findUnique({ where: { walletAddress: from } });
     const banked =
       (acctFrom?.settled ?? BigInt(0)) +
-      (acctFrom ? streamOf(acctFrom.checkpointSage, acctFrom.lastSync, now.getTime()) : BigInt(0));
+      (acctFrom ? streamOf(liveFrom, acctFrom.checkpointSage, acctFrom.lastSync, now.getTime()) : BigInt(0));
     if (banked < amount) throw new Error('insufficient pixels');
     await tx.pixelAccount.upsert({
       where: { walletAddress: from },
@@ -130,7 +144,7 @@ export async function dbTransferPixels(
       const acctTo = await tx.pixelAccount.findUnique({ where: { walletAddress: to } });
       const bankedTo =
         (acctTo?.settled ?? BigInt(0)) +
-        (acctTo ? streamOf(acctTo.checkpointSage, acctTo.lastSync, now.getTime()) : BigInt(0));
+        (acctTo ? streamOf(liveTo, acctTo.checkpointSage, acctTo.lastSync, now.getTime()) : BigInt(0));
       await tx.pixelAccount.upsert({
         where: { walletAddress: to },
         create: { walletAddress: to, settled: amount, checkpointSage: BigInt(0), lastSync: now },
@@ -151,11 +165,12 @@ export async function dbTransferPixels(
 /** Credit pixels (seller earnings, promos, refunds) — atomic, banks first. */
 export async function dbCreditPixels(to: string, amount: bigint, reason: string): Promise<string> {
   const now = new Date();
+  const live = await liveSageWhole(to).catch(() => BigInt(0));
   const journalId = await prisma.$transaction(async (tx) => {
     const acct = await tx.pixelAccount.findUnique({ where: { walletAddress: to } });
     const banked =
       (acct?.settled ?? BigInt(0)) +
-      (acct ? streamOf(acct.checkpointSage, acct.lastSync, now.getTime()) : BigInt(0));
+      (acct ? streamOf(live, acct.checkpointSage, acct.lastSync, now.getTime()) : BigInt(0));
     await tx.pixelAccount.upsert({
       where: { walletAddress: to },
       create: { walletAddress: to, settled: amount, checkpointSage: BigInt(0), lastSync: now },
