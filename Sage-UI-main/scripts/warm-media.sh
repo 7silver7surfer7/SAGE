@@ -15,8 +15,10 @@ cd "$(dirname "$0")/.."
 BASE_URL="${BASE_URL:-https://sageart.xyz}"
 # strip optional shell quotes: the value is quoted in .env.deploy because the
 # Dockerfile SOURCES that file with sh and the URL contains '&' (unquoted, sh
-# would background the assignment and the var would vanish at build time)
-PROD_URL=$(grep "^DATABASE_CONNECTION_POOL_URL=" .env.deploy | cut -d= -f2- | sed "s/^['\"]//; s/['\"]$//")
+# would background the assignment and the var would vanish at build time).
+# Also drop the query string — ?pgbouncer=true&connection_limit are Prisma
+# params; psql/libpq rejects them ("invalid URI query parameter").
+PROD_URL=$(grep "^DATABASE_CONNECTION_POOL_URL=" .env.deploy | cut -d= -f2- | sed "s/^['\"]//; s/['\"]$//; s/?.*$//")
 
 # every video txid referenced by a live (approved) drop's games
 TXIDS=$(psql "$PROD_URL" -t -A -c "
