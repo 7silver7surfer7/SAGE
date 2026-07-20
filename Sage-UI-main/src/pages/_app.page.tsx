@@ -81,9 +81,16 @@ function recoverFromChunkError(err: any) {
     )
   )
     return;
+  // Time-based guard, NOT once-per-session: rapid consecutive deploys create
+  // multiple chunk seams, and a tab that healed across the first seam would
+  // burn a once-only guard and then hang forever at the second (observed
+  // live: five deploys in one evening, a token page stuck on loader dots).
+  // One reload per path per minute still can't loop on a genuinely broken
+  // chunk, but always recovers from a fresh deploy seam.
   const key = `chunk-reload:${window.location.pathname}`;
-  if (sessionStorage.getItem(key)) return; // already tried once here
-  sessionStorage.setItem(key, '1');
+  const last = Number(sessionStorage.getItem(key) || 0);
+  if (Date.now() - last < 60_000) return;
+  sessionStorage.setItem(key, String(Date.now()));
   window.location.reload();
 }
 if (typeof window !== 'undefined') {
