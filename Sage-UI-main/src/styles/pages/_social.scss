@@ -418,12 +418,20 @@ $col-width: 620px;
     margin-top: 10px;
     border-radius: 14px;
     overflow: hidden;
+    // MUST match the img's max-height below: the container carries an inline
+    // aspect-ratio (layout-shift guard sized to the full image), so without
+    // this cap a tall image reserves its full aspect height while the img
+    // inside stops at 460px — painted top, giant blank below (bit us live on
+    // a 1:1.88 fresco). Capped box + covered img = Twitter-style feed crop;
+    // the lightbox shows the uncropped original.
+    max-height: 460px;
     @include m.theme() {
       border: 1px solid rgba(m.t(contrast), 0.12);
     }
     img {
       display: block;
       width: 100%;
+      height: 100%;
       max-height: 460px;
       object-fit: cover;
     }
