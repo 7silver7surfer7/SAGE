@@ -1,4 +1,5 @@
 import useSageRoutes from '@/hooks/useSageRoutes';
+import { DEX_ENABLED } from '@/constants/config';
 import { useRouter } from 'next/router';
 import { useGetUserQuery } from '@/store/usersReducer';
 import { useSession } from 'next-auth/react';
@@ -54,10 +55,15 @@ export default function Nav() {
       name: 'Tokens',
       routeFunction: pushToTokens,
     },
-    {
-      name: 'DEX',
-      routeFunction: pushToDex,
-    },
+    // flag-gated: the DEX product ships dark unless the build enables it
+    ...(DEX_ENABLED
+      ? [
+          {
+            name: 'DEX',
+            routeFunction: pushToDex,
+          },
+        ]
+      : []),
     {
       name: 'Agent API',
       routeFunction: pushToAgentApi,

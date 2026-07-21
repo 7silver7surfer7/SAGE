@@ -5,6 +5,7 @@ import {
   parameters,
   SAGE_PRICE_TOKEN_ADDRESS,
   SAGE_PRICE_FACTORY_ADDRESS,
+  DEX_ENABLED,
 } from '@/constants/config';
 import { getEthUsd } from '@/utilities/sagePrice';
 import { chainTokenRows } from '@/utilities/dexIndexer';
@@ -621,6 +622,8 @@ async function extPair(chain: string, pair: string): Promise<{ rows: ExternalRow
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // product flag: the whole DEX ships dark unless the build enables it
+  if (!DEX_ENABLED) return res.status(404).json({ error: 'dex is not enabled' });
   const action = String(req.query.action || 'Screener');
   try {
     switch (action) {

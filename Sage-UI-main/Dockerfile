@@ -38,8 +38,11 @@ RUN npm ci --legacy-peer-deps
 # NEXT_PUBLIC_* are inlined into the client bundle at build time.
 # staging = Robinhood testnet contracts.
 ARG NEXT_PUBLIC_APP_MODE=staging
+# DEX product flag — dark unless a deploy passes --build-arg NEXT_PUBLIC_DEX_ENABLED=true
+ARG NEXT_PUBLIC_DEX_ENABLED=
 ARG NEXT_PUBLIC_MAINTENANCE_ON=false
 ENV NEXT_PUBLIC_APP_MODE=$NEXT_PUBLIC_APP_MODE \
+    NEXT_PUBLIC_DEX_ENABLED=$NEXT_PUBLIC_DEX_ENABLED \
     NEXT_PUBLIC_MAINTENANCE_ON=$NEXT_PUBLIC_MAINTENANCE_ON \
     NODE_ENV=production
 

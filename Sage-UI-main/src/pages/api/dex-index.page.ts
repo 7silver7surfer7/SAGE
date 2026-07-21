@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
-import { parameters } from '@/constants/config';
+import { parameters, DEX_ENABLED } from '@/constants/config';
 import { getEthUsd } from '@/utilities/sagePrice';
 import { sweepChainDex, syncPairSwaps, refreshPairStats } from '@/utilities/dexIndexer';
 
@@ -94,6 +94,8 @@ async function pairDetail(req: NextApiRequest, res: NextApiResponse) {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // product flag: the whole DEX ships dark unless the build enables it
+  if (!DEX_ENABLED) return res.status(404).json({ error: 'dex is not enabled' });
   const action = String(req.query.action || '');
   try {
     switch (action) {

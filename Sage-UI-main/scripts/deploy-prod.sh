@@ -37,7 +37,8 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 git archive HEAD | tar -x -C "$BUILD_DIR"
 docker build --platform linux/amd64 --provenance=false --sbom=false \
   --secret id=buildenv,src="$(pwd)/.env.deploy" \
-  --build-arg NEXT_PUBLIC_APP_MODE=production -t "$IMAGE" "$BUILD_DIR"
+  --build-arg NEXT_PUBLIC_APP_MODE=production \
+  --build-arg NEXT_PUBLIC_DEX_ENABLED="${NEXT_PUBLIC_DEX_ENABLED:-}" -t "$IMAGE" "$BUILD_DIR"
 
 echo "==> pushing…"
 docker push "$IMAGE"

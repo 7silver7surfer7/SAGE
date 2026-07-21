@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
+import { DEX_ENABLED } from '@/constants/config';
 import Logotype from '@/components/Logotype';
 import LoaderDots from '@/components/LoaderDots';
 import ExtCandleChart from '@/components/Dex/ExtCandleChart';
@@ -57,6 +58,8 @@ export default function DexExtPairPage() {
   const candles = candleData?.candles ?? [];
   const embedFallback = Boolean(candleData?.unsupported && !candles.length && row);
 
+  // product flag: page renders nothing when the DEX is dark
+  if (!DEX_ENABLED) return <div className='dex-page__empty'>This feature is not enabled.</div>;
   return (
     <div className='dex-pair'>
       <section className='dex-pair__header'>

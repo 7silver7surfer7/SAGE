@@ -29,6 +29,14 @@ export const SAGE_PRICE_CHAIN_ID = 4663;
 export const SAGE_PRICE_FACTORY_ADDRESS = '0xeF0c6F3461A373B4b6703EeBc5d44bF3885a200f';
 export const SAGE_PRICE_ROUTER_ADDRESS = '0x9ae6208E6dad5AF7A48a87A621b921AbCC43F06d';
 
+// The chain-wide DEX product (screener, pair pages, ext charts, indexer
+// sweeps) ships dark: every surface gates on this BUILD-TIME flag, off
+// unless the build sets NEXT_PUBLIC_DEX_ENABLED=true (deploy scripts pass
+// it through when exported). Turning it off is the product call of
+// 2026-07-21 — the code stays built, tested and committed so one env var
+// re-lights it; nothing needs re-reverting or rebuilding.
+export const DEX_ENABLED = process.env.NEXT_PUBLIC_DEX_ENABLED === 'true';
+
 var env = process.env.NEXT_PUBLIC_APP_MODE;
 
 // SAGE runs on Robinhood Chain.

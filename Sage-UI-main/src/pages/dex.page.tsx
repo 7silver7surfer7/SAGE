@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
+import { DEX_ENABLED } from '@/constants/config';
 import Logotype from '@/components/Logotype';
 import LoaderDots from '@/components/LoaderDots';
 import SearchIcon from '@/components/Icons/SearchIcon';
@@ -142,6 +143,8 @@ export default function DexPage() {
     return [...filtered].sort(by[sort]);
   }, [data, search, tab, sort, watchlist]);
 
+  // product flag: page renders nothing when the DEX is dark
+  if (!DEX_ENABLED) return <div className='dex-page__empty'>This feature is not enabled.</div>;
   return (
     <div className='dex-page'>
       <section className='dex-page__header'>

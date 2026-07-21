@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/router';
+import { DEX_ENABLED } from '@/constants/config';
 import { toast } from 'react-toastify';
 import Logotype from '@/components/Logotype';
 import LoaderDots from '@/components/LoaderDots';
@@ -102,6 +103,8 @@ export default function DexPairPage() {
   const pair = data?.pair;
   const ethUsd = data?.ethUsd || 0;
 
+  // product flag: page renders nothing when the DEX is dark
+  if (!DEX_ENABLED) return <div className='dex-page__empty'>This feature is not enabled.</div>;
   return (
     <div className='dex-pair'>
       <section className='dex-pair__header'>
