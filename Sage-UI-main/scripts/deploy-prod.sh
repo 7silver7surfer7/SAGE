@@ -23,9 +23,21 @@ echo "==> building (linux/amd64, MAINNET production mode)…"
 # mainnet launch, sageart.xyz IS mainnet: bake production, and mirror the
 # same value into the runtime env below so server-side code (which reads
 # process.env at runtime) selects the same config block as the client.
+#
+# Build from a CLEAN EXPORT of HEAD, never the working tree: this script
+# once shipped a whole in-progress feature to mainnet because a parallel
+# session's uncommitted files were sitting in the shared checkout when an
+# unrelated deploy ran (the 2026-07-21 chain-wide-DEX leak, reverted in
+# 420bc27). git archive contains exactly what is committed — uncommitted
+# work physically cannot ride along. Secrets stay OUT of the archive
+# (gitignored), so .env.deploy mounts from the real checkout by absolute
+# path.
+BUILD_DIR=$(mktemp -d /tmp/sage-prod-build.XXXXXX)
+trap 'rm -rf "$BUILD_DIR"' EXIT
+git archive HEAD | tar -x -C "$BUILD_DIR"
 docker build --platform linux/amd64 --provenance=false --sbom=false \
-  --secret id=buildenv,src=.env.deploy \
-  --build-arg NEXT_PUBLIC_APP_MODE=production -t "$IMAGE" .
+  --secret id=buildenv,src="$(pwd)/.env.deploy" \
+  --build-arg NEXT_PUBLIC_APP_MODE=production -t "$IMAGE" "$BUILD_DIR"
 
 echo "==> pushing…"
 docker push "$IMAGE"

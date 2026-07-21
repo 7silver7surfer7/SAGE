@@ -24,9 +24,14 @@ echo "==> building (linux/amd64, staging mode)…"
 # --provenance=false --sbom=false: without these, buildx (containerd image
 # store) pushes an OCI index with attestation manifests, which Cloud Run
 # rejects with "does not provide any platform". Force a single-platform image.
+# Clean-export build, same rationale as deploy-prod.sh: only COMMITTED state
+# ships; a parallel session's uncommitted work can never ride along.
+BUILD_DIR=$(mktemp -d /tmp/sage-staging-build.XXXXXX)
+trap 'rm -rf "$BUILD_DIR"' EXIT
+git archive HEAD | tar -x -C "$BUILD_DIR"
 docker build --platform linux/amd64 --provenance=false --sbom=false \
-  --secret id=buildenv,src=.env.staging-deploy \
-  --build-arg NEXT_PUBLIC_APP_MODE=staging -t "$IMAGE" .
+  --secret id=buildenv,src="$(pwd)/.env.staging-deploy" \
+  --build-arg NEXT_PUBLIC_APP_MODE=staging -t "$IMAGE" "$BUILD_DIR"
 
 echo "==> pushing…"
 docker push "$IMAGE"
