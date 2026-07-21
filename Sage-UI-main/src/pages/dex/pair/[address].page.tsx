@@ -123,7 +123,18 @@ export default function DexPairPage() {
         {isFetching && !data && !error ? (
           <LoaderDots />
         ) : !pair ? (
-          <div className='dex-pair__empty'>Pair not found.</div>
+          <div className='dex-pair__empty'>
+            Pair not found — our index covers WETH-quoted pairs; this one may use a
+            different quote token.{' '}
+            <a
+              className='dex-ext__out'
+              href={`https://dexscreener.com/robinhood/${address}`}
+              target='_blank'
+              rel='noreferrer noopener'
+            >
+              Try DexScreener ↗
+            </a>
+          </div>
         ) : (
           <>
             <div className='dex-pair__head'>

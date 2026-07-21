@@ -350,7 +350,17 @@ export default function DexPage() {
                       <tr
                         key={`${r.chainId}:${r.pairAddress}`}
                         className='dex-page__row'
-                        onClick={() => window.open(r.url, '_blank', 'noopener')}
+                        // charts are hosted HERE now: robinhood pairs go to the
+                        // native indexer page, foreign chains to the hosted
+                        // external chart (GeckoTerminal candles). DexScreener
+                        // stays reachable as a secondary link on the pair page.
+                        onClick={() =>
+                          router.push(
+                            r.chainId === 'robinhood'
+                              ? `/dex/pair/${r.pairAddress}`
+                              : `/dex/ext/${r.chainId}/${r.pairAddress}`
+                          )
+                        }
                       >
                         <td className='dex-page__cell dex-page__cell--token'>
                           {r.imageUrl ? (

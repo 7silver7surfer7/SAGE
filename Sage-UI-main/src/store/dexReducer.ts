@@ -86,7 +86,8 @@ export interface ExternalDexRow {
   chainId: string;
   dexId: string;
   pairAddress: string;
-  /** dexscreener.com pair page — external tokens link out, we don't chart them */
+  /** dexscreener.com pair page — kept as the secondary "open on DexScreener"
+   *  link; charts are hosted natively at /dex/ext/[chain]/[pair] */
   url: string;
   name: string;
   symbol: string;
@@ -115,7 +116,28 @@ const dexApi = baseApi.injectEndpoints({
     getDexPairDetail: builder.query<PairDetailResponse, string>({
       query: (address) => ({ url: `dex-index?action=PairDetail&address=${address}` }),
     }),
+    // foreign-chain pair stats (DexScreener pair endpoint, shared-cached)
+    getExtPair: builder.query<{ rows: ExternalDexRow[] }, { chain: string; pair: string }>({
+      query: ({ chain, pair }) => ({
+        url: `dex?action=ExtPair&chain=${encodeURIComponent(chain)}&pair=${encodeURIComponent(pair)}`,
+      }),
+    }),
+    // foreign-chain candles (GeckoTerminal OHLCV, server-proxied)
+    getExtCandles: builder.query<
+      { candles: { t: number; o: number; h: number; l: number; c: number; v: number }[]; unsupported?: boolean },
+      { chain: string; pair: string; tf: string }
+    >({
+      query: ({ chain, pair, tf }) => ({
+        url: `dex?action=ExtCandles&chain=${encodeURIComponent(chain)}&pair=${encodeURIComponent(pair)}&tf=${tf}`,
+      }),
+    }),
   }),
 });
 
-export const { useGetDexScreenerQuery, useLookupDexQuery, useGetDexPairDetailQuery } = dexApi;
+export const {
+  useGetDexScreenerQuery,
+  useLookupDexQuery,
+  useGetDexPairDetailQuery,
+  useGetExtPairQuery,
+  useGetExtCandlesQuery,
+} = dexApi;

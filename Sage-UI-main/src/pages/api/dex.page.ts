@@ -524,6 +524,102 @@ async function lookup(qRaw: string): Promise<{ rows: ExternalRow[] }> {
   return { rows };
 }
 
+// ── hosted charts for foreign-chain pairs ───────────────────────────────────
+// We host the chart UI ourselves instead of linking out: stats come from
+// DexScreener's pair endpoint (same shared-cache discipline as Lookup), and
+// candles come from GeckoTerminal's free OHLCV API — DexScreener's free API
+// has no candle endpoint at all, GeckoTerminal's does (30 req/min, no key).
+// Robinhood-chain pairs never reach these actions: the client routes them to
+// the native /dex/pair page, which charts from our own indexer.
+
+/** DexScreener chainId → GeckoTerminal network slug, where they differ */
+const GECKO_NETWORK: Record<string, string> = {
+  ethereum: 'eth',
+  polygon: 'polygon_pos',
+  avalanche: 'avax',
+  pulsechain: 'pulsechain',
+};
+
+const EXT_TF: Record<string, { path: string; aggregate: number }> = {
+  '1m': { path: 'minute', aggregate: 1 },
+  '5m': { path: 'minute', aggregate: 5 },
+  '15m': { path: 'minute', aggregate: 15 },
+  '1h': { path: 'hour', aggregate: 1 },
+  '4h': { path: 'hour', aggregate: 4 },
+  '1d': { path: 'day', aggregate: 1 },
+};
+
+type ExtCandle = { t: number; o: number; h: number; l: number; c: number; v: number };
+// candles change once per bucket — an in-memory memo per (chain,pair,tf) is
+// enough (the DB tier exists for the SHARED lookup budget; GeckoTerminal's
+// limit is generous relative to pair-page traffic). Failures cache briefly.
+const candleCache = new Map<string, { candles: ExtCandle[]; ok: boolean; at: number }>();
+
+async function extCandles(
+  chain: string,
+  pair: string,
+  tf: string
+): Promise<{ candles: ExtCandle[]; unsupported?: boolean }> {
+  const spec = EXT_TF[tf] || EXT_TF['1h'];
+  const key = `${chain}:${pair}:${tf}`.toLowerCase();
+  const hit = candleCache.get(key);
+  if (hit && Date.now() - hit.at < (hit.ok ? 60_000 : 30_000)) {
+    return { candles: hit.candles, unsupported: hit.ok && hit.candles.length === 0 };
+  }
+  const network = GECKO_NETWORK[chain] || chain;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    const res = await fetch(
+      `https://api.geckoterminal.com/api/v2/networks/${encodeURIComponent(network)}/pools/${encodeURIComponent(pair)}/ohlcv/${spec.path}?aggregate=${spec.aggregate}&limit=300`,
+      { signal: ctrl.signal, headers: { accept: 'application/json' } }
+    ).finally(() => clearTimeout(timer));
+    if (!res.ok) throw new Error(`geckoterminal HTTP ${res.status}`);
+    const j = await res.json();
+    const list: number[][] = j?.data?.attributes?.ohlcv_list || [];
+    // GeckoTerminal returns newest-first [ts, o, h, l, c, v]; the chart wants
+    // ascending time
+    const candles = list
+      .map((k) => ({ t: k[0], o: k[1], h: k[2], l: k[3], c: k[4], v: k[5] }))
+      .sort((a, b) => a.t - b.t);
+    candleCache.set(key, { candles, ok: true, at: Date.now() });
+    return { candles, unsupported: candles.length === 0 };
+  } catch (e) {
+    candleCache.set(key, { candles: hit?.candles || [], ok: false, at: Date.now() });
+    // stale-if-error: an expired good set beats an error page
+    return { candles: hit?.candles || [], unsupported: !hit?.candles?.length };
+  }
+}
+
+/** one pair's live stats — DexScreener pair endpoint behind the shared cache */
+async function extPair(chain: string, pair: string): Promise<{ rows: ExternalRow[] }> {
+  const key = `pair:${chain}:${pair}`.toLowerCase();
+  const l1 = lookupL1.get(key);
+  if (l1 && Date.now() - l1.at < LOOKUP_L1_TTL_MS) return { rows: l1.rows };
+  const cached = await prisma.dexLookupCache.findUnique({ where: { q: key } }).catch(() => null);
+  if (cached) {
+    const age = Date.now() - cached.at.getTime();
+    if (age < (cached.ok ? LOOKUP_OK_TTL_MS : LOOKUP_FAIL_TTL_MS)) {
+      const rows = cached.rows as unknown as ExternalRow[];
+      lookupL1Set(key, rows);
+      return { rows };
+    }
+  }
+  try {
+    const j = await dexscreenerFetch(
+      `https://api.dexscreener.com/latest/dex/pairs/${encodeURIComponent(chain)}/${encodeURIComponent(pair)}`
+    );
+    const rows = normalizePairs(j?.pairs || (j?.pair ? [j.pair] : []));
+    lookupL1Set(key, rows);
+    await lookupCachePut(key, rows, true).catch(() => {});
+    return { rows };
+  } catch {
+    const stale = (cached?.rows as unknown as ExternalRow[]) || [];
+    await lookupCachePut(key, stale, false).catch(() => {});
+    return { rows: stale };
+  }
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const action = String(req.query.action || 'Screener');
   try {
@@ -535,6 +631,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // per-query results are memoized server-side; let the edge share them
         res.setHeader('Cache-Control', 'public, max-age=30');
         return res.json(await lookup(String(req.query.q || '')));
+      case 'ExtPair':
+        res.setHeader('Cache-Control', 'public, max-age=15');
+        return res.json(
+          await extPair(String(req.query.chain || ''), String(req.query.pair || ''))
+        );
+      case 'ExtCandles':
+        res.setHeader('Cache-Control', 'public, max-age=30');
+        return res.json(
+          await extCandles(
+            String(req.query.chain || ''),
+            String(req.query.pair || ''),
+            String(req.query.tf || '1h')
+          )
+        );
       default:
         return res.status(400).json({ error: 'unknown action' });
     }
