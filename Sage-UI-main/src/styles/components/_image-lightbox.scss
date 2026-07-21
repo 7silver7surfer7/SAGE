@@ -1,0 +1,68 @@
+@use '@/styles/abstracts/colors' as c;
+@use '@/styles/abstracts/mixins' as m;
+
+// Twitter-style fullscreen viewer — a solid near-black backdrop (not the
+// blurred/translucent .modal__backdrop look, which is meant for a card
+// FLOATING over the page; here the image itself IS the page) with the image
+// centered at its true aspect ratio and a close button pinned to the corner.
+.image-lightbox {
+  position: relative;
+  z-index: 999;
+}
+
+.image-lightbox__backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.92);
+  cursor: zoom-out;
+}
+
+.image-lightbox__container {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  cursor: zoom-out;
+}
+
+.image-lightbox__img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  cursor: default;
+  // subtle lift off the pure-black backdrop so edges of a dark image stay legible
+  box-shadow: 0 0 60px rgba(0, 0, 0, 0.6);
+}
+
+.image-lightbox__close {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background-color: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
+
+  svg {
+    width: 18px;
+    height: 18px;
+    * {
+      fill: c.$white;
+      stroke: c.$white;
+    }
+  }
+}

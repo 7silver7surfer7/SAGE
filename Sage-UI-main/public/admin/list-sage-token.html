@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>List SAGE Token</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 560px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .9rem; }
+  .row b { font-weight: 600; }
+  img.logo { width: 64px; height: 64px; border-radius: 12px; display: block; margin-bottom: 8px; }
+  ol { padding-left: 20px; font-size: .92rem; }
+  li { margin-bottom: 6px; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; width: 100%; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .88rem; word-break: break-word; }
+  .ok { color: #0c9d68; }
+  .err { color: #dc2626; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: .85em; word-break: break-all; }
+</style>
+</head>
+<body>
+  <h1>List SAGE on the Token Launchpad</h1>
+  <p class="sub">One button — no wallet popup, no copy-pasting. Uses your existing sageart.xyz sign-in.</p>
+
+  <div class="card">
+    <img class="logo" src="https://sageart-media-mirror.s3.us-east-2.amazonaws.com/social/8994ef59-1784152405858-post.webp" alt="SAGE logo" />
+    <div class="row"><span>Token</span><b>SAGE / SAGE</b></div>
+    <div class="row"><span>Address</span><b><code>0x14561006002e8f76E68EC69e6A32527730bb73c8</code></b></div>
+  </div>
+
+  <ol>
+    <li>Make sure you're signed in on <strong>this site</strong> (sageart.xyz) as the treasury wallet
+      (<code>0x3E099aF...321e</code>) — use the normal Connect Wallet button in the site header if you
+      haven't already.</li>
+    <li>Click the button below.</li>
+  </ol>
+
+  <button id="submit">List SAGE Token</button>
+  <div class="status" id="status" style="display:none"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $('status');
+    function show(msg, cls) {
+      statusEl.style.display = 'block';
+      statusEl.className = 'status' + (cls ? ' ' + cls : '');
+      statusEl.textContent = msg;
+    }
+
+    $('submit').onclick = async () => {
+      $('submit').disabled = true;
+      show('Submitting…');
+      try {
+        const res = await fetch('/api/social/?action=RecordTokenLaunch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            tokenAddress: '0x14561006002e8f76E68EC69e6A32527730bb73c8',
+            name: 'SAGE',
+            symbol: 'SAGE',
+            launchTxHash: '0x7df1ef68811a3a4fc1149ba4bfa1f88affdc85e2da6890321ca5fc0f8c83513d',
+            imageUrl: 'https://sageart-media-mirror.s3.us-east-2.amazonaws.com/social/8994ef59-1784152405858-post.webp',
+            airdropEnabled: false,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          show('❌ ' + (data.error || ('HTTP ' + res.status)) + '\n\nIf this says you\'re not signed in, or signed in as the wrong wallet, use the Connect Wallet button in the site header first, then try again.', 'err');
+          $('submit').disabled = false;
+          return;
+        }
+        show('✅ Listed! SAGE now appears on the token board.\n\n' + JSON.stringify(data, null, 2), 'ok');
+      } catch (e) {
+        show('❌ ' + (e.message || e), 'err');
+        $('submit').disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>
