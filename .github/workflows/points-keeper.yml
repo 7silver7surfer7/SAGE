@@ -29,11 +29,3 @@ jobs:
           out=$(curl -sL --max-time 120 "https://sageart.xyz/api/social/?action=SyncPixelBank")
           echo "$out"
           echo "$out" | grep -q '"mode":"db"' || { echo "::error::ledger not in db mode — did the cutover env flip land?"; exit 1; }
-      # chain-wide dex indexer heartbeat: discover new pairs, refresh stats
-      # for the stalest + deepest pools, sync swaps for the most active.
-      # Soft-fail (prod may not carry the endpoint yet mid-rollout); becomes
-      # load-bearing once the dex indexer ships to prod.
-      - name: Sweep chain-wide dex index
-        run: |
-          curl -sL --max-time 180 "https://sageart.xyz/api/dex-index/?action=Sweep" || true
-          curl -sL --max-time 180 "https://testnet.sageart.xyz/api/dex-index/?action=Sweep" || true

@@ -7,7 +7,6 @@ import {
   basePathAgentApi,
   basePathProfile,
   basePathTokens,
-  basePathDex,
 } from '@/constants/paths';
 import { useRouter } from 'next/router';
 import { User, Drop } from '@prisma/client';
@@ -41,10 +40,6 @@ export default function useSageRoutes() {
     await router.push(basePathTokens);
   }
 
-  async function pushToDex() {
-    await router.push(basePathDex);
-  }
-
   async function pushToAgentApi() {
     await router.push(basePathAgentApi);
   }
@@ -66,7 +61,7 @@ export default function useSageRoutes() {
   }
 
   async function pushToHowToBuyAsh() {
-    await router.push('/howtobuysage');
+    await router.push('/howtobuyash');
   }
 
   async function pushToPrivacyPolicy() {
@@ -88,7 +83,6 @@ export default function useSageRoutes() {
     pushToDrops,
     pushToHome,
     pushToTokens,
-    pushToDex,
     pushToAgentApi,
     pushToProfile,
     pushToSocial,

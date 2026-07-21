@@ -143,8 +143,6 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await getTokenDetail(String(request.query.address || ''), response);
       case 'GetTokenTradeLedger':
         return await getTokenTradeLedger(request, response);
-      case 'UpdateTokenInfo':
-        return await withAuth(request, response, (r) => updateTokenInfo(request, response, r));
       case 'SyncPixelBank':
         return await syncPixelBank(response);
       case 'GetTokens':
@@ -4155,75 +4153,6 @@ async function getTokenTradeLedger(req: NextApiRequest, res: NextApiResponse) {
 // TTL: on expiry a thundering herd of polls would otherwise all rebuild at
 // once (withMemoCache only caches AFTER a compute settles).
 const tokenDetailInFlight = new Map<string, Promise<unknown | null>>();
-/**
- * DexScreener's paid "token info" product, minus the $299: the token's
- * CREATOR (only) attaches/updates website + socials + description any time
- * after launch. Everything else about a launch stays frozen — these are the
- * only fields where post-hoc editing can't rug anyone. Links are validated
- * per-platform (https + the right host) so a token page can never render a
- * "Twitter" chip that actually points somewhere else.
- */
-const TOKEN_LINK_RULES: { field: 'website' | 'twitter' | 'telegram' | 'discord'; hosts: string[] | null }[] = [
-  { field: 'website', hosts: null }, // any https host
-  { field: 'twitter', hosts: ['twitter.com', 'x.com'] },
-  { field: 'telegram', hosts: ['t.me', 'telegram.me'] },
-  { field: 'discord', hosts: ['discord.gg', 'discord.com'] },
-];
-async function updateTokenInfo(
-  req: NextApiRequest,
-  res: NextApiResponse,
-  r: { walletAddress: string }
-) {
-  const token = canon(req.body?.tokenAddress as string);
-  if (!token) return res.status(400).json({ error: 'bad address' });
-  const launch = await prisma.socialTokenLaunch.findUnique({ where: { tokenAddress: token } });
-  if (!launch) return res.status(404).json({ error: 'token not found' });
-  if (launch.creatorAddress.toLowerCase() !== r.walletAddress.toLowerCase()) {
-    return res.status(403).json({ error: 'only the token creator can edit its info' });
-  }
-
-  const data: Record<string, string | null> = {};
-  for (const rule of TOKEN_LINK_RULES) {
-    const raw = req.body?.[rule.field];
-    if (raw === undefined) continue; // field untouched
-    const val = String(raw).trim();
-    if (!val) {
-      data[rule.field] = null; // explicit clear
-      continue;
-    }
-    if (val.length > 120) return res.status(400).json({ error: `${rule.field} link too long` });
-    let url: URL;
-    try {
-      url = new URL(val);
-    } catch {
-      return res.status(400).json({ error: `${rule.field} must be a full https:// link` });
-    }
-    if (url.protocol !== 'https:') {
-      return res.status(400).json({ error: `${rule.field} must be https` });
-    }
-    const host = url.hostname.replace(/^www\./, '').toLowerCase();
-    if (rule.hosts && !rule.hosts.includes(host)) {
-      return res.status(400).json({ error: `${rule.field} must be a ${rule.hosts.join(' / ')} link` });
-    }
-    data[rule.field] = url.toString();
-  }
-  if (req.body?.description !== undefined) {
-    const d = String(req.body.description).trim().slice(0, 300);
-    data.description = d || null;
-  }
-  if (Object.keys(data).length === 0) return res.status(400).json({ error: 'nothing to update' });
-
-  const updated = await prisma.socialTokenLaunch.update({ where: { tokenAddress: token }, data });
-  res.json({
-    ok: true,
-    website: updated.website || null,
-    twitter: updated.twitter || null,
-    telegram: updated.telegram || null,
-    discord: updated.discord || null,
-    description: updated.description || null,
-  });
-}
-
 async function getTokenDetail(address: string, res: NextApiResponse) {
   const token = canon(address);
   if (!token) return res.status(400).json({ error: 'bad address' });
@@ -4346,9 +4275,6 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
       bannerUrl: launch.bannerUrl || null,
       description: launch.description || null,
       website: launch.website || null,
-      twitter: launch.twitter || null,
-      telegram: launch.telegram || null,
-      discord: launch.discord || null,
       airdropEnabled: launch.airdropEnabled,
       creator: {
         address: launch.creatorAddress,

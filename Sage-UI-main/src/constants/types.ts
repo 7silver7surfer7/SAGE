@@ -23,8 +23,6 @@ export interface Parameters {
   // SAGE Social pump.fun-style token launchpad + buyer-paid voucher minter.
   // Empty string = feature disabled on this network.
   SOCIAL_TOKEN_FACTORY_ADDRESS: string;
-  UNISWAP_FACTORY_ADDRESS: string;
-  WETH_ADDRESS: string;
   SAGE_POINTS_ADDRESS: string;
   SAGE_SWAP_ROUTER_ADDRESS: string;
   SOCIAL_COLLECT_MINTER_ADDRESS: string;
