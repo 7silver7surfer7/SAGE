@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Transfer SAGE Social collection ownership to the multisig</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; margin-top: 12px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem; }
+  .warn { color: #b45309; } .err { color: #dc2626; } .ok { color: #0c9d68; }
+</style>
+</head>
+<body>
+  <h1>Claim the SAGE Social collection 🖼️</h1>
+  <p class="sub">Calls <code>transferOwnership(multisig)</code> on the SAGE Social
+  collects contract (<code>0x8d78…db5A</code>). The function is <code>onlyMultisig</code>,
+  so this tx must come from the multisig itself — after it mines, <code>owner()</code>
+  is the multisig and OpenSea recognizes it as the collection manager. On-chain
+  behavior is otherwise unchanged (nothing in the contract gates on owner).</p>
+
+  <button id="connectBtn">connect wallet</button>
+  <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
+  <div class="row"><span>Contract (SAGE Social collects)</span><code>0x8d78D5E9cb3F367B43b377E947E9f0854c93db5A</code></div>
+  <div class="row"><span>New owner (multisig)</span><code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code></div>
+
+  <button id="sendBtn" disabled>transfer ownership to the multisig</button>
+  <div class="status" id="status">Connect the multisig wallet, then transfer.</div>
+
+<script>
+  const CHAIN_ID = '0x1237'; // 4663 (Robinhood Chain mainnet)
+  const CONTRACT = '0x8d78D5E9cb3F367B43b377E947E9f0854c93db5A';
+  const MULTISIG = '0x3e099af007cab8233d44782d8e6fe80fecdc321e';
+  const SEL = '0xf2fde38b'; // transferOwnership(address)
+  const OWNER_SEL = '0x8da5cb5b'; // owner()
+
+  const $ = (id) => document.getElementById(id);
+  let account = null;
+  const pad = (a) => a.toLowerCase().replace('0x', '').padStart(64, '0');
+
+  $('connectBtn').onclick = async () => {
+    if (!window.ethereum) { $('status').textContent = 'MetaMask not found.'; return; }
+    const chainId = await ethereum.request({ method: 'eth_chainId' });
+    if (chainId.toLowerCase() !== CHAIN_ID) {
+      try { await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] }); }
+      catch { $('status').textContent = 'Switch MetaMask to Robinhood Chain mainnet (4663) first.'; return; }
+    }
+    const accts = await ethereum.request({ method: 'eth_requestAccounts' });
+    account = accts[0];
+    $('connected').textContent = account;
+    if (account.toLowerCase() !== MULTISIG) {
+      $('status').innerHTML = '<span class="warn">Not the multisig — transferOwnership is onlyMultisig and will revert. Switch accounts.</span>';
+    } else {
+      $('status').textContent = 'Multisig connected — ready.';
+    }
+    $('sendBtn').disabled = false;
+  };
+
+  $('sendBtn').onclick = async () => {
+    $('sendBtn').disabled = true;
+    try {
+      const cur = await ethereum.request({ method: 'eth_call', params: [{ to: CONTRACT, data: OWNER_SEL }, 'latest'] });
+      if (cur && cur.toLowerCase().endsWith(MULTISIG.replace('0x', ''))) {
+        $('status').innerHTML = '<span class="ok">Already owned by the multisig — nothing to do.</span>';
+        return;
+      }
+      const txHash = await ethereum.request({ method: 'eth_sendTransaction', params: [{
+        from: account, to: CONTRACT, data: SEL + pad(MULTISIG) }] });
+      $('status').textContent = 'Sent: ' + txHash + '\nWaiting for confirmation…';
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const rc = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+        if (rc) {
+          $('status').innerHTML = rc.status === '0x1'
+            ? '<span class="ok">Done ✓ — owner() is now the multisig. Sign in to OpenSea with the multisig to manage the collection (use "refresh metadata" / re-open OpenSea Studio if it does not appear immediately).</span>'
+            : '<span class="err">Reverted — was the connected wallet really the multisig?</span>';
+          return;
+        }
+      }
+      $('status').innerHTML = '<span class="warn">Still pending — check the explorer for ' + txHash + '</span>';
+    } catch (e) {
+      $('status').innerHTML = '<span class="err">' + (e.message || e) + '</span>';
+    } finally {
+      $('sendBtn').disabled = false;
+    }
+  };
+</script>
+</body>
+</html>
