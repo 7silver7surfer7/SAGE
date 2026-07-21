@@ -808,6 +808,19 @@ export default function PostCard({ post, onReply, clickable = true }: Props) {
                   const { naturalWidth, naturalHeight } = e.currentTarget;
                   if (naturalWidth && naturalHeight) setMediaRatio(naturalWidth / naturalHeight);
                 }}
+                // A stalled/aborted download leaves the image painted partway
+                // (top rows only, blank below) with no built-in recovery —
+                // refetch with a cache-busting param, twice, before giving up.
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  const tries = Number(img.dataset.retries || 0);
+                  if (tries >= 2 || !post.imageUrl) return;
+                  img.dataset.retries = String(tries + 1);
+                  const sep = post.imageUrl.includes('?') ? '&' : '?';
+                  setTimeout(() => {
+                    img.src = `${post.imageUrl}${sep}r=${tries + 1}`;
+                  }, 1000 * (tries + 1));
+                }}
                 style={{ cursor: 'zoom-in' }}
               />
             )}
