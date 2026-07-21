@@ -27,6 +27,7 @@ import {
   useGetTokenHoldersPageQuery,
   useRecordTradeMutation,
   useCreatePostMutation,
+  useUpdateTokenInfoMutation,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import { toDecimalString } from '@/utilities/decimalString';
@@ -98,6 +99,10 @@ export default function TokenDetailPage() {
   const [createPost] = useCreatePostMutation();
   const [busy, setBusy] = useState(false);
   const [myBalance, setMyBalance] = useState<number | null>(null);
+  // DexScreener-style token info: creator-only socials/description editor
+  const [updateTokenInfo, { isLoading: savingInfo }] = useUpdateTokenInfoMutation();
+  const [editInfoOpen, setEditInfoOpen] = useState(false);
+  const [infoForm, setInfoForm] = useState({ website: '', twitter: '', telegram: '', discord: '', description: '' });
 
   const t = data?.token;
   useEffect(() => {
@@ -252,16 +257,51 @@ export default function TokenDetailPage() {
                 🎓 pool {data.uniswapPair.slice(0, 6)}…{data.uniswapPair.slice(-4)} ⧉
               </button>
             )}
-            {t.website && (
-              <a
-                className='token-page__ca token-page__website'
-                href={t.website}
-                target='_blank'
-                rel='noreferrer noopener'
-              >
-                🌐 {t.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 32)}
-              </a>
-            )}
+            <div className='token-page__links'>
+              {t.website && (
+                <a
+                  className='token-page__ca token-page__website'
+                  href={t.website}
+                  target='_blank'
+                  rel='noreferrer noopener'
+                >
+                  🌐 {t.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 32)}
+                </a>
+              )}
+              {t.twitter && (
+                <a className='token-page__ca token-page__website' href={t.twitter} target='_blank' rel='noreferrer noopener'>
+                  𝕏 Twitter
+                </a>
+              )}
+              {t.telegram && (
+                <a className='token-page__ca token-page__website' href={t.telegram} target='_blank' rel='noreferrer noopener'>
+                  ✈️ Telegram
+                </a>
+              )}
+              {t.discord && (
+                <a className='token-page__ca token-page__website' href={t.discord} target='_blank' rel='noreferrer noopener'>
+                  💬 Discord
+                </a>
+              )}
+              {isCreator && (
+                <button
+                  className='token-page__ca token-page__edit-info'
+                  title='Add or edit website, socials and description (creator only)'
+                  onClick={() => {
+                    setInfoForm({
+                      website: t.website || '',
+                      twitter: t.twitter || '',
+                      telegram: t.telegram || '',
+                      discord: t.discord || '',
+                      description: t.description || '',
+                    });
+                    setEditInfoOpen(true);
+                  }}
+                >
+                  ✏️ {t.website || t.twitter || t.telegram || t.discord ? 'Edit info' : 'Add socials'}
+                </button>
+              )}
+            </div>
           </div>
           <div className='token-page__share-col'>
             <button className='token-page__share' onClick={share}>Share to feed</button>
@@ -562,6 +602,65 @@ export default function TokenDetailPage() {
             {loadingTrades && tradesOffset > 0 && <LoaderDots />}
           </div>
         </div>
+
+        {/* creator-only token info editor — DexScreener's paid product, free */}
+        {editInfoOpen && (
+          <div className='token-page__info-modal' onClick={() => setEditInfoOpen(false)}>
+            <div className='token-page__info-card' onClick={(e) => e.stopPropagation()}>
+              <h3>Token info</h3>
+              <p className='token-page__info-hint'>
+                Links show on this page and the DEX screener. https only; socials must
+                point at their own platform.
+              </p>
+              {(
+                [
+                  ['website', 'Website — https://…'],
+                  ['twitter', '𝕏 / Twitter — https://x.com/…'],
+                  ['telegram', 'Telegram — https://t.me/…'],
+                  ['discord', 'Discord — https://discord.gg/…'],
+                ] as const
+              ).map(([field, ph]) => (
+                <input
+                  key={field}
+                  className='social-search__input'
+                  placeholder={ph}
+                  maxLength={120}
+                  value={infoForm[field]}
+                  onChange={(e) => setInfoForm((f) => ({ ...f, [field]: e.target.value }))}
+                />
+              ))}
+              <textarea
+                className='social-search__input token-page__info-desc'
+                placeholder='Description (300 chars)'
+                maxLength={300}
+                rows={3}
+                value={infoForm.description}
+                onChange={(e) => setInfoForm((f) => ({ ...f, description: e.target.value }))}
+              />
+              <div className='token-page__info-actions'>
+                <button className='token-trade__cta' data-side='sell' onClick={() => setEditInfoOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  className='token-trade__cta'
+                  data-side='buy'
+                  disabled={savingInfo}
+                  onClick={async () => {
+                    try {
+                      await updateTokenInfo({ tokenAddress: t.tokenAddress, ...infoForm }).unwrap();
+                      toast.success('Token info updated');
+                      setEditInfoOpen(false);
+                    } catch (e: any) {
+                      toast.error(e?.data?.error || 'Could not save');
+                    }
+                  }}
+                >
+                  {savingInfo ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </SocialShell>
   );

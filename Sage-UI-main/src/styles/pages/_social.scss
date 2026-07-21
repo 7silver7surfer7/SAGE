@@ -15,6 +15,16 @@ $col-width: 620px;
   @include m.theme() {
     color: m.t(contrast);
   }
+  // width:100% + padding under the default content-box model adds the
+  // padding ON TOP of the viewport width once max-width stops binding
+  // (any screen narrower than $col-width) — a real ~32px horizontal
+  // overflow on every page that uses this wrapper on mobile, invite page
+  // included. border-box keeps padding inside the 100% instead. Scoped to
+  // mobile only so desktop's existing rendered width (max-width + padding)
+  // doesn't shift.
+  @media (max-width: 719px) {
+    box-sizing: border-box;
+  }
 
   &__header {
     margin-bottom: 14px;
@@ -144,6 +154,49 @@ $col-width: 620px;
       stroke: m.t(base);
     }
   }
+}
+
+/* ── AI agent badge (sage-mcp) — deliberately NOT accent lime, so it's never
+   confused with the paid verified checkmark at a glance ── */
+.social-agent-badge {
+  flex-shrink: 0;
+  align-self: center;
+  vertical-align: middle;
+  margin-left: 4px;
+  .social-agent-badge__head,
+  .social-agent-badge__antenna-tip {
+    fill: #3368f6;
+  }
+  .social-agent-badge__antenna {
+    stroke: #3368f6;
+  }
+  .social-agent-badge__eye {
+    @include m.theme() {
+      fill: m.t(base);
+    }
+  }
+  .social-agent-badge__mouth {
+    @include m.theme() {
+      stroke: m.t(base);
+    }
+  }
+}
+
+/* ── "Agent" text pill next to a display name on profile headers ── */
+.social-agent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(51, 104, 246, 0.14);
+  color: #3368f6;
+  vertical-align: middle;
 }
 
 /* ── sub-nav (Feed · Messages · Activity · Leaderboard) ── */
@@ -427,7 +480,13 @@ $col-width: 620px;
     max-height: 460px;
     @include m.theme() {
       border: 1px solid rgba(m.t(contrast), 0.12);
+      background: rgba(m.t(contrast), 0.04);
     }
+    // aspect-ratio is set inline per-post (the image's real measured
+    // proportions), so the box's height matches the artwork instead of
+    // forcing a fixed-height crop — the max-height above only kicks in for
+    // unusually tall images, where object-fit:contain then letterboxes
+    // instead of cropping.
     img {
       display: block;
       width: 100%;
@@ -483,7 +542,13 @@ $col-width: 620px;
   }
   &__actions {
     display: flex;
-    gap: 28px;
+    // Twitter-style spread: distribute the actions evenly across the row's
+    // full width instead of clustering the icons on the left with the tip
+    // flung to the right. gap is the minimum floor; space-between adds the
+    // rest so the glyphs breathe.
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
     margin-top: 12px;
     @include m.theme() {
       color: m.t(contrast2);
@@ -517,7 +582,8 @@ $col-width: 620px;
       }
     }
     &--tip {
-      margin-left: auto;
+      // no margin-left:auto — the row is space-between now, so the tip
+      // lands at the right edge naturally (Twitter's share-button spot).
       @include m.theme() {
         color: m.t(accent);
       }
@@ -1532,6 +1598,11 @@ body:has([class*='__overlay']) .layout {
     border: 2px solid m.t(accent);
     background: rgba(m.t(contrast), 0.02);
   }
+  @media (max-width: 719px) {
+    margin-top: 20px;
+    padding: 28px 20px;
+    border-radius: 16px;
+  }
   &__mark {
     display: flex;
     justify-content: center;
@@ -1560,17 +1631,22 @@ body:has([class*='__overlay']) .layout {
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 10px;
     margin: 26px 0 14px;
     font-size: 1rem;
     @include m.theme() {
       color: m.t(contrast);
     }
+    @media (max-width: 719px) {
+      margin: 20px 0 12px;
+    }
   }
   &__pfp {
     position: relative;
     width: 40px;
     height: 40px;
+    flex: none;
     border-radius: 50%;
     overflow: hidden;
     @include m.theme() {
@@ -1579,10 +1655,16 @@ body:has([class*='__overlay']) .layout {
   }
   &__code {
     font-family: monospace;
-    font-size: 2rem;
+    // clamp() scales the code down on narrow phones instead of a hard
+    // breakpoint jump — an 11-char code like "SAGE-9AZ7TF" at the full 2rem
+    // + wide letter-spacing was tight enough to risk wrapping/clipping
+    // under ~360px of usable width once the page and card padding are
+    // subtracted.
+    font-size: clamp(1.35rem, 8vw, 2rem);
     font-weight: 800;
-    letter-spacing: 0.12em;
+    letter-spacing: clamp(0.04em, 1.5vw, 0.12em);
     margin: 10px 0 22px;
+    word-break: break-word;
     @include m.theme() {
       color: m.t(accent);
     }
@@ -1600,6 +1682,12 @@ body:has([class*='__overlay']) .layout {
     }
     &:disabled {
       opacity: 0.5;
+    }
+    // a full-width primary CTA reads better than a narrow pill once the
+    // card itself is nearly the full screen width
+    @media (max-width: 719px) {
+      width: 100%;
+      padding: 14px 24px;
     }
   }
   &__uses {
@@ -2330,31 +2418,26 @@ body:has([class*='__overlay']) .layout {
 .social-invite__mark svg {
   width: 200px;
   height: auto;
+  @media (max-width: 719px) {
+    width: 150px;
+  }
 }
 
 /* tighten the post rows on narrow phones so chips and tip totals never clip */
 @media (max-width: 640px) {
   .social-post__actions {
-    // comment/repost/like/boost centered as a group, evenly gapped — the
-    // tip button below already wraps to its own line, so there's no
-    // clipping risk in giving these room. space-between/space-evenly both
-    // stretched the group to the row's full width, which reads as
-    // lopsided with only 4 items; centering keeps it a tight, balanced
-    // cluster regardless of row width.
-    justify-content: center;
-    gap: 28px;
+    // Twitter-style: keep all actions on ONE row, spread edge-to-edge, so
+    // the glyphs breathe instead of clustering. flex-wrap is the safety
+    // hatch for the rare own-post case with a wide "Sell as NFT" label.
+    justify-content: space-between;
+    gap: 8px;
     flex-wrap: wrap;
   }
   .social-post__action {
     font-size: 0.74rem;
     svg {
-      width: 16px;
-      height: 16px;
-    }
-    &--tip {
-      flex-basis: 100%;
-      margin-left: 0;
-      justify-content: flex-end;
+      width: 18px;
+      height: 18px;
     }
   }
   .social-post__boosted-chip {
@@ -2427,7 +2510,7 @@ body:has([class*='__overlay']) .layout {
 .social-post__media video {
   display: block;
   width: 100%;
-  max-height: 460px;
+  max-height: 600px;
   background: #000;
 }
 
@@ -3187,6 +3270,126 @@ body:has([class*='__overlay']) .layout {
     &:disabled {
       opacity: 0.5;
       cursor: default;
+    }
+  }
+}
+
+/* ── faucet page ── */
+.social-faucet {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+
+  &__card {
+    border-radius: 16px;
+    padding: 32px 22px;
+    text-align: center;
+    @include m.theme() {
+      background: m.t(base2);
+      border: 1px solid rgba(m.t(contrast), 0.15);
+      color: m.t(contrast);
+    }
+  }
+  &__drop {
+    font-size: 2.4rem;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  &__amount {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-weight: 800;
+    font-size: 2.2rem;
+  }
+  &__blurb {
+    font-size: 0.85rem;
+    margin: 4px 0 20px;
+    @include m.theme() {
+      color: m.t(contrast2);
+    }
+  }
+  &__paused {
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-bottom: 14px;
+    color: #e0455f;
+  }
+  &__cta {
+    width: 100%;
+    max-width: 320px;
+    border: none;
+    border-radius: 999px;
+    padding: 14px 22px;
+    font-weight: 800;
+    font-size: 1rem;
+    cursor: pointer;
+    @include m.theme() {
+      background: m.t(accent);
+      color: m.t(base);
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+  &__fine {
+    font-size: 0.78rem;
+    margin-top: 16px;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.5);
+    }
+  }
+
+  &__admin {
+    border-radius: 16px;
+    padding: 18px 20px;
+    @include m.theme() {
+      background: m.t(base2);
+      border: 1px dashed rgba(m.t(contrast), 0.25);
+      color: m.t(contrast);
+    }
+    h4 {
+      font-size: 0.8rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+      @include m.theme() {
+        color: m.t(contrast2);
+      }
+    }
+  }
+  &__admin-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    input {
+      flex: 1;
+      min-width: 140px;
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: 0.85rem;
+      @include m.theme() {
+        background: m.t(base);
+        border: 1px solid rgba(m.t(contrast), 0.15);
+        color: m.t(contrast);
+      }
+    }
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 9px 16px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      @include m.theme() {
+        background: rgba(m.t(accent), 0.15);
+        color: m.t(accent);
+      }
+      &:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
     }
   }
 }
@@ -4126,6 +4329,74 @@ body:has([class*='__overlay']) .layout {
   margin-top: 6px;
 }
 
+// socials row + creator-only info editor (DexScreener token-info, free)
+.token-page__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.token-page__edit-info {
+  opacity: 0.75;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.token-page__info-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.token-page__info-card {
+  width: min(440px, 92vw);
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  @include m.theme() {
+    background-color: m.t(base2);
+    border: 1px solid rgba(m.t(contrast), 0.2);
+  }
+
+  h3 {
+    margin: 0;
+  }
+}
+
+.token-page__info-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.65;
+}
+
+.token-page__info-desc {
+  resize: vertical;
+  min-height: 64px;
+  font: inherit;
+}
+
+.token-page__info-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+
+  .token-trade__cta {
+    flex: none;
+    width: auto;
+    padding: 10px 22px;
+  }
+}
+
 .social-tokens__desc {
   font-size: 0.78rem;
   line-height: 1.3;
@@ -4825,5 +5096,530 @@ body:has([class*='__overlay']) .layout {
   @media (max-width: 560px) {
     flex-direction: column;
     gap: 10px;
+  }
+}
+
+/* ═══════════════ new social features (2026-07-17) ═══════════════ */
+
+/* hashtags in post text */
+.social-post__hashtag {
+  cursor: pointer;
+  font-weight: 600;
+  @include m.theme() {
+    color: m.t(accent);
+  }
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* quote-repost embedded card */
+.social-post__quoted {
+  margin-top: 10px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  cursor: pointer;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(contrast), 0.16);
+    background: rgba(m.t(contrast), 0.02);
+  }
+  &:hover {
+    @include m.theme() {
+      border-color: rgba(m.t(contrast), 0.28);
+    }
+  }
+  &-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+  }
+  &-avatar {
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    border-radius: 50%;
+    overflow: hidden;
+    @include m.theme() {
+      background: m.t(base2);
+    }
+  }
+  &-name {
+    font-weight: 700;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  &-time {
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.45);
+    }
+  }
+  &-text {
+    margin-top: 5px;
+    font-size: 0.88rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    @include m.theme() {
+      color: m.t(contrast2);
+    }
+  }
+  &-img {
+    margin-top: 8px;
+    max-height: 220px;
+    width: 100%;
+    object-fit: cover;
+    border-radius: 10px;
+  }
+}
+
+/* tip-goal thermometer */
+.social-post__goal {
+  margin-top: 10px;
+  &-track {
+    height: 8px;
+    border-radius: 999px;
+    overflow: hidden;
+    @include m.theme() {
+      background: rgba(m.t(contrast), 0.1);
+    }
+  }
+  &-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.4s ease;
+    @include m.theme() {
+      background: m.t(accent);
+    }
+  }
+  &-label {
+    margin-top: 4px;
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+    @include m.theme() {
+      color: m.t(contrast2);
+    }
+  }
+  &[data-reached='true'] &-label {
+    font-weight: 700;
+    @include m.theme() {
+      color: m.t(accent);
+    }
+  }
+}
+
+/* emoji reactions */
+.social-post__reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.social-post__reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(contrast), 0.14);
+    background: rgba(m.t(contrast), 0.02);
+    color: m.t(contrast2);
+  }
+  &[data-mine='true'] {
+    @include m.theme() {
+      border-color: m.t(accent);
+      color: m.t(contrast);
+      background: rgba(m.t(accent), 0.12);
+    }
+  }
+}
+.social-post__react-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.social-post__action--reacted {
+  @include m.theme() {
+    color: m.t(accent) !important;
+  }
+}
+.social-post__action--bookmarked {
+  @include m.theme() {
+    color: m.t(accent) !important;
+  }
+}
+.social-post__react-plus {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.social-post__react-pop {
+  position: absolute;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 42;
+  display: flex;
+  gap: 2px;
+  padding: 5px;
+  border-radius: 999px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
+  @include m.theme() {
+    background: m.t(base2);
+    border: 1px solid rgba(m.t(contrast), 0.16);
+  }
+  button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.15rem;
+    line-height: 1;
+    padding: 4px;
+    border-radius: 50%;
+    transition: transform 0.1s;
+    &:hover {
+      transform: scale(1.25);
+      @include m.theme() {
+        background: rgba(m.t(contrast), 0.08);
+      }
+    }
+    &[data-mine='true'] {
+      @include m.theme() {
+        background: rgba(m.t(accent), 0.18);
+      }
+    }
+  }
+}
+
+/* composer: quote preview + options row */
+.social-composer__quoted {
+  margin: 8px 0;
+  border-radius: 12px;
+  padding: 8px 10px;
+  @include m.theme() {
+    border: 1px solid rgba(m.t(contrast), 0.16);
+    background: rgba(m.t(contrast), 0.02);
+  }
+  &-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  &-avatar {
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    border-radius: 50%;
+    overflow: hidden;
+    @include m.theme() {
+      background: m.t(base2);
+    }
+  }
+  p {
+    margin-top: 5px;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    @include m.theme() {
+      color: m.t(contrast2);
+    }
+  }
+}
+.social-composer__options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0;
+}
+.social-composer__gate-select,
+.social-composer__goal-input select,
+.social-composer__goal-input input {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  outline: none;
+  cursor: pointer;
+  @include m.theme() {
+    color: m.t(contrast);
+    background: transparent;
+    border: 1px solid rgba(m.t(contrast), 0.2);
+  }
+}
+.social-composer__opt-btn {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  @include m.theme() {
+    color: m.t(contrast2);
+    background: transparent;
+    border: 1px solid rgba(m.t(contrast), 0.2);
+  }
+  &[data-on='true'] {
+    @include m.theme() {
+      color: m.t(contrast);
+      border-color: m.t(accent);
+      background: rgba(m.t(accent), 0.12);
+    }
+  }
+}
+.social-composer__goal-input {
+  display: inline-flex;
+  gap: 6px;
+  input {
+    width: 90px;
+    cursor: text;
+  }
+}
+
+/* right-rail trending + who-to-follow */
+.social-widget__trend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  cursor: pointer;
+  &:hover .social-widget__trend-tag {
+    text-decoration: underline;
+  }
+}
+.social-widget__trend-tag {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 0.86rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+}
+.social-widget__follow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+.social-widget__follow-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  @include m.theme() {
+    background: m.t(accent);
+    color: m.t(base);
+  }
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
+/* follower / following list */
+.social-followlist {
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 4px;
+    @include m.theme() {
+      border-bottom: 1px solid rgba(m.t(contrast), 0.08);
+    }
+  }
+  &__avatar {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    border-radius: 50%;
+    overflow: hidden;
+    cursor: pointer;
+    @include m.theme() {
+      background: m.t(base2);
+    }
+  }
+  &__main {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+  }
+  &__name {
+    font-weight: 700;
+    font-size: 0.92rem;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  &__handle {
+    font-size: 0.8rem;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.5);
+    }
+  }
+  &__btn {
+    border-radius: 999px;
+    padding: 7px 16px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    @include m.theme() {
+      background: m.t(accent);
+      color: m.t(base);
+      border: 1px solid m.t(accent);
+    }
+    &[data-following='true'] {
+      background: transparent;
+      @include m.theme() {
+        color: m.t(contrast);
+        border-color: rgba(m.t(contrast), 0.3);
+      }
+    }
+  }
+}
+
+/* settings page */
+.social-settings {
+  &__section {
+    padding: 18px 0;
+    @include m.theme() {
+      border-bottom: 1px solid rgba(m.t(contrast), 0.08);
+    }
+  }
+  &__h3 {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 800;
+    margin-bottom: 4px;
+    @include m.theme() {
+      color: m.t(contrast);
+    }
+  }
+  &__hint {
+    font-size: 0.82rem;
+    margin-bottom: 12px;
+    @include m.theme() {
+      color: m.t(contrast2);
+    }
+  }
+  &__empty {
+    font-size: 0.84rem;
+    @include m.theme() {
+      color: rgba(m.t(contrast), 0.4);
+    }
+  }
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 0.84rem;
+    @include m.theme() {
+      background: rgba(m.t(contrast), 0.06);
+      color: m.t(contrast);
+    }
+    button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 0.78rem;
+      line-height: 1;
+      @include m.theme() {
+        color: rgba(m.t(contrast), 0.5);
+      }
+      &:hover {
+        @include m.theme() {
+          color: m.t(contrast);
+        }
+      }
+    }
+  }
+}
+
+/* moderation queue */
+.social-mod {
+  &__item {
+    margin-bottom: 18px;
+    border-radius: 16px;
+    padding: 12px;
+    @include m.theme() {
+      border: 1px solid rgba(m.t(contrast), 0.14);
+    }
+  }
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  &__count {
+    font-weight: 800;
+    font-size: 0.86rem;
+    color: #f6608a;
+  }
+  &__reasons {
+    font-size: 0.8rem;
+    text-transform: capitalize;
+    @include m.theme() {
+      color: m.t(contrast2);
+    }
+  }
+  &__actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    justify-content: flex-end;
+  }
+  &__takedown {
+    background: none;
+    border: 1px solid #f6608a;
+    border-radius: 999px;
+    padding: 7px 16px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+}
+
+/* clickable profile follower/following counts */
+.social-profile__stat-link {
+  cursor: pointer;
+  &:hover b {
+    text-decoration: underline;
+  }
+}
+
+/* back link on sub-pages */
+.social__back {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0 0 8px;
+  @include m.theme() {
+    color: m.t(accent);
   }
 }
