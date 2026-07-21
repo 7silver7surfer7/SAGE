@@ -3,9 +3,16 @@ import { transformTitle } from '@/utilities/strings';
 import { Lottery, Nft } from '@prisma/client';
 import { useMemo } from 'react';
 
+// Only what this hook actually reads — callers pass the trimmed
+// NftDisplaySelect shape (see prisma/types/index.d.ts), not a full Nft.
+type LotteryNft = Pick<
+  Nft,
+  's3Path' | 's3PathOptimized' | 'mediaType' | 'numberOfEditions' | 'name'
+>;
+
 interface UseLotteryArgs {
   lottery: Lottery;
-  nfts: Nft[];
+  nfts: LotteryNft[];
   selectedIndex?: number;
 }
 
@@ -24,6 +31,7 @@ export default function useLottery({ lottery, nfts, selectedIndex }: UseLotteryA
   const endTime = lottery.endTime.getTime();
   const mediaSrc = selectedNft.s3Path;
   const optimizedMediaSrc = selectedNft.s3PathOptimized;
+  const selectedNftMediaType = selectedNft.mediaType;
   const hasMaxTicketsPerUser: boolean = lottery.maxTicketsPerUser > 0;
   const selectedNftEditionsCount: number = selectedNft.numberOfEditions;
   const selectedNftName: string = transformTitle(selectedNft.name);
@@ -57,6 +65,7 @@ export default function useLottery({ lottery, nfts, selectedIndex }: UseLotteryA
     endTime,
     mediaSrc,
     optimizedMediaSrc,
+    selectedNftMediaType,
     selectedNftName,
     selectedNftEditionsText,
     lotteryWinners,

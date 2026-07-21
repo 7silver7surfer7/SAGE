@@ -1,5 +1,11 @@
 import sharp from 'sharp';
-import { tokenNameFor, openZipFromUrl, PathMap, CollectionProgress } from './collectionBundler';
+import {
+  tokenNameFor,
+  openZipFromUrl,
+  PathMap,
+  CollectionProgress,
+  COLLECTION_MAX_IMAGE_BYTES,
+} from './collectionBundler';
 import { uploadBufferToFilebase, uploadJsonToFilebase } from './serverWallet';
 
 /**
@@ -52,6 +58,17 @@ export async function processCollectionZipToFilebase(args: {
     throw new Error(
       `${entries.length} images — Filebase drops cap at ${FILEBASE_COLLECTION_MAX_IMAGES}`
     );
+  // The Arweave sibling (collectionBundler.ts) rejects any single oversized
+  // entry BEFORE reading it — this path was missing that same check, so a
+  // ZIP with a handful of tiny entries (to pass the count cap) plus one
+  // huge one could still force a full in-memory buffer() read of an
+  // arbitrarily large file, unlike the "never buffered whole" guarantee the
+  // module's own header comment claims.
+  for (const f of entries) {
+    if (f.uncompressedSize > COLLECTION_MAX_IMAGE_BYTES) {
+      throw new Error(`"${f.path}" is over the 25MB per-image limit`);
+    }
+  }
 
   const prefix = `coll-${collectionMintId}`;
   const pathMap: PathMap = {};

@@ -54,7 +54,14 @@ export async function signIn() {
   const message = new SiweMessage({
     domain: host,
     address: wallet.address,
-    statement: 'I accept the SAGE Terms of Service and Privacy Policy.',
+    // Distinct, exact-match statement the SAGE web app's NextAuth authorize()
+    // callback checks for (AGENT_SIWE_STATEMENT in
+    // Sage-UI-main/src/pages/api/auth/[...nextauth].page.ts) to flag this
+    // wallet isAgent=true — drives the "Agent" badge on SAGE Social so
+    // humans aren't fooled by a post that came from this server. Must match
+    // that constant EXACTLY, or the badge silently never lights up.
+    statement:
+      'I accept the SAGE Terms of Service and Privacy Policy. Signing in as an autonomous AI agent via the SAGE MCP server, not a human.',
     uri: config.siteUrl,
     version: '1',
     chainId: config.marketplace.chainId,

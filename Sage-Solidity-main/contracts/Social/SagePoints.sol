@@ -5,26 +5,30 @@ import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import '@openzeppelin/contracts/access/Ownable.sol';
 
 /**
- * SagePoints v2 — the "pixels" economy, fully on-chain with STREAMING accrual.
+ * SagePoints v3 — the "pixels" economy, on-chain STREAMING accrual with a
+ * per-user balance CHECKPOINT (fixes v2's retroactive-accrual flaw).
  *
- * Hold SAGE → earn pixels continuously, per second, no oracle and no cron:
- *   pointsOf(user) = settled[user] + heldSage × rate × secondsSinceLastSync
- * where heldSage is read LIVE from the SAGE ERC20 and capped (whale cap).
- * Any state-changing touch (spend/credit) first settles the stream into
- * `settled` and stamps `lastSync`, so spends always come out of a fresh
- * balance.
+ * Hold SAGE → earn pixels per second, no oracle and no cron:
+ *   pointsOf(user) = settled[user] + pendingStream(user)
+ *   pendingStream  = min(currentSage, checkpointSage) capped × rate × elapsed
  *
- * Approximation note: the stream between two syncs uses the CURRENT SAGE
- * balance for the whole window (the SAGE token has no transfer hooks we can
- * observe). Windows are short in practice — every spend/credit syncs — and
- * the daily cap bounds any distortion.
+ * Why the checkpoint (the v2 fix):
+ *   v2 streamed a user's CURRENT balance all the way back to `deployedAt` for
+ *   anyone who had never been "synced". Two consequences users actually hit:
+ *     (a) every whale above the cap showed the IDENTICAL point total,
+ *         regardless of when they bought — the clock ran from contract deploy,
+ *         not from when they acquired SAGE; and
+ *     (b) a wallet could briefly spike its balance and farm the whole window
+ *         (flash-balance accrual).
+ *   v3 accrues only from a per-user checkpoint (set on first touch, credit 0)
+ *   and uses min(current, checkpoint) so a spike never helps and a never-
+ *   touched wallet reads 0 instead of a phantom lump. You earn on the balance
+ *   you've actually SUSTAINED since your last sync, from when you were first
+ *   observed — not retroactively from deploy.
  *
- * Controllers (the platform server) move pixels: spendFrom (burn),
- * creditTo (mint, e.g. seller earnings), transferPoints (buyer→seller in one
- * tx). Economics are owner-adjustable at any time, no redeploy:
- *  - rateScaled   : pixels per SAGE per day × 100 (25 = 0.25/day)
- *  - capSage      : max whole SAGE that accrues (100_000 → 25k pixels/day max)
- *  - transferable : reserved for future peer-to-peer pixels
+ * Controllers (the platform server) move pixels: spendFrom, creditTo,
+ * transferPoints. Owner tunes economics live (rateScaled, capSage) and seeds
+ * migrated balances once via seedSettled().
  */
 contract SagePoints is Ownable {
     IERC20 public immutable sage;
@@ -32,7 +36,10 @@ contract SagePoints is Ownable {
 
     mapping(address => bool) public isController;
     mapping(address => uint256) public settled; // pixels banked at last sync
-    mapping(address => uint256) public lastSync; // 0 = never touched → stream from deployedAt
+    mapping(address => uint256) public lastSync; // 0 = never touched → 0 stream
+    // whole SAGE observed at the user's last sync — the ceiling on what the
+    // next window can accrue (min'd with the live balance). 0 until first sync.
+    mapping(address => uint256) public checkpointSage;
     uint256 public totalSpent; // lifetime pixels burned (analytics)
 
     struct Economics {
@@ -48,11 +55,11 @@ contract SagePoints is Ownable {
     event Spent(address indexed from, uint256 amount, string reason);
     event Credited(address indexed to, uint256 amount, string reason);
 
-    constructor(address sageToken) {
+    constructor(address sageToken, uint256 rateScaled, uint256 capSage) {
         require(sageToken != address(0), 'bad token');
         sage = IERC20(sageToken);
         deployedAt = block.timestamp;
-        economics = Economics({ rateScaled: 25, capSage: 100_000, transferable: false });
+        economics = Economics({ rateScaled: rateScaled, capSage: capSage, transferable: false });
         isController[msg.sender] = true;
         emit ControllerSet(msg.sender, true);
     }
@@ -73,13 +80,17 @@ contract SagePoints is Ownable {
         emit EconomicsUpdated(rateScaled, capSage, transferable);
     }
 
-    /** Un-synced pixels streamed since the user's last touch. */
+    /** Un-synced pixels streamed since the user's last touch. Accrues on the
+     *  LOWER of the live balance and the checkpoint, from lastSync forward —
+     *  never retroactively, never on an un-sustained spike. */
     function pendingStream(address user) public view returns (uint256) {
-        uint256 from = lastSync[user] == 0 ? deployedAt : lastSync[user];
-        if (block.timestamp <= from) return 0;
-        uint256 heldWhole = sage.balanceOf(user) / 1 ether;
+        uint256 from = lastSync[user];
+        // never synced → no checkpoint yet → no accrual (v2 streamed from
+        // deployedAt here, which is exactly the bug this fixes)
+        if (from == 0 || block.timestamp <= from) return 0;
+        uint256 liveWhole = sage.balanceOf(user) / 1 ether;
+        uint256 heldWhole = liveWhole < checkpointSage[user] ? liveWhole : checkpointSage[user];
         if (heldWhole > economics.capSage) heldWhole = economics.capSage;
-        // pixels = sage × (rateScaled/100)/day × elapsed
         return (heldWhole * economics.rateScaled * (block.timestamp - from)) / (100 * 1 days);
     }
 
@@ -88,9 +99,13 @@ contract SagePoints is Ownable {
         return settled[user] + pendingStream(user);
     }
 
-    /** Pixels this user earns per day at their current SAGE balance. */
+    /** Pixels this user earns per day at their current SAGE balance (uses the
+     *  sustained-since-checkpoint balance, matching pendingStream). */
     function dailyRateOf(address user) external view returns (uint256) {
-        uint256 heldWhole = sage.balanceOf(user) / 1 ether;
+        uint256 liveWhole = sage.balanceOf(user) / 1 ether;
+        uint256 cp = checkpointSage[user];
+        // before a first sync there's no checkpoint; preview the live balance
+        uint256 heldWhole = cp == 0 ? liveWhole : (liveWhole < cp ? liveWhole : cp);
         if (heldWhole > economics.capSage) heldWhole = economics.capSage;
         return (heldWhole * economics.rateScaled) / 100;
     }
@@ -99,7 +114,23 @@ contract SagePoints is Ownable {
         uint256 streamed = pendingStream(user);
         if (streamed > 0) settled[user] += streamed;
         lastSync[user] = block.timestamp;
+        // re-checkpoint at the CURRENT balance for the next window
+        checkpointSage[user] = sage.balanceOf(user) / 1 ether;
         emit Synced(user, streamed, settled[user]);
+    }
+
+    /** One-time migration: seed banked balances carried over from a prior
+     *  SagePoints deployment, and start each seeded user's honest accrual now
+     *  (checkpoint = current balance, clock starts at seed time). Owner-only;
+     *  intended to run once before/at controller cutover. */
+    function seedSettled(address[] calldata users, uint256[] calldata amounts) external onlyOwner {
+        require(users.length == amounts.length, 'length mismatch');
+        for (uint256 i = 0; i < users.length; i++) {
+            address u = users[i];
+            settled[u] = amounts[i];
+            lastSync[u] = block.timestamp;
+            checkpointSage[u] = sage.balanceOf(u) / 1 ether;
+        }
     }
 
     /** Burn pixels from a user (collects, verification, …). */

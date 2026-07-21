@@ -393,7 +393,11 @@ export async function fetchOrCreateNftContract(
   // the whole collection with it, so 'SAGE' for every artist made every drop
   // show up as "SAGE" (2026-07-12 rMonet complaint). Callers that know the
   // artist's display name (deployDrop knows the drop pseudonym) pass it here.
-  displayName?: string | null
+  displayName?: string | null,
+  // Custom ERC-721 symbol/ticker — only meaningful the FIRST time an artist's
+  // shared contract deploys (it's immutable after). Undefined/empty falls
+  // back to deriving one from displayName, same as before this param existed.
+  symbolOverride?: string | null
 ): Promise<string> {
   // check db for existing nft contract
   const { data } = await fetchWithBQ(`drops?action=GetNftContractAddress&address=${artistAddress}`);
@@ -414,7 +418,8 @@ export async function fetchOrCreateNftContract(
       signer,
       artistAddress,
       fetchWithBQ,
-      displayName
+      displayName,
+      symbolOverride
     );
   }
   // update db
@@ -430,14 +435,18 @@ async function createNftContract(
   signer: Signer,
   artistAddress: string,
   fetchWithBQ: any,
-  displayName?: string | null
+  displayName?: string | null,
+  symbolOverride?: string | null
 ): Promise<string> {
   var tx: ContractTransaction;
   // ERC-721 name/symbol are immutable and title the artist's collection on
   // external marketplaces — prefer the artist's display name over 'SAGE'.
   const contractName = displayName?.trim() || 'SAGE';
+  const sanitizedOverride = symbolOverride?.trim().replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
   const contractSymbol =
-    contractName.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'SAGE';
+    sanitizedOverride ||
+    contractName.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) ||
+    'SAGE';
   // Pick the deploy path by the roles the signer actually holds on-chain,
   // not by self-vs-other: deployByArtist requires role.artist and reverts at
   // gas estimation otherwise (error with no wallet prompt). An admin deploying

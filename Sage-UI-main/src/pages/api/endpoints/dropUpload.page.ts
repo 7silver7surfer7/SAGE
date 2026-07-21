@@ -123,6 +123,44 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
         return;
       }
     }
+    // CreateS3SignedUrl used to hand out a signed PUT for ANY caller-chosen
+    // bucket/filename — any signed-in wallet (no verification/invite needed)
+    // could overwrite another artist's in-flight ZIP staging upload by
+    // guessing its collectionMintId (a sequential Prisma autoincrement, so
+    // trivially enumerable). Whitelist the two buckets this app actually
+    // uses, and for the one with a real ownable resource (a ZIP tied to a
+    // specific collectionMint/drop), require the caller to own it — same
+    // pattern as cmScoped above.
+    if (action === 'CreateS3SignedUrl') {
+      const bucket = String(request.query.bucket);
+      const filename = String(request.query.filename);
+      if (bucket === 'collection-staging') {
+        const match = filename.match(/^(\d+)\.zip$/);
+        const cmId = match ? Number(match[1]) : NaN;
+        const cm = cmId
+          ? await prisma.collectionMint.findUnique({
+              where: { id: cmId },
+              select: { Drop: { select: { artistAddress: true } } },
+            })
+          : null;
+        if (!cm || cm.Drop?.artistAddress?.toLowerCase() !== requester.walletAddress.toLowerCase()) {
+          response.status(403).json({ error: 'not your collection' });
+          return;
+        }
+      } else if (bucket === 'arweave-mirror') {
+        // filename is an Arweave transaction id (content-derived, effectively
+        // unguessable) mirroring a tx this wallet already signed itself —
+        // no separate ownership record to check, just sanity-check the shape
+        // so it can't be abused as an arbitrary path.
+        if (!/^[a-zA-Z0-9_-]{20,64}$/.test(filename)) {
+          response.status(400).json({ error: 'bad filename' });
+          return;
+        }
+      } else {
+        response.status(400).json({ error: 'unknown bucket' });
+        return;
+      }
+    }
   }
 
   switch (action) {
@@ -254,9 +292,27 @@ async function getS3SignedUrl(folder: string, filename: string, response: NextAp
   response.json({ uploadUrl, getUrl });
 }
 
+// Legacy/unused (ADMIN-only) — s3Path came straight from the query string
+// with no host check, so an admin session (or an XSS on an admin page)
+// could make the server fetch an arbitrary internal/metadata-service URL
+// via this action. Only the app's own S3 buckets are legitimate targets.
+const ALLOWED_S3_HOSTS = [
+  `${process.env.S3_BUCKET}.s3.us-east-2.amazonaws.com`,
+  'staging-sage.s3.us-east-2.amazonaws.com',
+];
+
 async function copyFromS3toArweave(s3Path: string, response: NextApiResponse) {
   var balance = '';
   try {
+    let parsed: URL;
+    try {
+      parsed = new URL(s3Path);
+    } catch {
+      throw new Error('bad s3Path');
+    }
+    if (parsed.protocol !== 'https:' || !ALLOWED_S3_HOSTS.includes(parsed.host)) {
+      throw new Error('s3Path must point at this app\'s own S3 bucket');
+    }
     const fileContent = await fetchFileContent(s3Path);
     const filename = s3Path.split('/').pop() as string;
     const { tx, balance } = await sendArweaveTransaction(
@@ -267,7 +323,7 @@ async function copyFromS3toArweave(s3Path: string, response: NextApiResponse) {
     response.json({ id: tx.id, balance });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: (e as Error).message, balance });
+    response.json({ error: cleanPrismaError(e), balance });
   }
 }
 
@@ -326,7 +382,7 @@ async function ensureS3Mirror(txid: string, response: NextApiResponse) {
     response.json({ mirrored: true, alreadyExisted: false });
   } catch (e: any) {
     console.log(e);
-    response.json({ mirrored: false, error: (e as Error).message });
+    response.json({ mirrored: false, error: cleanPrismaError(e) });
   }
 }
 
@@ -442,11 +498,18 @@ async function insertDrop(data: any, response: NextApiResponse) {
         description: data.description || '',
         createdAt: new Date(),
         bannerImageS3Path: data.bannerImageS3Path,
+        bannerVideoS3Path: data.bannerVideoS3Path || null,
         goLiveAt: data.goLiveAt ? new Date(Number(data.goLiveAt) * 1000) : null,
         tileImageS3Path: data.tileImageS3Path || null,
         featuredMediaS3Path: data.featuredMediaS3Path || null,
         mobileCoverS3Path: data.mobileCoverS3Path || null,
         artistDisplayName: data.artistDisplayName?.trim() || null,
+        // sanitized the same way createNftContract() re-derives a fallback,
+        // so what's shown back to the artist matches what actually deploys
+        nftSymbol:
+          typeof data.nftSymbol === 'string'
+            ? data.nftSymbol.trim().replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || null
+            : null,
         royaltyPercentage,
         currency,
         ipGateEnabled: data.ipGateEnabled === true || data.ipGateEnabled === 'true',
@@ -506,6 +569,7 @@ async function insertAuction(data: any, response: NextApiResponse) {
             height: data.height ? Number(data.height) : null,
             s3Path: data.s3Path,
             s3PathOptimized: data.s3PathOptimized || data.s3Path,
+            mediaType: data.mediaType || null,
             artistDisplayName,
           },
         },
@@ -544,6 +608,7 @@ async function insertOpenEdition(data: any, response: NextApiResponse) {
             height: data.height ? Number(data.height) : null,
             s3Path: data.s3Path,
             s3PathOptimized: data.s3PathOptimized || data.s3Path,
+            mediaType: data.mediaType || null,
             artistDisplayName,
           },
         },
@@ -572,6 +637,7 @@ async function insertNft(data: any, response: NextApiResponse) {
         height: data.height ? Number(data.height) : null,
         s3Path: data.s3Path,
         s3PathOptimized: data.s3PathOptimized || data.s3Path,
+        mediaType: data.mediaType || null,
         price: data.price || undefined,
         Auction: null || {},
         Lottery: null || {},
@@ -845,6 +911,10 @@ async function insertCollectionMint(data: any, response: NextApiResponse) {
         // null endDate = NO deadline: the mint stays open until sold out
         endTime: data.endDate ? new Date(Number(data.endDate) * 1000) : null,
         status: 'staging',
+        nftSymbol:
+          typeof data.nftSymbol === 'string'
+            ? data.nftSymbol.trim().replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || null
+            : null,
       },
     });
     response.json({ collectionMintId: record.id });
@@ -1034,7 +1104,7 @@ async function processCollectionZipAction(
         },
       })
       .catch(() => {});
-    response.status(500).json({ error: e.message });
+    response.status(500).json({ error: cleanPrismaError(e) });
   }
 }
 

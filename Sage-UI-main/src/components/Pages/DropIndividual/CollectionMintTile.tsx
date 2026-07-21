@@ -32,10 +32,13 @@ export default function CollectionMintTile({ artist, dropName, collection, class
   // 120s: the tile only needs a rough count — the mint modal itself polls
   // every 15s while open, which covers anyone actively minting. The old 30s
   // poll ran one RPC per tile per open tab indefinitely for no UX gain.
-  const { data: liveMintCount } = useGetCollectionMintCountQuery(collection.collectionId!, {
-    skip: collection.collectionId == null,
-    pollingInterval: 120000,
-  });
+  const { data: liveMintCount } = useGetCollectionMintCountQuery(
+    { collectionId: collection.collectionId!, contractAddress: collection.contractAddress ?? undefined },
+    {
+      skip: collection.collectionId == null,
+      pollingInterval: 120000,
+    }
+  );
   const mintedCount = liveMintCount ?? collection.mintCount;
   const isSoldOut = mintedCount >= collection.maxSupply;
 

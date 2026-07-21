@@ -30,6 +30,7 @@ const ICONS = {
   compose: 'M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6M17.6 3.4a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4 8.6-8.6z',
   rocket: 'M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2 0-2.8-.8-.7-2-.7-3 -.2zM12 15l-3-3a22 22 0 0 1 2-3.9A12.7 12.7 0 0 1 21.5 2.5a12.7 12.7 0 0 1-5.6 10.5A22 22 0 0 1 12 15zM9 12H4s.6-3.3 2-4.5c1.6-1.3 5 0 5 0M12 15v5s3.3-.6 4.5-2c1.3-1.6 0-5 0-5',
   palette: 'M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2v-1a2 2 0 0 1 2-2h1a5 5 0 0 0 5-5c0-5.5-4.5-10-10-10zM7 10a1.2 1.2 0 1 1 0-2.4A1.2 1.2 0 0 1 7 10zM12 7a1.2 1.2 0 1 1 0-2.4A1.2 1.2 0 0 1 12 7zM17 10a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4z',
+  droplet: 'M12 2.7s7 7.4 7 12.3a7 7 0 1 1-14 0c0-4.9 7-12.3 7-12.3z',
 };
 
 function displayNameOf(u: { username?: string | null; address: string }) {
@@ -84,7 +85,7 @@ function ActivityTicker() {
 function LeaderboardWidget() {
   const router = useRouter();
   const { data } = useGetLeaderboardQuery();
-  const rows = data?.mostFollowed.length ? data.mostFollowed : data?.topEarners || [];
+  const rows = data?.mostFollowed || [];
   return (
     <div className='social-widget'>
       <div className='social-widget__head'>
@@ -110,7 +111,7 @@ function LeaderboardWidget() {
           </span>
         </div>
       ))}
-      {!rows.length && <p className='social-widget__empty'>First tip takes the crown.</p>}
+      {!rows.length && <p className='social-widget__empty'>Follow someone — be the first on the board.</p>}
     </div>
   );
 }
@@ -134,7 +135,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
   const nav: { name: string; url: string; icon: keyof typeof ICONS; badge?: number }[] = [
     { name: 'Home', url: '/social', icon: 'home' },
     { name: 'Search', url: '/social/search', icon: 'search' },
-    { name: 'Activity', url: '/social/activity', icon: 'bell' },
+    { name: 'Activity', url: '/social/activity', icon: 'bell', badge: me?.unreadActivity || 0 },
     { name: 'Messages', url: '/social/messages', icon: 'chat', badge: me?.unreadMessages || 0 },
     { name: 'Leaderboard', url: '/social/leaderboard', icon: 'trophy' },
     // one entry: the board carries the '🚀 Launch yours' button
@@ -175,7 +176,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
             >
               <Icon d={ICONS[item.icon]} />
               <span>{item.name}</span>
-              {!!item.badge && <span className='social-nav__badge'>{item.badge}</span>}
+              {!!item.badge && <span className='social-nav__badge'>{item.badge >= 99 ? '99+' : item.badge}</span>}
             </button>
           ))}
         </nav>
@@ -238,7 +239,7 @@ export default function SocialShell({ children }: { children: ReactNode }) {
             aria-label={item.name}
           >
             <Icon d={ICONS[item.icon]} />
-            {!!item.badge && <span className='social-nav__badge'>{item.badge}</span>}
+            {!!item.badge && <span className='social-nav__badge'>{item.badge >= 99 ? '99+' : item.badge}</span>}
           </button>
         ))}
       </nav>

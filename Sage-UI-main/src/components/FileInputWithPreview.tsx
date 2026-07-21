@@ -168,10 +168,17 @@ function getSVGAspectRatio(data: string): { width: number; height: number } {
   try {
     let decodedSvgText = atob(data.replace('data:image/svg+xml;base64,', ''));
     decodedSvgText = decodedSvgText.substring(decodedSvgText.indexOf('<svg'));
-    let div = document.createElement('div');
-    div.innerHTML = decodedSvgText;
-    let svg = div.firstChild as SVGElement;
-    let viewbox = svg.getAttribute('viewBox').split(' ');
+    // Was `div.innerHTML = decodedSvgText` — innerHTML actively PARSES AND
+    // RUNS embedded <script> tags and inline event handlers (onload=, etc.)
+    // in a user-selected SVG, executing arbitrary JS in this already-signed-
+    // in, wallet-connected page just from picking a file for a preview,
+    // before any upload happens. DOMParser parses the SAME markup into inert
+    // DOM nodes — no script execution — which is all this needs (reading
+    // the viewBox attribute).
+    const svgDoc = new DOMParser().parseFromString(decodedSvgText, 'image/svg+xml');
+    const svg = svgDoc.documentElement;
+    if (svg.querySelector('parsererror')) throw new Error('invalid SVG');
+    const viewbox = (svg.getAttribute('viewBox') || '').split(' ');
     return { width: Number(viewbox[2]), height: Number(viewbox[3]) };
   } catch (e) {
     console.log(e);

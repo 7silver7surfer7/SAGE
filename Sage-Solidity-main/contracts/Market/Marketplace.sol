@@ -4,12 +4,13 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "../../interfaces/INFT.sol";
 import "../../interfaces/IERC2981.sol";
 import "../../interfaces/ISageStorage.sol";
 import "../../interfaces/ISageConfig.sol";
 
-contract Marketplace {
+contract Marketplace is ReentrancyGuard {
     IERC20 public token;
     ISageStorage immutable sageStorage;
     // Fallback artist share of primary sales; the live value is read from
@@ -213,7 +214,7 @@ contract Marketplace {
         uint256 chainId,
         address currency,
         bytes calldata signature
-    ) public payable {
+    ) public payable nonReentrant {
         require(expiresAt > block.timestamp, "Offer expired");
         if (currency == NATIVE_CURRENCY) {
             require(msg.value == price, "Wrong ETH amount");
@@ -266,7 +267,7 @@ contract Marketplace {
         uint256 chainId,
         address currency,
         bytes calldata signature
-    ) public {
+    ) public nonReentrant {
         require(expiresAt > block.timestamp, "Offer expired");
         // A buy offer is executed by the SELLER, so the buyer's ETH cannot
         // ride along as msg.value — native-ETH buy offers are impossible

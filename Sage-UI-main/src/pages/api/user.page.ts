@@ -28,7 +28,22 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
 
   switch (method) {
     case 'POST':
-      await createUser(String(walletAddress), res);
+      // Role-mutating actions are dispatched off an `action` field on a REAL
+      // POST body — these used to be plain GETs reading the target address
+      // from the query string, which is CSRF-able (a mere <img>/<a> link, no
+      // body, no preflight, and the browser still attaches the session
+      // cookie on a top-level GET navigation). A same-origin-only POST with
+      // the target in the body closes that off. No `action` = the original
+      // plain "create my own account" POST.
+      if (req.body?.action === 'PromoteToArtist') {
+        await promoteToArtist(String(walletAddress), String(req.body?.address), res);
+        return;
+      }
+      if (req.body?.action === 'PromoteToAdmin') {
+        await promoteToAdmin(String(walletAddress), String(req.body?.address), res);
+        return;
+      }
+      await createUser(String(walletAddress), token.isAgent === true, res);
       return;
     case 'PATCH':
       await updateUser(user, String(walletAddress), res);
@@ -38,12 +53,6 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
       switch (action) {
         case 'GetAllUsersAndEarnedPoints':
           await getAllUsersAndEarnedPoints(String(walletAddress), res);
-          break;
-        case 'PromoteToArtist':
-          await promoteToArtist(String(walletAddress), String(req.query.address), res);
-          break;
-        case 'PromoteToAdmin':
-          await promoteToAdmin(String(walletAddress), String(req.query.address), res);
           break;
         case 'GetIsFollowing':
           await getIsFollowing(String(walletAddress), res);
@@ -60,7 +69,7 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
           if (req.query.wallet) {
             await getUserDisplayInfo(String(req.query.wallet), res);
           } else {
-            await getUser(String(walletAddress), res);
+            await getUser(String(walletAddress), token.isAgent === true, res);
           }
       }
       res.end();
@@ -70,13 +79,13 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
   }
 };
 
-async function getUser(walletAddress: string, res: NextApiResponse) {
+async function getUser(walletAddress: string, isAgent: boolean, res: NextApiResponse) {
   try {
     const existingUser = await prisma.user.findUnique({
       where: { walletAddress },
     });
     if (!existingUser) {
-      await createUser(walletAddress, res);
+      await createUser(walletAddress, isAgent, res);
       return;
     }
     res.status(200).send(existingUser);
@@ -125,7 +134,7 @@ async function getAllUsersAndEarnedPoints(callerAddress: string, res: NextApiRes
   }
 }
 
-async function createUser(walletAddress: string, res: NextApiResponse) {
+async function createUser(walletAddress: string, isAgent: boolean, res: NextApiResponse) {
   try {
     try {
       const ashContract = await getERC20Contract();
@@ -136,7 +145,7 @@ async function createUser(walletAddress: string, res: NextApiResponse) {
       var ashBalanceAtCreation = '0';
     }
     const newUser = await prisma.user.create({
-      data: { walletAddress, ashBalanceAtCreation },
+      data: { walletAddress, ashBalanceAtCreation, isAgent },
     });
     res.status(201).json(newUser);
   } catch (error) {
@@ -145,13 +154,46 @@ async function createUser(walletAddress: string, res: NextApiResponse) {
   }
 }
 
+// The ONLY fields a wallet may ever set on its own profile via this route.
+// `SafeUserUpdate` (src/prisma/types/index.d.ts) already declares exactly
+// this set — but it's a TypeScript-only annotation, enforced for the typed
+// client code and nowhere else. A raw request body is just parsed JSON with
+// no schema validation, so it was flowing straight into
+// `prisma.user.update({ data: user })` UNFILTERED — any signed-in wallet
+// could PATCH its own row with `{ role: 'ADMIN', verifiedAt: ..., bannedAt:
+// null, isAgent: false }` and self-promote, self-verify, or self-unban.
+// This allowlist is the runtime enforcement the type name always implied
+// but never actually did.
+const SAFE_USER_UPDATE_FIELDS = [
+  'username',
+  'email',
+  'bio',
+  'profilePicture',
+  'mediumUsername',
+  'twitterUsername',
+  'instagramUsername',
+  'webpage',
+  'location',
+  'bannerImageS3Path',
+  'country',
+  'state',
+] as const;
+
+function pickSafeUserUpdate(input: Record<string, unknown>): SafeUserUpdate {
+  const safe: Record<string, unknown> = {};
+  for (const key of SAFE_USER_UPDATE_FIELDS) {
+    if (key in input) safe[key] = input[key];
+  }
+  return safe as SafeUserUpdate;
+}
+
 async function updateUser(user: SafeUserUpdate, walletAddress: string, res: NextApiResponse) {
   try {
     const updatedUser = await prisma.user.update({
       where: {
         walletAddress,
       },
-      data: user,
+      data: pickSafeUserUpdate(user as Record<string, unknown>),
     });
     res.status(200).json(updatedUser);
   } catch (e) {

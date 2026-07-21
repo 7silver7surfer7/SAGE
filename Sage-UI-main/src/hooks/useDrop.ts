@@ -19,7 +19,7 @@ export type UseDropArgs = Parameters<typeof useDrop>['0'];
 
 function useDrop({ drop, artist, Lotteries, Auctions, OpenEditions, CollectionMints }: Args) {
   const { pushToCreators, pushToDrops } = useSageRoutes();
-  const { startTime, endTime, status } = computeDropStatus({
+  const { startTime, endTime, status, soldOut } = computeDropStatus({
     Lotteries,
     Auctions,
     OpenEditions,
@@ -36,7 +36,7 @@ function useDrop({ drop, artist, Lotteries, Auctions, OpenEditions, CollectionMi
   const state: string = artist.state;
   const createdAt = formatDateYYMMddHHmm(drop.createdAt);
   const systemTypes = computeDropSystems({ lottery: Lotteries, auction: Auctions });
-  const statusDisplay = status.toLocaleUpperCase();
+  const statusDisplay = soldOut ? 'SOLD OUT' : status.toLocaleUpperCase();
   function goToDropOnClick() {
     pushToDrops(drop.id);
   }
@@ -53,6 +53,7 @@ function useDrop({ drop, artist, Lotteries, Auctions, OpenEditions, CollectionMi
     startTime,
     endTime,
     status,
+    soldOut,
     systemTypes,
     createdAt,
     statusDisplay,

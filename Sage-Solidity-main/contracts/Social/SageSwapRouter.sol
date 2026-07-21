@@ -128,12 +128,25 @@ contract SageSwapRouter is ReentrancyGuard {
         return feeTiers.length;
     }
 
+    // Hard ceiling on any single tier's total fee, in centibps (1e5
+    // denominator) — 5000 = 5%, roughly 4x the default ~1.25% tier. Without
+    // this, a compromised or malicious treasury key could set fees near
+    // 100% and front-run a pending trade to confiscate nearly its entire
+    // notional value; a swap fee has no legitimate reason to approach that.
+    uint32 public constant MAX_TOTAL_FEE_CENTIBPS = 5000;
+
     /** Treasury retunes the whole table as the ETH price moves — no redeploy. */
     function setFeeTiers(FeeTier[] calldata tiers) external {
         require(msg.sender == treasury, 'only treasury');
         require(tiers.length >= 2, 'need tiers');
         for (uint256 i = 1; i < tiers.length; i++) {
             require(tiers[i].mcapWeiFloor > tiers[i - 1].mcapWeiFloor, 'tier order');
+        }
+        for (uint256 i = 0; i < tiers.length; i++) {
+            require(
+                tiers[i].creatorFeeCentibps + tiers[i].protocolFeeCentibps <= MAX_TOTAL_FEE_CENTIBPS,
+                'fee too high'
+            );
         }
         delete feeTiers;
         for (uint256 i = 0; i < tiers.length; i++) feeTiers.push(tiers[i]);

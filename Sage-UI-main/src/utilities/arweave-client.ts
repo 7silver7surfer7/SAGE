@@ -23,7 +23,7 @@ const DIRECT_UPLOAD_THRESHOLD_BYTES = 25 * 1024 * 1024;
  */
 export async function uploadFileToArweave(
   file: File
-): Promise<{ url: string; optimizedUrl: string }> {
+): Promise<{ url: string; optimizedUrl: string; posterUrl?: string }> {
   if (file.size > DIRECT_UPLOAD_THRESHOLD_BYTES) {
     return uploadLargeFileToArweave(file);
   }

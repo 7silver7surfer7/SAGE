@@ -8,7 +8,6 @@ error PermissionDenied();
 
 contract NFTFactory {
     bytes32 public constant ADMIN_ROLE = keccak256("role.admin");
-    bytes32 public constant ARTIST_ROLE = keccak256("role.artist");
     uint256 private constant DEFAULT_ARTIST_SHARE = 8333;
 
     mapping(address => SageNFT) artistContracts;
@@ -30,16 +29,13 @@ contract NFTFactory {
         _;
     }
 
+    // Was checking DEFAULT_ADMIN_ROLE (0x00) instead of the real multisig —
+    // SageStorage's constructor grants DEFAULT_ADMIN_ROLE to the admin
+    // wallet too, not just the multisig, so this let a plain admin key pass
+    // a check meant to require the higher-security multisig. Fixed to match
+    // Auction/SageNFT/SAGEOpenEdition/SageCollection/Rewards/Lottery.
     modifier onlyMultisig() {
-        require(sageStorage.hasRole(0x00, msg.sender), "Admin calls only");
-        _;
-    }
-
-    modifier onlyArtist() {
-        require(
-            sageStorage.hasRole(ARTIST_ROLE, msg.sender),
-            "Artist calls only"
-        );
+        require(sageStorage.multisig() == msg.sender, "Admin calls only");
         _;
     }
 
@@ -91,9 +87,13 @@ contract NFTFactory {
         createNFTContract(artistAddress, name, symbol, artistShare);
     }
 
+    // Open to any wallet — matches the self-serve social launcher's
+    // permissionless createEdition/createCollection (no role gate there
+    // either). createNFTContract's own "one contract per artist" check is
+    // the only guard: a wallet can deploy its OWN first artist contract
+    // for free, but can't redeploy over an existing one or anyone else's.
     function deployByArtist(string calldata name, string calldata symbol)
         public
-        onlyArtist
     {
         createNFTContract(msg.sender, name, symbol, DEFAULT_ARTIST_SHARE);
     }

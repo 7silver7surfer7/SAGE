@@ -78,7 +78,14 @@ const dashboardApi = baseApi.injectEndpoints({
       queryFn: async ({ walletAddress, signer }, {}, _, fetchWithBQ) => {
         // DB role is the app's source of truth and is admin-guarded server-side,
         // so set it first — this is what makes the promotion actually "take".
-        const result = await fetchWithBQ(`user?action=PromoteToAdmin&address=${walletAddress}`);
+        // POST + body, not GET + query string — a GET here was CSRF-able
+        // (any page could trigger it via a plain link, no preflight, cookie
+        // still attached on a top-level GET navigation).
+        const result = await fetchWithBQ({
+          url: 'user',
+          method: 'POST',
+          body: { action: 'PromoteToAdmin', address: walletAddress },
+        });
         if (result.error) {
           toast.error(promotionErrorMessage(result.error));
           return { data: false };
@@ -96,7 +103,11 @@ const dashboardApi = baseApi.injectEndpoints({
     promoteUserToArtist: builder.mutation<boolean, { walletAddress: string; signer: Signer }>({
       queryFn: async ({ walletAddress, signer }, {}, _, fetchWithBQ) => {
         console.log(`promoteUserToArtist(${walletAddress})`);
-        const result = await fetchWithBQ(`user?action=PromoteToArtist&address=${walletAddress}`);
+        const result = await fetchWithBQ({
+          url: 'user',
+          method: 'POST',
+          body: { action: 'PromoteToArtist', address: walletAddress },
+        });
         if (result.error) {
           toast.error(promotionErrorMessage(result.error));
           return { data: false };

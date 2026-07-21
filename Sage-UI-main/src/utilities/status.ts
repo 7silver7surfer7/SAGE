@@ -42,18 +42,21 @@ export function computeDropStatus({
   // Collection drops previously weren't counted at all, so a pure collection
   // drop (e.g. the first mainnet drop "rMonet") showed UNKNOWN forever. A
   // collection with no endTime runs until sold out: model that as an
-  // infinite end while supply remains, and as already-ended once sold out.
+  // infinite end while supply remains, and as already-ended once sold out —
+  // selling out ends a collection even before its deadline.
+  let anySoldOut = false;
   for (const cm of CollectionMints || []) {
     const soldOut = cm.maxSupply > 0 && cm.mintCount >= cm.maxSupply;
+    anySoldOut = anySoldOut || soldOut;
     games.push({
       start: +new Date(cm.startTime as any),
-      end: cm.endTime ? +new Date(cm.endTime as any) : soldOut ? now - 1 : Infinity,
+      end: soldOut ? now - 1 : cm.endTime ? +new Date(cm.endTime as any) : Infinity,
     });
   }
 
   let status: Status = 'Unknown';
   if (games.length === 0) {
-    return { startTime: 0, endTime: 0, status };
+    return { startTime: 0, endTime: 0, status, soldOut: false };
   }
   const startTime = Math.min(...games.map((g) => g.start));
   const maxEnd = Math.max(...games.map((g) => g.end));
@@ -70,7 +73,9 @@ export function computeDropStatus({
       status = 'Done';
     }
   }
-  return { startTime, endTime, status };
+  // soldOut only matters once the WHOLE drop is over — a sold-out collection
+  // alongside a still-open auction reads as Live, not SOLD OUT
+  return { startTime, endTime, status, soldOut: anySoldOut && status === 'Done' };
 }
 
 export interface ComputeAuctionStatusArgs {

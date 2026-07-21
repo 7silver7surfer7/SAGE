@@ -98,9 +98,16 @@ export async function getOpenEditionContract(signer?: Signer): Promise<Contract>
   );
 }
 
-export async function getCollectionContract(signer?: Signer): Promise<Contract> {
+// Unlike Lottery/Auction/OpenEdition, SageCollection stopped being a strict
+// global singleton once createCollectionWithNewNft (2026-07-14) let each
+// collection-drop deploy its own instance — a collection created before that
+// switch stays permanently tied to whichever contract minted it (recorded
+// per-row as CollectionMint.contractAddress). Callers that have a specific
+// row must pass its address; only fall back to the current global
+// COLLECTION_ADDRESS when no per-collection address is known.
+export async function getCollectionContract(signer?: Signer, address?: string): Promise<Contract> {
   return await getContract(
-    COLLECTION_ADDRESS,
+    address || COLLECTION_ADDRESS,
     CollectionJson.contractName,
     CollectionJson.abi,
     signer
@@ -194,6 +201,12 @@ export async function assertSignerOnConfiguredChain(signer: Signer) {
 
 export function extractErrorMessage(err: any): string {
   var error = err.error ? err.error : err;
+  if (error.code === 'STORAGE_AT_CAPACITY') {
+    // Filebase's pin quota is exhausted — a hard wall, not a glitch. Say so
+    // plainly instead of a generic "upload failed" (which is what took a
+    // long diagnostic session to root-cause the first time this happened).
+    return `Storage is at capacity (${error.message || 'Filebase pin limit reached'}) — this needs a human to free up space or upgrade the plan before uploads will work again.`;
+  }
   if (error.code == -32603) {
     // 32603 = RPC Error: Internal JSON-RPC error. The useful revert reason is
     // nested one level deeper (error.data.message) — surfacing only the outer

@@ -82,6 +82,7 @@ function UpcomingDropsTile(props: UpcomingDropsTileProps) {
   const {
     goToDropOnClick,
     status: dropStatus,
+    soldOut,
     statusDisplay,
     bannerImgSrc,
     startTime,
@@ -92,8 +93,13 @@ function UpcomingDropsTile(props: UpcomingDropsTileProps) {
   const { displayValue: openingTime } = useCountdown({ targetDate: startTime });
   return (
     <div className='home-page__upcoming-drops-tile' onClick={goToDropOnClick}>
-      {dropStatus !== 'Done' && (
-        <div className='home-page__upcoming-drops-countdown' data-status={dropStatus}>
+      {/* Done drops carry no badge — except a sold-out collection, which is
+          the strongest social proof a drop can show */}
+      {(dropStatus !== 'Done' || soldOut) && (
+        <div
+          className='home-page__upcoming-drops-countdown'
+          data-status={soldOut ? 'SoldOut' : dropStatus}
+        >
           {dropStatus === 'Upcoming' ? openingTime : statusDisplay}
         </div>
       )}

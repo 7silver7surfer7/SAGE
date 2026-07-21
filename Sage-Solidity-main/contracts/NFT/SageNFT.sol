@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Burnable.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../Utils/StringUtils.sol";
@@ -16,7 +17,8 @@ contract SageNFT is
     ERC721Enumerable,
     ERC721Burnable,
     ERC721URIStorage,
-    Ownable
+    Ownable,
+    ReentrancyGuard
 {
     using Counters for Counters.Counter;
     ISageStorage immutable sageStorage;
@@ -31,6 +33,12 @@ contract SageNFT is
 
     Counters.Counter public nextTokenId;
 
+    // ETH owed to `artist` or the platform royalty dest whose withdraw()
+    // .call failed (e.g. artist is a non-payable contract). Pull-payment
+    // escape hatch so one bad receiver can't strand the OTHER party's share
+    // too — withdraw() used to revert the whole call on either leg failing.
+    mapping(address => uint256) public pendingReturns;
+
     bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 public constant MINTER_ROLE = keccak256("role.minter");
     bytes32 public constant BURNER_ROLE = keccak256("role.burner");
@@ -38,8 +46,10 @@ contract SageNFT is
 
     // Per-token secondary-sale royalty, in basis points (100 = 1%).
     // defaultRoyaltyBps is set per DROP at deploy time by the dashboard flow;
-    // each token permanently stamps the value current at its mint, so drops by
-    // the same artist can carry different royalties on one contract.
+    // each token stamps the value current at its mint, so drops by the same
+    // artist can carry different royalties on one contract. Not actually
+    // permanent — setTokenRoyalty() below is an intentional admin/multisig
+    // corrective tool that can still change an already-minted token's rate.
     uint96 public constant MAX_ROYALTY_BPS = 2000; // 20% fat-finger cap
     uint96 public defaultRoyaltyBps;
     mapping(uint256 => uint96) public tokenRoyaltyBps;
@@ -63,6 +73,12 @@ contract SageNFT is
         uint96 _defaultRoyaltyBps
     ) ERC721(_name, _symbol) {
         require(_defaultRoyaltyBps <= MAX_ROYALTY_BPS, "Royalty exceeds cap");
+        // setArtistShare() bounds this to <=10000; the constructor is reached
+        // permissionlessly (SageCollection.createCollectionWithNewNft forwards
+        // nftParams.artistShare unmodified), so bound it here too. An
+        // unbounded >100% value makes withdraw()/withdrawERC20() underflow-
+        // revert, bricking that contract's pooled-royalty payouts.
+        require(_artistShare <= 10000, "Share exceeds 100%");
         sageStorage = ISageStorage(_sageStorage);
         artist = _artist;
         artistShare = _artistShare;
@@ -104,8 +120,9 @@ contract SageNFT is
     function _incMint(address to, string calldata uri) internal {
         uint256 currentTokenId = nextTokenId.current();
         nextTokenId.increment();
-        // stamp the drop's royalty permanently on this token — covers every
-        // mint path (artistMint + the game contracts' safeMint calls)
+        // stamp the drop's current royalty on this token — covers every mint
+        // path (artistMint + the game contracts' safeMint calls). Not
+        // actually permanent: setTokenRoyalty() can still change it later.
         tokenRoyaltyBps[currentTokenId] = defaultRoyaltyBps;
         _safeMint(to, currentTokenId);
         _setTokenURI(currentTokenId, uri);
@@ -167,6 +184,12 @@ contract SageNFT is
     }
 
     function setArtistShare(uint256 _artistShare) public onlyMultisig {
+        // unbounded before this — a value above 10000 makes withdraw()'s
+        // `balance - _artist` underflow-revert, bricking payouts for this
+        // contract until corrected (self-DoS, not a fund-loss path since
+        // this is multisig-gated, but the royalty setters below already
+        // guard the equivalent case and this one didn't).
+        require(_artistShare <= 10000, "Share exceeds 100%");
         artistShare = _artistShare;
     }
 
@@ -180,7 +203,7 @@ contract SageNFT is
         return dest == address(0) ? sageStorage.multisig() : dest;
     }
 
-    function withdrawERC20(address erc20) public {
+    function withdrawERC20(address erc20) public nonReentrant {
         IERC20 token = IERC20(erc20);
         uint256 balance = token.balanceOf(address(this));
         uint256 _artist = (balance * artistShare) / 10000;
@@ -191,17 +214,35 @@ contract SageNFT is
         );
     }
 
-    function withdraw() public {
+    // nonReentrant: withdraw() pays `artist` (an attacker-controllable address
+    // on a self-serve drop) via a value .call BEFORE the platform leg, reading
+    // the live balance fresh. Without the guard a contract-artist re-enters
+    // from receive(), re-splitting the not-yet-reduced balance each time and
+    // funneling the platform's royalty share to itself. The guard (shared with
+    // withdrawERC20/withdrawPendingReturns) makes any re-entry revert.
+    function withdraw() public nonReentrant {
         uint256 balance = address(this).balance;
         uint256 _share = (balance * artistShare) / 10000;
-        (bool sent, ) = artist.call{value: _share}("");
-        if (!sent) {
-            revert();
+        (bool sentArtist, ) = artist.call{value: _share}("");
+        if (!sentArtist) {
+            pendingReturns[artist] += _share;
         }
-        (sent, ) = _platformRoyaltyDest().call{value: balance - _share}("");
-        if (!sent) {
-            revert();
+        address platformDest = _platformRoyaltyDest();
+        (bool sentPlatform, ) = platformDest.call{
+            value: balance - _share
+        }("");
+        if (!sentPlatform) {
+            pendingReturns[platformDest] += balance - _share;
         }
+    }
+
+    /** Claims ETH credited after a failed withdraw() send. */
+    function withdrawPendingReturns() external nonReentrant {
+        uint256 amount = pendingReturns[msg.sender];
+        require(amount > 0, "Nothing to withdraw");
+        pendingReturns[msg.sender] = 0;
+        (bool ok, ) = msg.sender.call{value: amount}("");
+        require(ok, "ETH transfer failed");
     }
 
     receive() external payable {}

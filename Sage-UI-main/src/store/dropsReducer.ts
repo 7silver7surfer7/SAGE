@@ -93,6 +93,13 @@ export interface CreateDropRequest {
    *  (salted-IP dedup) which whitelists the wallet on-chain. Sybil speed
    *  bump, not a wall. */
   ipGateEnabled?: boolean;
+  /** Custom ERC-721 ticker/symbol for this drop's NFT contract. For Open
+   *  Edition/Auction this only takes effect the FIRST time this artist's
+   *  shared contract deploys (immutable after — ignored on later drops); for
+   *  a ZIP collection it always applies, since each one gets its own fresh
+   *  dedicated contract. Omitted/empty falls back to auto-deriving one from
+   *  the display name (artist or drop, respectively), same as before. */
+  nftSymbol?: string;
   /** Collection drop mode: a ZIP of unique images bulk-uploaded to Arweave;
    *  collectors mint sequentially at a fixed SAGE price. When set, `artworks`
    *  is ignored — the zip IS the drop's content. */
@@ -142,7 +149,17 @@ export const dropsApi = baseApi.injectEndpoints({
         invalidatesTags: ['PendingDrops'],
       }
     ),
-    createDropWithUploads: builder.mutation<number, CreateDropRequest>({
+    // `fullyDeployed: false` (drop row created, but a later step — upload,
+    // on-chain deploy — failed) must NEVER be treated the same as a clean
+    // success by a caller: it used to resolve to a bare truthy dropId,
+    // which let the self-serve launcher post "it's live!" to the feed and
+    // invite mints/bids on a drop that wasn't actually deployed. Every
+    // caller MUST check fullyDeployed before doing anything that presents
+    // the drop as ready (posting, "Live!" messaging, share links).
+    createDropWithUploads: builder.mutation<
+      { dropId: number; fullyDeployed: boolean },
+      CreateDropRequest
+    >({
       queryFn: async (req, {}, _, fetchWithBQ) => {
         // Once the drop row exists, a later failure (usually the on-chain
         // deploy) must NOT read as "the drop failed" — the uploads are done
@@ -160,8 +177,8 @@ export const dropsApi = baseApi.injectEndpoints({
           // patches in the FIRST IMAGE once the zip is unpacked and pinned.
           const bannerIsZip =
             /zip/i.test(req.bannerFile.type || '') || /\.zip$/i.test(req.bannerFile.name || '');
-          const { url: bannerUrl } = bannerIsZip
-            ? { url: '' }
+          const { url: bannerUrl, posterUrl: bannerPosterUrl } = bannerIsZip
+            ? { url: '', posterUrl: undefined }
             : await dropProgress.track(
                 req.storage === 'filebase' ? 'Uploading banner to Filebase (IPFS)' : 'Uploading banner to Arweave',
                 () =>
@@ -169,6 +186,15 @@ export const dropsApi = baseApi.injectEndpoints({
                     ? uploadFileToFilebase(req.bannerFile)
                     : uploadFileToArweave(req.bannerFile)
               );
+          // bannerImageS3Path/tileImageS3Path render as plain <img> in several
+          // places (dashboard cards, feed post previews) that don't know how
+          // to play video — a video banner needs its first-frame poster here,
+          // never the raw video URL (see extractFirstFrame in social-upload).
+          // The real clip (when there is one) still gets persisted separately
+          // as bannerVideoS3Path, for the one surface that DOES play video:
+          // this drop's own announcement post on the social feed.
+          const resolvedBannerUrl = bannerPosterUrl || bannerUrl;
+          const bannerVideoUrl = bannerPosterUrl ? bannerUrl : undefined;
           let artistProfilePicture: string | undefined;
           if (req.artistIconFile) {
             const { url, optimizedUrl } = await dropProgress.track(
@@ -192,13 +218,15 @@ export const dropsApi = baseApi.injectEndpoints({
                 artistProfilePicture,
                 name: req.name,
                 description: req.description,
-                bannerImageS3Path: bannerUrl,
-                tileImageS3Path: bannerUrl,
+                bannerImageS3Path: resolvedBannerUrl,
+                tileImageS3Path: resolvedBannerUrl,
+                bannerVideoS3Path: bannerVideoUrl,
                 goLiveAt: req.goLiveAt,
                 royaltyPercentage: req.royaltyPercentage,
                 currency: req.currency || 'SAGE',
                 ipGateEnabled: !!req.ipGateEnabled,
                 storage: req.storage || 'arweave',
+                nftSymbol: req.nftSymbol,
               },
             })
           );
@@ -260,7 +288,7 @@ export const dropsApi = baseApi.injectEndpoints({
           dropProgress.note(`Done — drop "${req.name}" (#${dropId}) is ready.`);
           dropProgress.finish();
           toast.success(`Drop '${req.name}' created!`);
-          return { data: dropId };
+          return { data: { dropId, fullyDeployed: true } };
         } catch (e: any) {
           console.error('createDropWithUploads() failed', e);
           const message = extractErrorMessage(e);
@@ -272,11 +300,13 @@ export const dropsApi = baseApi.injectEndpoints({
                 `from the New Drops tab (no need to re-upload).`,
               { autoClose: false }
             );
-            // the drop exists; hand its id back so the form clears normally
-            return { data: createdDropId };
+            // the drop exists (so the form can clear / a retry flow can find
+            // it by id), but it is NOT live — fullyDeployed:false is the
+            // signal every caller must check before posting/announcing it
+            return { data: { dropId: createdDropId, fullyDeployed: false } };
           }
           toast.error(`Error creating drop: ${message}`, { autoClose: false });
-          return { data: 0 };
+          return { data: { dropId: 0, fullyDeployed: false } };
         }
       },
       invalidatesTags: ['PendingDrops'],
@@ -285,7 +315,7 @@ export const dropsApi = baseApi.injectEndpoints({
       query: () => `drops?action=GetApprovedDrops`,
       providesTags: ['PendingDrops'],
     }),
-    getDropsPendingApproval: builder.query<Drop_include_GamesAndArtist[], void>({
+    getDropsPendingApproval: builder.query<DropFull[], void>({
       query: () => `drops?action=GetDropsPendingApproval`,
       providesTags: ['PendingDrops'],
     }),
@@ -477,10 +507,14 @@ export const dropsApi = baseApi.injectEndpoints({
       ],
     }),
     // Same live-read rationale as getOpenEditionMintCount, for collections.
-    getCollectionMintCount: builder.query<number, number>({
-      queryFn: async (collectionId) => {
+    // contractAddress is the specific SageCollection instance this row was
+    // minted through — collections created before the 2026-07-14
+    // one-tx-deploy switch live on an older contract than the current global
+    // default, so it must be threaded through rather than assumed.
+    getCollectionMintCount: builder.query<number, { collectionId: number; contractAddress?: string }>({
+      queryFn: async ({ collectionId, contractAddress }) => {
         try {
-          const contract = await getCollectionContract();
+          const contract = await getCollectionContract(undefined, contractAddress);
           const count = await contract.getMintCount(collectionId);
           return { data: Number(count) };
         } catch (e) {
@@ -488,7 +522,7 @@ export const dropsApi = baseApi.injectEndpoints({
           return { error: { status: 400, data: {} } };
         }
       },
-      providesTags: (_result, _error, collectionId) => [
+      providesTags: (_result, _error, { collectionId }) => [
         { type: 'CollectionMintCount', id: collectionId },
       ],
     }),
@@ -658,7 +692,8 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
       drop.artistAddress,
       signer,
       fetchWithBQ,
-      (drop as any).artistDisplayName || drop.NftContract?.Artist?.username
+      (drop as any).artistDisplayName || drop.NftContract?.Artist?.username,
+      (drop as any).nftSymbol
     )
   );
   if (artistNftContractAddress == ethers.constants.AddressZero) {
@@ -820,16 +855,18 @@ async function setGamesWhitelist(drop: DropFull, whitelistAddress: string, signe
   // collections were missing here — a live collection drop couldn't be
   // (un)gated post-deploy until the IP-gate work surfaced the gap
   const deployedCollections = (drop.CollectionMints || []).filter((cm: any) => cm.contractAddress);
-  if (deployedCollections.length) {
-    const collectionContract = await getCollectionContract(signer);
-    for (const cm of deployedCollections) {
-      const cId = cm.collectionId ?? cm.id;
-      const onChain = await collectionContract.getCollection(cId);
-      if (onChain?.whitelist?.toLowerCase() === whitelistAddress.toLowerCase()) continue;
-      console.log(`setGamesWhitelist() :: collection ${cId} -> ${whitelistAddress}`);
-      const tx = await collectionContract.setWhitelist(cId, whitelistAddress);
-      await tx.wait();
-    }
+  for (const cm of deployedCollections) {
+    // each row's own contract, not a shared instance fetched once — SageCollection
+    // stopped being a strict singleton (2026-07-14 one-tx-deploy switch), so a
+    // collection created before that lives on an older contract than any other
+    // row here.
+    const collectionContract = await getCollectionContract(signer, cm.contractAddress);
+    const cId = cm.collectionId ?? cm.id;
+    const onChain = await collectionContract.getCollection(cId);
+    if (onChain?.whitelist?.toLowerCase() === whitelistAddress.toLowerCase()) continue;
+    console.log(`setGamesWhitelist() :: collection ${cId} -> ${whitelistAddress}`);
+    const tx = await collectionContract.setWhitelist(cId, whitelistAddress);
+    await tx.wait();
   }
 }
 
@@ -871,7 +908,9 @@ async function syncAllowlistAddresses(
  *  transient failures (network blip, a 503 under load) — video transcoding
  *  is the heaviest request this server handles, so it's the most exposed
  *  to a momentarily overloaded instance. */
-async function uploadFileToFilebase(file: File): Promise<{ url: string; optimizedUrl: string }> {
+async function uploadFileToFilebase(
+  file: File
+): Promise<{ url: string; optimizedUrl: string; posterUrl?: string }> {
   return retryTransient(async () => {
     const form = new FormData();
     form.append('file', file);
@@ -880,9 +919,10 @@ async function uploadFileToFilebase(file: File): Promise<{ url: string; optimize
     if (!res.ok || !data.url) {
       const err: any = new Error(data?.error || 'Filebase upload failed');
       err.status = res.status;
+      err.code = data?.code;
       throw err;
     }
-    return { url: data.url, optimizedUrl: data.url };
+    return { url: data.url, optimizedUrl: data.url, posterUrl: data.posterUrl };
   });
 }
 
@@ -892,7 +932,8 @@ async function pinMetadataToFilebase(
   name: string,
   description: string,
   mediaUrl: string,
-  isVideo: boolean
+  isVideo: boolean,
+  posterUrl?: string
 ): Promise<string> {
   return retryTransient(async () => {
     const res = await fetch('/api/endpoints/dropUpload/?action=PinNftMetadataToFilebase', {
@@ -901,7 +942,11 @@ async function pinMetadataToFilebase(
       body: JSON.stringify({
         name,
         description,
-        image: mediaUrl,
+        // ERC-721 convention: `image` is a static preview (marketplaces/
+        // wallets that only render <img> read this), `animation_url` is the
+        // real playable media. Without a poster, video drops shipped the
+        // raw .mp4 as `image` too — broken everywhere but SAGE's own player.
+        image: isVideo && posterUrl ? posterUrl : mediaUrl,
         animationUrl: isVideo ? mediaUrl : undefined,
       }),
     });
@@ -928,7 +973,7 @@ async function uploadAndRegisterArtworks(
   for (let i = 0; i < total; i++) {
     const artwork = artworks[i];
     const label = artwork.name || `artwork ${i + 1}`;
-    const { url, optimizedUrl } = await dropProgress.track(
+    const { url, optimizedUrl, posterUrl } = await dropProgress.track(
       `Uploading "${label}" to ${storage === 'filebase' ? 'Filebase (IPFS)' : 'Arweave'} (${i + 1}/${total})`,
       () => (storage === 'filebase' ? uploadFileToFilebase(artwork.file) : uploadFileToArweave(artwork.file))
     );
@@ -941,7 +986,7 @@ async function uploadAndRegisterArtworks(
       `Writing metadata for "${label}"`,
       () =>
         storage === 'filebase'
-          ? pinMetadataToFilebase(artwork.name, artwork.description, url, isVideo)
+          ? pinMetadataToFilebase(artwork.name, artwork.description, url, isVideo, posterUrl)
           : createNftMetadataOnArweave(endpoint, artwork.name, artwork.description, url, isVideo)
     );
     const media = {
@@ -951,6 +996,11 @@ async function uploadAndRegisterArtworks(
       metadataPath,
       s3Path: url,
       s3PathOptimized: optimizedUrl,
+      // Real media stays in s3Path/s3PathOptimized (BaseMedia can actually
+      // play a video) — this just tells it that's safe, since a Filebase/
+      // IPFS URL has no extension for isVideoSrc to sniff (see
+      // BaseMedia.tsx / Nft.mediaType).
+      mediaType: isVideo ? 'video' : 'image',
       width,
       height,
     };
@@ -1037,6 +1087,7 @@ async function runCollectionPipeline(
         startDate,
         // no duration = no deadline: the mint stays open until sold out
         endDate: c.durationHours ? startDate + c.durationHours * 3600 : null,
+        nftSymbol: req.nftSymbol,
       },
     })
   );
@@ -1159,8 +1210,9 @@ async function deployCollectionMints(
 
     let nftContractAddress = (cm as any).nftContractAddress;
     if (!nftContractAddress) {
+      const customSymbol = (cm as any).nftSymbol?.trim().replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
       const symbol =
-        drop.name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'SAGE';
+        customSymbol || drop.name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'SAGE';
       const bps = Math.round(((drop as any).royaltyPercentage ?? 12) * 100);
       console.log(`deployCollectionMints() :: deploying "${drop.name}" (${symbol}) NFT contract + creating collection #${cm.id} in one tx…`);
       const tx = await contract.createCollectionWithNewNft(

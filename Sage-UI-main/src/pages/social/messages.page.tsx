@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import LoaderDots from '@/components/LoaderDots';
 import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
+import AgentBadge from '@/components/Social/AgentBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
@@ -134,6 +135,7 @@ function DMThread({ partner, partnerCard }: { partner: string; partnerCard?: Soc
             <span className='social-dm__row-name'>
               {nameOf(partnerCard)}
               {partnerCard.verified && <VerifiedBadge size={12} />}
+              {partnerCard.isAgent && <AgentBadge size={12} />}
             </span>
           </button>
         )}
@@ -234,6 +236,7 @@ export default function MessagesPage() {
                           <span className='social-dm__row-name'>
                             {nameOf(c.partner)}
                             {c.partner.verified && <VerifiedBadge size={12} />}
+                            {c.partner.isAgent && <AgentBadge size={12} />}
                           </span>
                           <span className='social-dm__row-time'>{timeAgo(c.lastAt)}</span>
                         </span>

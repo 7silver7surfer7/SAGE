@@ -1,7 +1,36 @@
 import { parameters } from '../constants/config';
-import { ArtistSales, Drop_include_GamesAndArtist, User, NewArtwork } from '@/prisma/types';
+import { ArtistSales, Drop_include_GamesAndArtist, User } from '@/prisma/types';
 import { PrismaClient, Prisma, Role } from '@prisma/client';
-import { BigNumber } from 'ethers';
+import { BigNumber, Contract, providers } from 'ethers';
+
+// Matches NftDisplaySelect in prisma/types/index.d.ts — keep them in sync.
+// The public drop/homepage/listing tiles + mint/bid modals only ever read
+// this subset of Nft; a bare `include: { Nft: true }` was dragging
+// arweavePath/tags/price/ownerAddress/etc. into every homepage load,
+// drops-listing load, and drop-detail load for no reason.
+const NFT_DISPLAY_SELECT = {
+  id: true,
+  name: true,
+  description: true,
+  s3Path: true,
+  s3PathOptimized: true,
+  mediaType: true,
+  numberOfEditions: true,
+  width: true,
+  height: true,
+  metadataPath: true,
+  artistDisplayName: true,
+} as const;
+
+// Shared by getHomePageData / getDropsPageData / getIndividualDropsPageData —
+// same tile components render all three, so they need the same shape.
+const DROP_INCLUDES = {
+  NftContract: { include: { Artist: true } },
+  Lotteries: { include: { Nfts: { select: NFT_DISPLAY_SELECT } } },
+  Auctions: { include: { Nft: { select: NFT_DISPLAY_SELECT } } },
+  OpenEditions: { include: { Nft: { select: NFT_DISPLAY_SELECT } } },
+  CollectionMints: true as const,
+};
 
 // A drop is publicly visible once approved AND its go-live timer (if any) has
 // passed. Must be a function so `new Date()` is evaluated per query, not once
@@ -63,61 +92,70 @@ export function withArtistDisplayNameOverride<
   return drop;
 }
 
+/**
+ * Best-effort refresh of cached CollectionMint.mintCount from chain. The
+ * cached value normally only updates when a minter's browser completes the
+ * post-mint registration call, so mints whose registration never lands
+ * (closed tab, direct on-chain mints) leave the DB undercounting forever —
+ * rMonet sat at 91/100 cached while the contract said 100/100, keeping a
+ * sold-out drop badged LIVE on the homepage. Runs server-side during ISR
+ * regeneration (throttled by each page's `revalidate`), only reads
+ * collections that still look unsold, patches the in-memory rows so the
+ * CURRENT render is already correct, and never throws.
+ */
+async function syncCollectionMintCounts(
+  prisma: PrismaClient,
+  drops: (Drop_include_GamesAndArtist | null | undefined)[]
+) {
+  const pending = drops
+    .flatMap((d) => ((d as any)?.CollectionMints || []) as any[])
+    .filter((cm) => cm.contractAddress && cm.maxSupply > 0 && cm.mintCount < cm.maxSupply);
+  if (pending.length === 0) return;
+  try {
+    const provider = new providers.StaticJsonRpcProvider(parameters.RPC_URL, +parameters.CHAIN_ID);
+    await Promise.all(
+      pending.map(async (cm) => {
+        try {
+          const collection = new Contract(
+            cm.contractAddress,
+            ['function getMintCount(uint256) view returns (uint32)'],
+            provider
+          );
+          const onChain = Number(await collection.getMintCount(cm.collectionId ?? cm.id));
+          if (onChain !== cm.mintCount) {
+            await prisma.collectionMint.update({
+              where: { id: cm.id },
+              data: { mintCount: onChain },
+            });
+            cm.mintCount = onChain;
+          }
+        } catch (e) {
+          console.error(`mintCount sync failed for collection ${cm.id}`, e);
+        }
+      })
+    );
+  } catch (e) {
+    console.error('mintCount sync skipped', e);
+  }
+}
+
 export async function getHomePageData(prisma: PrismaClient) {
-  const dropIncludes = {
-    NftContract: { include: { Artist: true } },
-    Lotteries: { include: { Nfts: true } },
-    Auctions: { include: { Nft: true } },
-    OpenEditions: { include: { Nft: true } },
-    CollectionMints: true as const,
-  };
   let drops: Drop_include_GamesAndArtist[] = await prisma.drop.findMany({
     where: { ...filterDropApprovedOnly(), ...FilterDropHasDeployedGame },
-    include: dropIncludes,
+    include: DROP_INCLUDES,
     orderBy: { approvedAt: 'desc' },
     take: 8,
   });
   drops.forEach(withArtistDisplayNameOverride);
   const config = await prisma.config.findFirst({
-    include: { FeaturedDrop: { include: dropIncludes } },
+    include: { FeaturedDrop: { include: DROP_INCLUDES } },
   });
   if (config?.FeaturedDrop) withArtistDisplayNameOverride(config.FeaturedDrop);
+  await syncCollectionMintCounts(prisma, [...drops, config?.FeaturedDrop as any]);
   const latestArtists = await prisma.user.findMany({
     where: { role: Role.ARTIST },
     orderBy: { createdAt: 'desc' },
     take: 10,
-  });
-
-  const newDrops = await prisma.drop.findMany({
-    where: { ...filterDropApprovedOnly(), ...FilterDropHasDeployedGame },
-    select: {
-      NftContract: { select: { Artist: { select: { username: true, profilePicture: true } } } },
-      Auctions: { select: { Nft: { select: { s3PathOptimized: true, name: true } } } },
-      Lotteries: {
-        select: { Nfts: { distinct: ['s3Path'], select: { s3PathOptimized: true, name: true } } },
-      },
-      id: true,
-      artistDisplayName: true,
-    },
-    orderBy: { createdAt: 'desc' },
-    // this feeds the "new artworks" strip only — without a cap it pulls EVERY
-    // approved drop with all nested NFTs on every 60s homepage revalidation
-    take: 12,
-  });
-  let newArtworks: NewArtwork[] = [];
-  newDrops.forEach((d) => {
-    const artistUsername = d.artistDisplayName || d.NftContract.Artist.username;
-    const { profilePicture } = d.NftContract.Artist;
-    const dropId = d.id;
-    d.Auctions.forEach((a) => {
-      const newArtwork = { ...a.Nft, artistUsername, profilePicture, dropId };
-      newArtworks.push(newArtwork);
-    });
-    d.Lotteries.forEach((l) => {
-      l.Nfts.map((nft) => {
-        newArtworks.push({ ...nft, artistUsername, profilePicture, dropId });
-      });
-    });
   });
 
   const welcomeMessage = config
@@ -127,20 +165,13 @@ export async function getHomePageData(prisma: PrismaClient) {
   // in the Config panel — do not fall back to "most recently approved," which
   // shows an unintended drop tag on the homepage with no admin action behind it.
   const featuredDrop = config?.FeaturedDrop ?? null;
-  return { featuredDrop, upcomingDrops: drops, drops, welcomeMessage, latestArtists, newArtworks };
+  return { featuredDrop, upcomingDrops: drops, drops, welcomeMessage, latestArtists };
 }
 
 export async function getDropsPageData(prisma: PrismaClient) {
   const drops = await prisma.drop.findMany({
     orderBy: { approvedAt: 'desc' },
-    include: {
-      NftContract: { include: { Artist: true } },
-      Lotteries: { include: { Nfts: true } },
-      Auctions: { include: { Nft: true } },
-      OpenEditions: { include: { Nft: true } },
-      // collection drops need these for status (LIVE/sold-out) + tile preview
-      CollectionMints: true,
-    },
+    include: DROP_INCLUDES,
     where: {
       ...FilterDropContractValidation,
       ...filterDropApprovedOnly(),
@@ -150,6 +181,7 @@ export async function getDropsPageData(prisma: PrismaClient) {
   });
 
   drops.forEach(withArtistDisplayNameOverride);
+  await syncCollectionMintCounts(prisma, drops);
   return drops;
 }
 
@@ -161,6 +193,10 @@ export async function getIndividualDropsPagePaths(prisma: PrismaClient) {
       ...filterDropApprovedOnly(),
       ...FilterDropContractValidation,
     },
+    // only .id is used below — this ran as a full-row fetch of every
+    // approved drop (banner paths, description, everything) on every build
+    // and every ISR revalidation, just to list ids for getStaticPaths.
+    select: { id: true },
   });
 
   const paths = drops.map((drop) => ({
@@ -172,13 +208,7 @@ export async function getIndividualDropsPagePaths(prisma: PrismaClient) {
 
 export async function getIndividualDropsPageData(prisma: PrismaClient, id: number) {
   const drop = await prisma.drop.findFirst({
-    include: {
-      NftContract: { include: { Artist: true } },
-      Lotteries: { include: { Nfts: true } },
-      Auctions: { include: { Nft: true } },
-      OpenEditions: { include: { Nft: true } },
-      CollectionMints: true,
-    },
+    include: DROP_INCLUDES,
     where: {
       id,
       ...filterDropApprovedOnly(),

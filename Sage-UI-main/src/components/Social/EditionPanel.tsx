@@ -167,8 +167,8 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
           One artwork, many mints. Free to create; each mint pays 1% to the platform, 99% to you; minters pay gas.
         </p>
         <input className='social-search__input' placeholder='Name (e.g. Chartreuse Studies)' value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 8 }} />
+        <input className='social-search__input' placeholder='Ticker' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 8 }} />
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <input className='social-search__input' placeholder='Ticker' value={symbol} maxLength={12} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
           <div className='social-unit-input'>
             <input placeholder='Mint price' value={price} onChange={(e) => setPrice(e.target.value)} />
             <span>ETH</span>

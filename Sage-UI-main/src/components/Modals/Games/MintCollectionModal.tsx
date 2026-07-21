@@ -59,10 +59,13 @@ export default function MintCollectionModal({
   const [isMinting, setIsMinting] = useState(false);
   const [errorState, setErrorState] = useState<ErrorState>(INITIAL_ERROR_STATE);
   const isOnChainReady = Boolean(parameters.COLLECTION_ADDRESS && collection.collectionId != null);
-  const { data: liveMintCount } = useGetCollectionMintCountQuery(collection.collectionId!, {
-    skip: collection.collectionId == null || !isOpen,
-    pollingInterval: isOpen ? 15000 : undefined,
-  });
+  const { data: liveMintCount } = useGetCollectionMintCountQuery(
+    { collectionId: collection.collectionId!, contractAddress: collection.contractAddress ?? undefined },
+    {
+      skip: collection.collectionId == null || !isOpen,
+      pollingInterval: isOpen ? 15000 : undefined,
+    }
+  );
 
   const now = Date.now();
   const isStarted = now >= new Date(collection.startTime).getTime();
@@ -145,7 +148,7 @@ export default function MintCollectionModal({
         setIsMinting(false);
         return;
       }
-      const contract = await getCollectionContract(signer);
+      const contract = await getCollectionContract(signer, collection.contractAddress ?? undefined);
       const weiTotal = ethers.utils.parseEther(toDecimalString(collection.costTokens * quantity));
       // ETH collections carry the payment as msg.value — no ERC-20 approval step
       if (requiresSAGE && !isEthCollection) {

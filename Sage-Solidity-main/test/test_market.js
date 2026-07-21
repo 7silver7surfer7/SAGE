@@ -269,10 +269,22 @@ describe("Marketplace Contract", () => {
             .artistMint("test");
     });
 
-    it("Non artist should not deploy contract", async function() {
+    it("Any wallet should be able to deploy its own artist contract, no role required", async function() {
+        // deployByArtist is intentionally permissionless — self-serve, same
+        // trust level as the social launcher's createEdition/createCollection
         await expect(
             nftFactory.connect(addr1).deployByArtist("Artist2", "SAGE")
-        ).to.be.reverted;
+        ).to.not.be.reverted;
+        expect(await nftFactory.getContractAddress(addr1.address)).to.not.equal(
+            ethers.constants.AddressZero
+        );
+    });
+
+    it("Should still reject deploying a second contract over an existing one", async function() {
+        await nftFactory.connect(addr1).deployByArtist("Artist2", "SAGE");
+        await expect(
+            nftFactory.connect(addr1).deployByArtist("Artist2 Again", "SAGE")
+        ).to.be.revertedWith("Contract already exists");
     });
 
     it("Should not reuse sell order", async function() {

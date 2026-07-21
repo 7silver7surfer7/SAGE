@@ -231,7 +231,11 @@ async function getApprovedDrops(response: NextApiResponse) {
         NftContract: { include: { Artist: true } },
         Lotteries: { include: { Nfts: true } },
         Auctions: { include: { Nft: true } },
-      OpenEditions: { include: { Nft: true } },
+        OpenEditions: { include: { Nft: true } },
+        // collection-style drops (e.g. rMonet) weren't surfaced here at all —
+        // any consumer of this endpoint (dashboard, sage-mcp agents) had no
+        // way to discover or mint them
+        CollectionMints: true,
       },
       orderBy: {
         id: 'desc',

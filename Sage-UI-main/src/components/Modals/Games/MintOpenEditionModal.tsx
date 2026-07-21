@@ -215,18 +215,20 @@ export default function MintOpenEditionModal({
         <section className='games-modal__body'>
           <div className='games-modal__main'>
             <div className='games-modal__main-img-container'>
-              <BaseMedia src={openEdition.Nft.s3PathOptimized} isZoomable={true} fit='contain' />
-              {isLive && (
-                <Countdown
-                  endTime={openEdition.endTime}
-                  className='games-modal__countdown--float'
-                ></Countdown>
-              )}
+              <BaseMedia src={openEdition.Nft.s3PathOptimized} type={openEdition.Nft.mediaType} isZoomable={true} fit='contain' />
             </div>
             <div className='games-modal__main-content'>
               <span className='games-modal__drop-name'>
-                {dropName} by {artist.username || shortenAddress(artist.walletAddress)}
-                <span className='games-modal__editions-tag--mobile'>{mintedCount} minted</span>
+                <span>
+                  {dropName} by {artist.username || shortenAddress(artist.walletAddress)}
+                  <span className='games-modal__editions-tag--mobile'>{mintedCount} minted</span>
+                </span>
+                {isLive && (
+                  <Countdown
+                    endTime={openEdition.endTime}
+                    className='games-modal__countdown--inline'
+                  ></Countdown>
+                )}
               </span>
               <p className='games-modal__game-name'>{openEdition.Nft.name}</p>
               {openEdition.Nft.description && (

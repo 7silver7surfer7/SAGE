@@ -48,14 +48,20 @@ CONTRACTS = {
         // multisig() (2nd constructor arg) — otherwise that silently defaults to
         // the hot deployer key.
         adminAddress: "0x3E099aF007CaB8233D44782D8E6fe80FECDC321e",
-        configAddress: "0xDA0d07dF56c01fb8278731626b81215d32A3de6a",
+        // NOTE 2026-07-15: this whole block had already drifted out of sync
+        // with Sage-UI-main/src/constants/config.ts's production block
+        // before today (marketplaceAddress/openEditionAddress/ashAddress
+        // below are stale leftovers, not touched here — out of scope for
+        // this pass). configAddress/factoryAddress updated to match
+        // today's audit-fix redeploys since those were touched directly.
+        configAddress: "0x3314586152f9814cf2938A7b26CBb0e48bd9644E",
         whitelistAddress: "0x52d10CbA05879D86482D6a9c44126dfddf8f3db3",
         marketplaceAddress: "0x7da23353e7280d5074949eEaE765c08ABb373634",
         storageAddress: "0x43E26D8B5c559DECb09d65F325e1405589775BA2",
-        factoryAddress: "0x2F529790849Ce3B6dFb226e76CcB36040df3F3Fd",
+        factoryAddress: "0x2DEEe3E67ed5044e85c934979aAD9CC8fcc8F740",
         lotteryAddress: "0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54",
         openEditionAddress: "0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD",
-        collectionAddress: "0x2c25d08251a0a1B6Ef954811a177D85482a82373",
+        collectionAddress: "0xc9821B48922111fBe9067f4f63bdD0A6599aC81C",
         randomnessAddress: "0xAB4743F4C1CD1574F3E404A32DAeA1377dE791b7",
         rewardsAddress: "0x652595ffD447513DcA1B5e532618Af60C8791E60",
         auctionAddress: "0x83Eac0DCfd0bC5D52Edf4e631CdDb6C0e6438E03",

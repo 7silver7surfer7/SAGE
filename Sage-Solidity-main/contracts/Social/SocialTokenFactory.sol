@@ -31,10 +31,14 @@ contract SocialToken is ERC20 {
  *   buy:  tokensOut = ethIn·vTok / (vEth + ethIn), capped by realTok
  *         vEth += ethIn; vTok -= out; realTok -= out; realEth += ethIn
  *   sell: ethOut = amt·vEth / (vTok + amt)
- *         vTok += amt; vEth -= ethOut; realEth -= ethOut
- *   graduation: realTok == 0 → curve complete. pump.fun migrates to an AMM;
- *   Robinhood Chain has no DEX yet, so completion CLOSES BUYS but keeps
- *   sells open as an exit hatch (documented divergence).
+ *         vTok += amt; vEth -= ethOut; realTok += amt; realEth -= ethOut
+ *   graduation: realTok == 0 (curve's sellable reserve fully bought out, NET
+ *   of sells) → curve complete, and the market auto-migrates to a Uniswap v2
+ *   pair: the curve's collected ETH plus the factory's remaining ~206.9M
+ *   migration reserve seed the pool, LP is held by the treasury. realTok MUST round-trip on
+ *   sell (the `realTok += amt` above) or graduation fires early on gross buys
+ *   and _graduate over-seeds the pool with sold-back tokens, opening the AMM
+ *   price below the curve's final price.
  *
  * Initial state mirrors pump.fun's shape: 1B total supply, 1.073B virtual
  * token reserves, 793.1M real (sellable) token reserves; the remaining
@@ -55,6 +59,9 @@ interface IUniswapV2FactoryMin {
 
 interface IUniswapV2PairMin {
     function mint(address to) external returns (uint256);
+    // sends (balance - reserves) of each token to `to` — used to sweep any
+    // tokens donated to the pair before we seed it (front-run defense).
+    function skim(address to) external;
 }
 
 interface IWETHMin {
@@ -162,14 +169,31 @@ contract SocialTokenFactory is ReentrancyGuard {
             pair = IUniswapV2FactoryMin(uniswapFactory).createPair(token, weth);
         }
         pairOf[token] = pair;
+        // Front-run defense: the pair address is deterministic, so an attacker
+        // can transfer token/WETH to it BEFORE graduation to skew the opening
+        // price (Uniswap mint() prices off the pair's live balances, not the
+        // amounts we send). skim() sweeps any bare pre-donation (balance above
+        // reserves) to the treasury, so a freshly-created pair opens solely on
+        // our migration ratio. Graduation is atomic — no in-tx window to
+        // re-donate after this. Residual (accepted for v1): an attacker who
+        // additionally sync()s the pair or mints LP locks their donation INTO
+        // reserves, which skim can't sweep — but doing so forfeits that
+        // donation to the treasury-held pool and only skews the opening price
+        // rather than stealing, an expensive and unprofitable griefing move.
+        IUniswapV2PairMin(pair).skim(treasury);
         IWETHMin(weth).deposit{ value: ethAmt }();
         require(IWETHMin(weth).transfer(pair, ethAmt), 'weth transfer failed');
         require(IERC20(token).transfer(pair, tokenAmt), 'token transfer failed');
-        // LP is BURNED (pump.fun's Raydium-era guarantee): nobody — including
-        // the platform — can ever pull a graduated pool's liquidity. Platform
-        // revenue comes from the Uniswap factory's feeTo switch instead
-        // (1/6 of fee growth to the treasury).
-        IUniswapV2PairMin(pair).mint(0x000000000000000000000000000000000000dEaD);
+        // LP is minted to the TREASURY (multisig), not burned. The earlier
+        // burn-to-dEaD design ("pump.fun's Raydium-era guarantee") torched the
+        // 0.30% LP fee stream permanently: its claimed revenue fallback — the
+        // Uniswap factory feeTo switch — was never armed (feeTo == 0x0), and
+        // for a burned pool feeTo only realizes on LP events that never come.
+        // SAGE's own pool paid ~$1.2k of unclaimable fees on its first $400k
+        // of volume before this was caught. Treasury custody keeps the fee
+        // growth harvestable (and can be moved into a withdraw-only fee
+        // locker later — burning was the only irreversible choice).
+        IUniswapV2PairMin(pair).mint(treasury);
         emit TokenGraduated(token, pair, ethAmt, tokenAmt);
     }
 
@@ -267,6 +291,13 @@ contract SocialTokenFactory is ReentrancyGuard {
         require(ethOut - fee >= minEthOut, 'slippage');
         c.virtualTokenReserves += amount;
         c.virtualEthReserves -= ethOut;
+        // sold tokens return to the curve's sellable reserve — the mirror of
+        // _executeBuy's `realTokenReserves -= out`. Omitting this made realTok
+        // a monotonic gross-buys odometer: graduation (realTok == 0) fired on
+        // cumulative buys regardless of sells, and _graduate then dumped the
+        // factory's full (sell-inflated) balance into Uniswap, seeding it
+        // token-heavy and opening the pool below the curve's final price.
+        c.realTokenReserves += amount;
         c.realEthReserves -= ethOut;
         require(IERC20(token).transferFrom(msg.sender, address(this), amount), 'pull failed');
         _pay(treasury, fee - creatorFee);

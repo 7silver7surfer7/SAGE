@@ -3,6 +3,7 @@ import prisma from '@/prisma/client';
 import { Nft, OfferState, Role, User } from '@prisma/client';
 import { getNFTContract } from '@/utilities/contracts';
 import { ethers } from 'ethers';
+import { cleanPrismaError } from '@/utilities/prismaError';
 import { getRequester } from '@/utilities/apiAuth';
 import { CollectedListingNft, Nft_include_NftContractAndOffers } from '@/prisma/types';
 import { SearchableNftData } from '@/store/nftsReducer';
@@ -207,7 +208,10 @@ async function createOffer(request: NextApiRequest, response: NextApiResponse) {
     response.json({ id: record.id });
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    // cleanPrismaError strips Prisma's raw-object-dump verbosity (which can
+    // include full input rows / internal schema shape) down to just the
+    // actionable complaint line, instead of returning the exception verbatim.
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -229,7 +233,10 @@ async function deleteOffer(request: NextApiRequest, response: NextApiResponse) {
     response.status(200);
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    // cleanPrismaError strips Prisma's raw-object-dump verbosity (which can
+    // include full input rows / internal schema shape) down to just the
+    // actionable complaint line, instead of returning the exception verbatim.
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 
@@ -253,7 +260,10 @@ async function invalidateOffer(request: NextApiRequest, response: NextApiRespons
     response.status(200);
   } catch (e: any) {
     console.log(e);
-    response.json({ error: e.message });
+    // cleanPrismaError strips Prisma's raw-object-dump verbosity (which can
+    // include full input rows / internal schema shape) down to just the
+    // actionable complaint line, instead of returning the exception verbatim.
+    response.json({ error: cleanPrismaError(e) });
   }
 }
 

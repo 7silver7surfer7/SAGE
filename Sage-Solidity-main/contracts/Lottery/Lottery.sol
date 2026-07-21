@@ -85,6 +85,22 @@ contract Lottery is
     // block refunds or prize claims. APPEND-ONLY.
     mapping(address => uint256) public pendingReturns;
 
+    // Running total of all outstanding `refunds` liabilities, split by the
+    // currency they're owed in, so withdraw()/withdrawNative() can be
+    // blocked from sweeping funds users are still owed. APPEND-ONLY.
+    uint256 public totalOutstandingRefundsToken;
+    uint256 public totalOutstandingRefundsNative;
+
+    // Running total of all pendingReturns liabilities (ETH only — the ERC20
+    // payout path reverts on failure instead of falling back to
+    // pendingReturns, so it never needs tracking here). Kept in sync with
+    // pendingReturns so withdrawNative() can't sweep a failed-payout credit
+    // out from under whoever it's still owed to. Storage MUST stay appended
+    // after the two counters above — this proxy has already been upgraded
+    // once with those two live on-chain, inserting before them would shift
+    // their slots and corrupt already-accumulated values. APPEND-ONLY.
+    uint256 public totalPendingReturns;
+
     // Sentinel meaning "native ETH" (constants use no storage slots).
     address public constant NATIVE_CURRENCY =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
@@ -228,7 +244,13 @@ contract Lottery is
         prizeMerkleRoots[_lotteryId] = _root;
     }
 
-    function setToken(address _token) public onlyAdmin {
+    // onlyMultisig (was onlyAdmin): `token` is the currency every SAGE-priced
+    // lottery's refund/payout liability is denominated against at settlement
+    // time. A hot admin key that could swap it mid-lifecycle could retarget
+    // all outstanding refunds[] liabilities to a different (e.g. worthless)
+    // ERC20 and strand users' real SAGE — too much power for the operational
+    // key, so it now requires the multisig.
+    function setToken(address _token) public onlyMultisig {
         token = IERC20(_token);
     }
 
@@ -439,6 +461,7 @@ contract Lottery is
             (bool ok, ) = _to.call{value: _amount, gas: 30000}("");
             if (!ok) {
                 pendingReturns[_to] += _amount;
+                totalPendingReturns += _amount;
             }
         } else {
             // unchecked return meant a non-standard ERC20 that returns false
@@ -455,6 +478,7 @@ contract Lottery is
         uint256 amount = pendingReturns[msg.sender];
         require(amount > 0, "Nothing to withdraw");
         pendingReturns[msg.sender] = 0;
+        totalPendingReturns -= amount;
         (bool ok, ) = msg.sender.call{value: amount}("");
         require(ok, "ETH transfer failed");
     }
@@ -625,13 +649,25 @@ contract Lottery is
                 require(msg.value == totalCostInTokens, "Wrong ETH amount");
             } else {
                 require(msg.value == 0, "Lottery is not priced in ETH");
-                token.transferFrom(
-                    msg.sender,
-                    address(this),
-                    totalCostInTokens
+                // check the incoming pull's return value too — the outgoing
+                // _payOut leg is require-wrapped, so a false-returning ERC20
+                // must not be allowed to credit a refunds[] balance here
+                // without tokens actually arriving.
+                require(
+                    token.transferFrom(
+                        msg.sender,
+                        address(this),
+                        totalCostInTokens
+                    ),
+                    "ERC20 transfer failed"
                 );
             }
             refunds[_lotteryId][msg.sender] += totalCostInTokens;
+            if (lotteryCurrency[_lotteryId] == NATIVE_CURRENCY) {
+                totalOutstandingRefundsNative += totalCostInTokens;
+            } else {
+                totalOutstandingRefundsToken += totalCostInTokens;
+            }
         } else {
             require(msg.value == 0, "Tickets are free");
         }
@@ -639,9 +675,10 @@ contract Lottery is
         if (numTicketsBought == 0) {
             ++lottery.participantsCount;
         }
-        participantTicketCount[_lotteryId][msg.sender] += uint16(
-            _numberOfTicketsToBuy
-        );
+        // participantTicketCount is uint256 — casting through uint16 here
+        // silently truncated large purchases (mod 65536), letting a user
+        // bypass maxTicketsPerUser by buying in bulk.
+        participantTicketCount[_lotteryId][msg.sender] += _numberOfTicketsToBuy;
         address[] storage tickets = lotteryTickets[_lotteryId];
         for (uint256 i; i < _numberOfTicketsToBuy; ++i) {
             tickets.push(msg.sender);
@@ -682,10 +719,15 @@ contract Lottery is
         if (ticketCostTokens > 0) {
             // Reverts if the user doesn't have enough refundable balance.
             refunds[_lotteryId][msg.sender] -= ticketCostTokens;
+            address currency = lotteryCurrency[_lotteryId];
+            if (currency == NATIVE_CURRENCY) {
+                totalOutstandingRefundsNative -= ticketCostTokens;
+            } else {
+                totalOutstandingRefundsToken -= ticketCostTokens;
+            }
             uint256 share = lotteryArtistShare[_lotteryId];
             if (share == 0) share = _primaryArtistShare();
             uint256 artistShare = (ticketCostTokens * share) / 10000;
-            address currency = lotteryCurrency[_lotteryId];
             _payOut(currency, nftContract.artist(), artistShare);
             _payOut(
                 currency,
@@ -739,6 +781,10 @@ contract Lottery is
      * @param _amount Amount to withdraw
      */
     function withdraw(uint256 _amount) external onlyAdmin {
+        require(
+            _amount <= token.balanceOf(address(this)) - totalOutstandingRefundsToken,
+            "Would strand outstanding refunds"
+        );
         require(token.transfer(sageStorage.multisig(), _amount), "ERC20 transfer failed");
     }
 
@@ -747,8 +793,28 @@ contract Lottery is
      * @param _amount Amount to withdraw
      */
     function withdrawNative(uint256 _amount) external onlyAdmin {
+        require(
+            _amount <=
+                address(this).balance -
+                    totalOutstandingRefundsNative -
+                    totalPendingReturns,
+            "Would strand outstanding refunds"
+        );
         (bool ok, ) = sageStorage.multisig().call{value: _amount}("");
         require(ok, "ETH transfer failed");
+    }
+
+    /** Defensive backstop: lets the multisig correct the outstanding-refunds
+     *  counters if they ever diverge from the real liability (e.g. a future
+     *  upgrade adds tracking without a full backfill, as happened when
+     *  totalOutstandingRefundsToken/Native were first introduced). Does not
+     *  move any funds. */
+    function setOutstandingRefunds(uint256 _token, uint256 _native)
+        external
+        onlyMultisig
+    {
+        totalOutstandingRefundsToken = _token;
+        totalOutstandingRefundsNative = _native;
     }
 
     function refund(
@@ -756,6 +822,16 @@ contract Lottery is
         uint256 _lotteryId,
         uint256 _amount
     ) public whenNotPaused {
+        // Callable by the asset owner themselves, or an admin processing
+        // refunds on their behalf (refundBatch's only real use case).
+        // Previously callable by anyone for anyone, letting an attacker
+        // force-zero a participant's refunds balance ahead of them and
+        // permanently block their later claimPrize() via underflow.
+        require(
+            msg.sender == _assetOwner ||
+                sageStorage.hasRole(keccak256("role.admin"), msg.sender),
+            "Owner or admin only"
+        );
         LotteryInfo storage lottery = lotteryHistory[_lotteryId];
         require(_amount > 0, "Can't refund 0");
         require(lottery.status != Status.Created, "Invalid lottery state");
@@ -764,7 +840,13 @@ contract Lottery is
             "Can't refund the amount requested"
         );
         refunds[_lotteryId][_assetOwner] -= _amount;
-        _payOut(lotteryCurrency[_lotteryId], _assetOwner, _amount);
+        address currency = lotteryCurrency[_lotteryId];
+        if (currency == NATIVE_CURRENCY) {
+            totalOutstandingRefundsNative -= _amount;
+        } else {
+            totalOutstandingRefundsToken -= _amount;
+        }
+        _payOut(currency, _assetOwner, _amount);
         emit Refunded(_lotteryId, _assetOwner, _amount);
     }
 

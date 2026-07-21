@@ -519,7 +519,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       fs.createReadStream(file).pipe(res);
     } catch (e: any) {
       console.error(`media proxy poster [${txid}]:`, e.message);
-      res.status(502).json({ error: e.message });
+      // This is a public, unauthenticated route — the raw exception can
+      // include local filesystem paths (fs.createReadStream(file) errors)
+      // or gateway internals. Full detail stays in the server log above;
+      // the client only needs to know the fetch failed.
+      res.status(502).json({ error: 'media unavailable' });
     }
     return;
   }
@@ -546,7 +550,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     } catch (e: any) {
       console.error(`media proxy prewarm [${txid}]:`, e.message);
-      res.status(502).json({ warmed: false, error: e.message });
+      res.status(502).json({ warmed: false, error: 'prewarm failed' });
     }
     return;
   }

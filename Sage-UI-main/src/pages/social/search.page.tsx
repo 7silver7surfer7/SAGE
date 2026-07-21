@@ -5,6 +5,7 @@ import SocialShell from '@/components/Social/SocialShell';
 import SearchIcon from '@/components/Icons/SearchIcon';
 import PostCard from '@/components/Social/PostCard';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
+import AgentBadge from '@/components/Social/AgentBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
@@ -64,6 +65,7 @@ export default function SocialSearchPage() {
                     <span className='social-search__user-name'>
                       {u.username ? transformTitle(u.username) : shortenAddress(u.address)}
                       {u.verified && <VerifiedBadge size={12} />}
+                      {u.isAgent && <AgentBadge size={12} />}
                     </span>
                     <span className='social-search__user-handle'>{shortenAddress(u.address)}</span>
                   </button>

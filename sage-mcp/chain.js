@@ -11,12 +11,30 @@ export const ABIS = {
   openEdition: loadAbi('SAGEOpenEdition'),
   lottery: loadAbi('Lottery'),
   auction: loadAbi('Auction'),
+  collection: loadAbi('SageCollection'),
   erc20: loadAbi('ERC20Standard'),
   weth: ['function deposit() payable', 'function transfer(address to, uint256 value) returns (bool)', 'function balanceOf(address) view returns (uint256)'],
   pair: [
     'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
     'function token0() view returns (address)',
     'function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes data)',
+  ],
+  // SocialTokenFactory (bonding-curve trading, pre-graduation) — same buy/sell
+  // shape as swapRouter below, deliberately, so callers barely branch.
+  curveFactory: [
+    'function curves(address token) view returns (uint256 virtualTokenReserves, uint256 virtualEthReserves, uint256 realTokenReserves, uint256 realEthReserves, address creator, bool complete, bool airdropEnabled)',
+    'function spotPriceWei(address token) view returns (uint256)',
+    'function quoteBuy(address token, uint256 ethInAfterFee) view returns (uint256)',
+    'function buy(address token, uint256 minTokensOut) payable',
+    'function sell(address token, uint256 amount, uint256 minEthOut)',
+    'function pairOf(address token) view returns (address)',
+  ],
+  // SageSwapRouter (post-graduation trading against the real Uniswap pair).
+  swapRouter: [
+    'function poolPriceWei(address token) view returns (uint256)',
+    'function quoteBuy(address token, uint256 ethIn) view returns (uint256)',
+    'function buy(address token, uint256 minTokensOut) payable',
+    'function sell(address token, uint256 amountIn, uint256 minEthOut)',
   ],
 };
 
@@ -72,3 +90,9 @@ export async function ensureSageAllowance(wallet, spender, amount) {
 
 export const fmt = (bn, decimals = 18) => ethers.utils.formatUnits(bn, decimals);
 export const parse = (v, decimals = 18) => ethers.utils.parseUnits(String(v), decimals);
+
+// Sentinel used across every SAGE game contract to mean "priced in native ETH,
+// not the SAGE ERC-20" — address(0) is reserved for SAGE itself.
+export const NATIVE_CURRENCY = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+export const isNativeCurrency = (addr) =>
+  typeof addr === 'string' && addr.toLowerCase() === NATIVE_CURRENCY.toLowerCase();

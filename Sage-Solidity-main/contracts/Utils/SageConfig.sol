@@ -21,6 +21,14 @@ contract SageConfig {
     ISageStorage private immutable sageStorage;
     mapping(bytes32 => uint256) private uints;
 
+    // Consuming contracts (Marketplace/Lottery/SAGEOpenEdition/SageCollection)
+    // compute `price - artistShare` assuming this key is a bps fraction of
+    // 10000. An unbounded value here (e.g. set above 10000) underflows that
+    // subtraction and reverts every primary sale platform-wide until reset —
+    // this is the one key today whose value has a real correctness bound.
+    bytes32 private constant PRIMARY_ARTIST_SHARE_KEY =
+        keccak256("share.primaryArtist");
+
     event UintSet(bytes32 indexed key, uint256 value);
 
     modifier onlyAdminOrMultisig() {
@@ -41,6 +49,9 @@ contract SageConfig {
     }
 
     function setUint(bytes32 _key, uint256 _value) external onlyAdminOrMultisig {
+        if (_key == PRIMARY_ARTIST_SHARE_KEY) {
+            require(_value <= 10000, "Share exceeds 100%");
+        }
         uints[_key] = _value;
         emit UintSet(_key, _value);
     }

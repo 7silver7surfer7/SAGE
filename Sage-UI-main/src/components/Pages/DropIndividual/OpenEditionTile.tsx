@@ -44,7 +44,7 @@ export default function OpenEditionTile({ artist, dropName, openEdition, classNa
         isOpen={isOpen}
         closeModal={closeModal}
       />
-      <Media focusText={`Open Edition — ${priceText}`} src={openEdition.Nft.s3PathOptimized} />
+      <Media focusText={`Open Edition — ${priceText}`} src={openEdition.Nft.s3PathOptimized} type={openEdition.Nft.mediaType} />
       <div className='drop-page__grid-item-info'>
         <div className='drop-page__grid-item-info-left'>
           <h1 className='drop-page__grid-item-info-drop-name'>

@@ -16,6 +16,8 @@ import {
   ensureSageAllowance,
   fmt,
   parse,
+  NATIVE_CURRENCY,
+  isNativeCurrency,
 } from './chain.js';
 import { siteGet, siteGetRaw, sitePost } from './siwe-session.js';
 
@@ -27,22 +29,49 @@ const fail = (e) => ({
   content: [{ type: 'text', text: `Error: ${e?.reason || e?.message || String(e)}` }],
 });
 
+// SAGE is a pump.fun-style bonding-curve token (SocialTokenFactory) — trades
+// on the curve itself until it "graduates" (sells out), at which point a real
+// Uniswap v2 pair exists and SageSwapRouter takes over. Both contracts share
+// the same buy/sell(token, ...) shape, so callers just need to know which one
+// is currently live for this token. DexScreener does NOT index Robinhood
+// Chain at all, so that used to silently return empty market data — this
+// reads real on-chain state instead.
+async function sageCurveState(providerOrSigner) {
+  const factory = new ethers.Contract(config.dex.factory, ABIS.curveFactory, providerOrSigner);
+  const [curve, pool] = await Promise.all([
+    factory.curves(config.dex.sageToken),
+    factory.pairOf(config.dex.sageToken).catch(() => ethers.constants.AddressZero),
+  ]);
+  const graduated = curve.complete && pool !== ethers.constants.AddressZero;
+  return { factory, graduated, pool: graduated ? pool : null };
+}
+
 // ---------------------------------------------------------------- market info
 server.tool(
   'sage_market_info',
-  'Current SAGE token market info: USD price, liquidity, token/contract addresses and chains. Call this first to orient yourself.',
+  'Current SAGE token market info: on-chain price (bonding curve pre-graduation, real pool post-graduation), contract addresses and chains. Call this first to orient yourself.',
   {},
   async () => {
     try {
-      const res = await fetch(`${config.dexscreenerUrl}/${config.dex.sageToken}`);
-      const { pairs } = await res.json();
-      const p = pairs?.[0];
+      const { factory, graduated, pool } = await sageCurveState(dexProvider);
+      let spotWei;
+      if (graduated) {
+        const router = new ethers.Contract(config.dex.router, ABIS.swapRouter, dexProvider);
+        spotWei = await router.poolPriceWei(config.dex.sageToken);
+      } else {
+        spotWei = await factory.spotPriceWei(config.dex.sageToken);
+      }
       return ok({
         agentWallet: agentAddress() ?? 'not configured (set SAGE_AGENT_PRIVATE_KEY)',
-        price: p
-          ? { usd: p.priceUsd, native: p.priceNative, liquidityUsd: p.liquidity?.usd, dex: p.dexId }
-          : 'no market data',
-        sageMainnet: { chainId: config.dex.chainId, token: config.dex.sageToken, pair: config.dex.pair },
+        price: { eth: fmt(spotWei), native: `${fmt(spotWei)} ETH per SAGE` },
+        graduated,
+        sageMainnet: {
+          chainId: config.dex.chainId,
+          token: config.dex.sageToken,
+          factory: config.dex.factory,
+          router: config.dex.router,
+          pool,
+        },
         marketplace: {
           chainId: config.marketplace.chainId,
           sageToken: config.marketplace.sageToken,
@@ -96,7 +125,7 @@ server.tool(
 // ------------------------------------------------------------------- buy SAGE
 server.tool(
   'sage_buy_sage',
-  'Swap ETH for SAGE on Robinhood mainnet via the Uniswap v2 SAGE/WETH pair. Holding the SAGE earns pixels daily. Note: the SAGE token takes a 1% fee on AMM buys.',
+  'Buy SAGE with ETH on Robinhood mainnet. SAGE is a pump.fun-style bonding-curve token — pre-graduation this buys straight off the curve (SocialTokenFactory, 1.25% fee); once the curve sells out and graduates to a real Uniswap pair, it automatically routes through SageSwapRouter instead (dynamic mcap-tiered fee). Holding SAGE earns pixels daily.',
   {
     ethAmount: z.string().describe("ETH to spend, e.g. '0.01'"),
     slippagePercent: z.number().min(0).max(50).default(2).describe('max slippage tolerance in % (default 2)'),
@@ -104,46 +133,37 @@ server.tool(
   async ({ ethAmount, slippagePercent }) => {
     try {
       const wallet = requireWallet(dexProvider);
-      const amountIn = parse(ethAmount);
-
-      const pair = new ethers.Contract(config.dex.pair, ABIS.pair, wallet);
-      const weth = new ethers.Contract(config.dex.weth, ABIS.weth, wallet);
+      const value = parse(ethAmount);
       const sage = new ethers.Contract(config.dex.sageToken, ABIS.erc20, wallet);
+      const { graduated } = await sageCurveState(wallet);
+      const slippageBps = Math.floor((100 - slippagePercent) * 100);
 
-      const [token0, reserves, sageBefore] = await Promise.all([
-        pair.token0(),
-        pair.getReserves(),
-        sage.balanceOf(wallet.address),
-      ]);
-      const wethIsToken0 = token0.toLowerCase() === config.dex.weth.toLowerCase();
-      const reserveIn = wethIsToken0 ? reserves.reserve0 : reserves.reserve1;
-      const reserveOut = wethIsToken0 ? reserves.reserve1 : reserves.reserve0;
-
-      // x*y=k quote with the 0.3% LP fee on the input side
-      const amountInWithFee = amountIn.mul(997);
-      const quoted = amountInWithFee.mul(reserveOut).div(reserveIn.mul(1000).add(amountInWithFee));
-      const minOut = quoted.mul(Math.floor((100 - slippagePercent) * 100)).div(10000);
-
-      // wrap -> fund the pair -> swap (no router deployed on this chain)
-      const dep = await weth.deposit({ value: amountIn });
-      await dep.wait(1);
-      const tr = await weth.transfer(config.dex.pair, amountIn);
-      await tr.wait(1);
-      const swap = await pair.swap(
-        wethIsToken0 ? 0 : minOut,
-        wethIsToken0 ? minOut : 0,
-        wallet.address,
-        '0x'
-      );
-      await swap.wait(1);
+      const sageBefore = await sage.balanceOf(wallet.address);
+      let tx;
+      if (!graduated) {
+        const factory = new ethers.Contract(config.dex.factory, ABIS.curveFactory, wallet);
+        // curve fee is a flat 1.25% (SocialTokenFactory.FEE_BPS) — quoteBuy
+        // wants the POST-fee amount, unlike the router's quoteBuy below.
+        const CURVE_FEE_BPS = 125;
+        const ethInAfterFee = value.sub(value.mul(CURVE_FEE_BPS).div(10000));
+        const quoted = await factory.quoteBuy(config.dex.sageToken, ethInAfterFee);
+        const minOut = quoted.mul(slippageBps).div(10000);
+        tx = await factory.buy(config.dex.sageToken, minOut, { value });
+      } else {
+        const router = new ethers.Contract(config.dex.router, ABIS.swapRouter, wallet);
+        const quoted = await router.quoteBuy(config.dex.sageToken, value);
+        const minOut = quoted.mul(slippageBps).div(10000);
+        tx = await router.buy(config.dex.sageToken, minOut, { value });
+      }
+      await tx.wait(1);
 
       const received = (await sage.balanceOf(wallet.address)).sub(sageBefore);
       return ok({
         status: 'swapped',
+        via: graduated ? 'SageSwapRouter (graduated pool)' : 'SocialTokenFactory (bonding curve)',
         spentEth: ethAmount,
         sageReceived: fmt(received),
-        note: 'received amount reflects the token’s 1% AMM fee',
-        txHash: swap.hash,
+        txHash: tx.hash,
       });
     } catch (e) {
       return fail(e);
@@ -194,9 +214,50 @@ async function enrichAuction(a) {
   }
 }
 
+const collectionReader = new ethers.Contract(config.marketplace.collection, ABIS.collection, marketplaceProvider);
+
+// Same reasoning as enrichAuction: mintCount/maxSupply/whitelist are the
+// on-chain source of truth (the DB's mintCount is a periodically-synced
+// cache), and closeTime===0 means "no deadline — open until sold out", a
+// SAGE-specific convention agents need spelled out rather than inferred.
+async function enrichCollection(cm) {
+  const collectionId = cm.collectionId ?? cm.id;
+  const base = { collectionId, dropCollectionId: cm.id, costSage: cm.costTokens, maxSupply: cm.maxSupply };
+  if (!cm.contractAddress) {
+    return { ...base, onChainExists: false, live: false, note: 'not deployed on-chain yet' };
+  }
+  try {
+    const c = await collectionReader.getCollection(collectionId);
+    const now = Math.floor(Date.now() / 1000);
+    const noDeadline = Number(c.closeTime) === 0;
+    const withinWindow = Number(c.startTime) <= now && (noDeadline || now <= Number(c.closeTime));
+    const soldOut = Number(c.mintCount) >= Number(c.maxSupply);
+    const gated = c.whitelist !== ethers.constants.AddressZero;
+    return {
+      ...base,
+      onChainExists: true,
+      live: withinWindow && !soldOut,
+      mintCount: Number(c.mintCount),
+      maxSupply: Number(c.maxSupply),
+      limitPerUser: Number(c.limitPerUser) || null,
+      currency: isNativeCurrency(c.currency) ? 'ETH' : 'SAGE',
+      costSage: isNativeCurrency(c.currency) ? null : Number(fmt(c.costTokens)),
+      costEth: isNativeCurrency(c.currency) ? Number(fmt(c.costTokens)) : null,
+      noDeadline,
+      soldOut,
+      gated,
+      note: gated
+        ? 'whitelist-gated — sage_mint_collection will revert unless this wallet is on the allowlist'
+        : undefined,
+    };
+  } catch (e) {
+    return { ...base, onChainExists: false, live: false, note: `on-chain read failed: ${e.reason || e.message}` };
+  }
+}
+
 server.tool(
   'sage_list_drops',
-  'List approved drops on SAGE with their purchasable games (open editions, lotteries, auctions) and prices in SAGE/pixels. Auction fields (live, currentHighestBidSage, nextMinBidSage) come from the on-chain contract — bid with sage_place_auction_bid using nextMinBidSage or higher.',
+  'List approved drops on SAGE with their purchasable games (open editions, lotteries, auctions, sequential collections) and prices in SAGE/pixels/ETH. Auction fields (live, currentHighestBidSage, nextMinBidSage) come from the on-chain contract — bid with sage_place_auction_bid using nextMinBidSage or higher. Collection fields also come from-chain — mint with sage_mint_collection using collectionId.',
   {},
   async () => {
     try {
@@ -224,6 +285,7 @@ server.tool(
             live: liveWindow(l),
           })),
           auctions: await Promise.all((d.Auctions || []).map(enrichAuction)),
+          collections: await Promise.all((d.CollectionMints || []).map(enrichCollection)),
         }))
       );
       return ok(enriched);
@@ -327,6 +389,61 @@ server.tool(
         paidSage: fmt(totalCost),
         paidPixels,
         approveTx: approveTx ?? 'allowance already sufficient',
+        txHash: tx.hash,
+        block: receipt.blockNumber,
+      });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+// -------------------------------------------------------------- collection mint
+server.tool(
+  'sage_mint_collection',
+  "Mint (collect) copies from a sequential collection drop (e.g. a 100-piece artwork series) — the site's SageCollection singleton assigns the next unminted image(s) to the caller in order. Priced in SAGE or native ETH depending on the collection (see sage_list_drops' collections[].currency); SAGE approval happens automatically. Reverts if the collection is whitelist-gated and this wallet isn't on it, sold out, or outside its mint window.",
+  {
+    collectionId: z.number().int().describe('on-chain collectionId from sage_list_drops collections[]'),
+    amount: z.number().int().min(1).max(50).default(1),
+  },
+  async ({ collectionId, amount }) => {
+    try {
+      const wallet = requireWallet(marketplaceProvider);
+      const collection = new ethers.Contract(config.marketplace.collection, ABIS.collection, wallet);
+      const c = await collection.getCollection(collectionId);
+      if (c.nftContract === ethers.constants.AddressZero) {
+        throw new Error(`collection ${collectionId} not found on-chain`);
+      }
+      const now = Math.floor(Date.now() / 1000);
+      if (now < Number(c.startTime)) throw new Error(`mint opens at ${new Date(Number(c.startTime) * 1000).toISOString()}`);
+      if (Number(c.closeTime) !== 0 && now > Number(c.closeTime)) throw new Error('this collection has closed');
+      if (Number(c.mintCount) + amount > Number(c.maxSupply)) {
+        throw new Error(`only ${Number(c.maxSupply) - Number(c.mintCount)} left — asked for ${amount}`);
+      }
+      if (c.whitelist !== ethers.constants.AddressZero) {
+        throw new Error(
+          'this collection is whitelist-gated — the agent wallet must be added to the allowlist by the drop admin before it can mint'
+        );
+      }
+
+      const totalCost = c.costTokens.mul(amount);
+      const native = isNativeCurrency(c.currency);
+      let approveTx = null;
+      let tx;
+      if (native) {
+        tx = await collection.mint(collectionId, amount, { value: totalCost });
+      } else {
+        approveTx = await ensureSageAllowance(wallet, config.marketplace.collection, totalCost);
+        tx = await collection.mint(collectionId, amount);
+      }
+      const receipt = await tx.wait(1);
+      return ok({
+        status: 'minted',
+        collectionId,
+        amount,
+        currency: native ? 'ETH' : 'SAGE',
+        paid: fmt(totalCost),
+        approveTx: native ? 'n/a (native ETH payment)' : approveTx ?? 'allowance already sufficient',
         txHash: tx.hash,
         block: receipt.blockNumber,
       });
@@ -563,6 +680,60 @@ server.tool(
       await tx.wait(1);
       const boosted = await sitePost('/api/social/?action=BoostPost', { postId, txHash: tx.hash });
       return ok({ burned: amountSage, txHash: tx.hash, ...boosted });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_social_get_verified',
+  'Buy the paid SAGE Social verification checkmark — a one-time ETH payment sent to the platform treasury. Required before sage_social_collect, boosting, or editing posts will work (they 403 with needsVerification otherwise). Call sage_social_feed or just try the gated action first if unsure whether the agent is already verified. ETH-only: SAGE is a bonding-curve token that\'s too volatile right at launch to price a fixed-USD purchase against.',
+  {},
+  async () => {
+    try {
+      const info = await siteGet('/api/social/?action=GetVerificationInfo');
+      const wallet = requireWallet(marketplaceProvider);
+      const tx = await wallet.sendTransaction({ to: info.treasury, value: parse(String(info.priceEth)) });
+      await tx.wait(1);
+      const recorded = await sitePost('/api/social/?action=PurchaseVerification', {
+        txHash: tx.hash,
+        currency: 'ETH',
+      });
+      return ok({ paid: info.priceEth, currency: 'ETH', txHash: tx.hash, ...recorded });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_social_collect',
+  "Collect a SAGE Social post as an NFT — the platform mints it straight to the agent's wallet. Requires sage_social_get_verified first (403s with needsVerification otherwise). Only works on posts the author marked collectible (collectPrice !== null on sage_social_feed / sage_social_get_post). ETH-priced posts pay the author directly from the agent wallet; SAGE/points-priced posts are debited server-side against the wallet's pixels balance — no separate payment tx needed either way from the caller's perspective beyond what this tool does internally.",
+  {
+    postId: z.number().int().describe('post id from sage_social_feed — must have collectPrice !== null'),
+  },
+  async ({ postId }) => {
+    try {
+      const { post } = await siteGet(`/api/social/?action=GetPost&id=${postId}`);
+      if (!post) throw new Error('post not found');
+      if (post.collectPrice === null || post.collectPrice === undefined) {
+        throw new Error('this post is not collectible (author never set a collect price)');
+      }
+      let txHash;
+      if (post.collectCurrency === 'ETH' && post.collectPrice > 0) {
+        const wallet = requireWallet(marketplaceProvider);
+        const tx = await wallet.sendTransaction({
+          to: post.author.address,
+          value: parse(String(post.collectPrice)),
+        });
+        await tx.wait(1);
+        txHash = tx.hash;
+      }
+      // SAGE/points-priced posts (and free ETH-priced ones) need no payment
+      // tx from this wallet at all — the server debits pixels internally.
+      const collected = await sitePost('/api/social/?action=CollectPost', { postId, txHash });
+      return ok({ price: post.collectPrice, currency: post.collectCurrency || 'POINTS', payTxHash: txHash || null, ...collected });
     } catch (e) {
       return fail(e);
     }

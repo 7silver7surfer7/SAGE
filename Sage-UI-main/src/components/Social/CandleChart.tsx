@@ -10,6 +10,7 @@ import {
   UTCTimestamp,
 } from 'lightweight-charts';
 import { parameters } from '@/constants/config';
+import { factoryAddressForToken } from '@/utilities/socialToken';
 import useTheme from '@/hooks/useTheme';
 
 interface Point {
@@ -212,7 +213,8 @@ export default function CandleChart({
 
   // LIVE tape: chain events → paint the candle the moment the block lands
   useEffect(() => {
-    const factoryAddr = parameters.SOCIAL_TOKEN_FACTORY_ADDRESS;
+    // route SAGE's live chart events/reads to its original factory
+    const factoryAddr = factoryAddressForToken(tokenAddress);
     if (!factoryAddr || !provider || !tokenAddress) return undefined;
     (provider as any).pollingInterval = 1000; // watch new blocks every second
     const factory = new ethers.Contract(factoryAddr, FACTORY_EVENTS_ABI, provider as any);
@@ -259,6 +261,20 @@ export default function CandleChart({
       router.on(router.filters.Bought(tokenAddress), paint);
       router.on(router.filters.Sold(tokenAddress), paint);
     }
+    // …but router events only cover trades routed through OUR router. Bots,
+    // aggregators, and direct pool swaps emit only the PAIR's Swap event —
+    // exactly the volume that went invisible after graduation. Subscribe to
+    // the pair itself so every pool trade paints at block speed.
+    const pairC = pairAddress
+      ? new ethers.Contract(
+          pairAddress,
+          [
+            'event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)',
+          ],
+          provider as any
+        )
+      : null;
+    if (pairC) pairC.on(pairC.filters.Swap(), paint);
     return () => {
       factory.off(boughtFilter, paint);
       factory.off(soldFilter, paint);
@@ -266,6 +282,7 @@ export default function CandleChart({
         router.off(router.filters.Bought(tokenAddress), paint);
         router.off(router.filters.Sold(tokenAddress), paint);
       }
+      if (pairC) pairC.off(pairC.filters.Swap(), paint);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, tokenAddress, pairAddress]);

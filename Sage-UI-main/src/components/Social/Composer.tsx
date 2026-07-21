@@ -1,10 +1,13 @@
 import { useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { PfpImage } from '@/components/Media/BaseMedia';
+import shortenAddress from '@/utilities/shortenAddress';
+import { transformTitle } from '@/utilities/strings';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import {
   useCreatePostMutation,
   useGetSocialProfileQuery,
+  useGetPostThreadQuery,
   useRedeemInviteMutation,
 } from '@/store/socialReducer';
 
@@ -12,6 +15,8 @@ interface Props {
   /** pre-filled text (e.g. share-to-feed drafts) — user edits before posting */
   initialText?: string;
   replyToId?: number;
+  /** quote-repost: embeds this post as a card and increments its quote count */
+  quotedPostId?: number;
   placeholder?: string;
   autoFocus?: boolean;
   onPosted?: () => void;
@@ -64,11 +69,22 @@ export function InviteGate({ action = 'posting' }: { action?: string }) {
   );
 }
 
-export default function Composer({ replyToId, placeholder, autoFocus, onPosted, initialText }: Props) {
+export default function Composer({
+  replyToId,
+  quotedPostId,
+  placeholder,
+  autoFocus,
+  onPosted,
+  initialText,
+}: Props) {
   const { isSignedIn, userData, walletAddress } = useSAGEAccount();
   const { data: me } = useGetSocialProfileQuery(walletAddress || '', {
     skip: !isSignedIn || !walletAddress,
   });
+  const { data: quotedThread } = useGetPostThreadQuery(quotedPostId as number, {
+    skip: !quotedPostId,
+  });
+  const quoted = quotedThread?.post;
   const [createPost, { isLoading }] = useCreatePostMutation();
   const [text, setText] = useState(initialText || '');
   const [media, setMedia] = useState<{ url: string; mediaType: 'image' | 'video' } | null>(null);
@@ -123,13 +139,14 @@ export default function Composer({ replyToId, placeholder, autoFocus, onPosted, 
 
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed && !media) return;
+    if (!trimmed && !media && !quotedPostId) return;
     try {
       await createPost({
         text: trimmed,
         imageUrl: media?.url,
         mediaType: media?.mediaType,
         replyToId,
+        quotedPostId,
       }).unwrap();
       setText('');
       setMedia(null);
@@ -176,6 +193,21 @@ export default function Composer({ replyToId, placeholder, autoFocus, onPosted, 
             </button>
           </div>
         )}
+        {quoted && (
+          <div className='social-composer__quoted'>
+            <div className='social-composer__quoted-head'>
+              <div className='social-composer__quoted-avatar'>
+                <PfpImage src={quoted.author.profilePicture} />
+              </div>
+              <span>
+                {quoted.author.username
+                  ? transformTitle(quoted.author.username)
+                  : shortenAddress(quoted.author.address)}
+              </span>
+            </div>
+            {quoted.text && <p>{quoted.text}</p>}
+          </div>
+        )}
         <div className='social-composer__footer'>
           <input
             ref={fileRef}
@@ -204,10 +236,10 @@ export default function Composer({ replyToId, placeholder, autoFocus, onPosted, 
           </span>
           <button
             className='social-composer__submit'
-            disabled={(!text.trim() && !media) || isLoading || uploading}
+            disabled={(!text.trim() && !media && !quotedPostId) || isLoading || uploading}
             onClick={submit}
           >
-            {isLoading ? 'Posting…' : replyToId ? 'Reply' : 'Post'}
+            {isLoading ? 'Posting…' : replyToId ? 'Reply' : quotedPostId ? 'Quote' : 'Post'}
           </button>
         </div>
       </div>

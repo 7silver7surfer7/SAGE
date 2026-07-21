@@ -1,8 +1,10 @@
 import { NextApiRequest, NextApiResponse } from 'next';
+import { ethers } from 'ethers';
 import { getRequester } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
 import { Role, SaleEventType } from '@prisma/client';
 import { getSagePriceUsd } from '@/utilities/sagePrice';
+import { parameters } from '@/constants/config';
 
 export default async function (request: NextApiRequest, response: NextApiResponse) {
   const {
@@ -68,9 +70,39 @@ async function registerSale(body: any, response: NextApiResponse) {
     response.status(400).json({ error: 'txHash required' });
     return;
   }
+  // Reject nonsense/negative amounts — previously unvalidated, so any signed-
+  // in wallet could record an arbitrary (e.g. wildly inflated) figure onto
+  // the admin revenue dashboard with no numeric sanity check at all.
+  const tokensNum = Number(amountTokens);
+  if (amountTokens !== undefined && (!Number.isFinite(tokensNum) || tokensNum < 0)) {
+    response.status(400).json({ error: 'bad amountTokens' });
+    return;
+  }
+  const pointsNum = Number(amountPoints);
+  if (amountPoints !== undefined && (!Number.isFinite(pointsNum) || pointsNum < 0)) {
+    response.status(400).json({ error: 'bad amountPoints' });
+    return;
+  }
   const dupe = await prisma.saleEvent.findFirst({ where: { txHash } });
   if (dupe) {
     response.status(200).json({ ok: true }); // already recorded — not an error, just a no-op
+    return;
+  }
+  // Doesn't verify the CLAIMED amount/buyer/eventId against the tx's actual
+  // decoded logs (see the comment above — a full fix needs per-game-type
+  // event decoding) but does close the "wholly fabricated, never-mined
+  // txHash" gap: the transaction must at least genuinely exist and have
+  // succeeded on the configured chain.
+  try {
+    const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+    const receipt = await provider.getTransactionReceipt(txHash);
+    if (!receipt || receipt.status !== 1) {
+      response.status(400).json({ error: 'txHash not found or not a successful transaction' });
+      return;
+    }
+  } catch (e) {
+    console.log(e);
+    response.status(400).json({ error: 'could not verify txHash on-chain' });
     return;
   }
   const artistAddress = await findArtistAddress(eventType, Number(eventId));

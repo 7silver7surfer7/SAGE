@@ -20,11 +20,18 @@ export async function retryTransient<T>(
     } catch (err: any) {
       lastErr = err;
       const status = err?.status ?? err?.originalStatus;
+      // 507 (Insufficient Storage) is social-upload's own signal for a
+      // Filebase pin-quota wall — a HARD failure that stays broken until a
+      // human frees space/upgrades the plan, not something retrying fixes.
+      // Burning 4 retries (~15s) on it just delays the real error reaching
+      // the user and muddies "was this transient or not" in the logs.
+      const isAtCapacity = status === 507 || err?.code === 'STORAGE_AT_CAPACITY';
       const isTransient =
-        status === undefined ||
-        status === 'FETCH_ERROR' ||
-        status === 'TIMEOUT_ERROR' ||
-        (typeof status === 'number' && status >= 500);
+        !isAtCapacity &&
+        (status === undefined ||
+          status === 'FETCH_ERROR' ||
+          status === 'TIMEOUT_ERROR' ||
+          (typeof status === 'number' && status >= 500));
       if (!isTransient || i === attempts - 1) throw err;
       await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** i));
     }

@@ -3,9 +3,11 @@ import { useRouter } from 'next/router';
 import LoaderDots from '@/components/LoaderDots';
 import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
+import AgentBadge from '@/components/Social/AgentBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
+import useLivePixels from '@/hooks/useLivePixels';
 import {
   useGetLeaderboardQuery,
   useGetLeaderboardBoardQuery,
@@ -19,6 +21,13 @@ const BOARDS = [
   ['topBurners', 'Top boosters', 'ETH spent boosting posts'],
   ['mostFollowed', 'Most followed', 'followers'],
 ] as const;
+
+// The pixels balance streams up live: seed from the fetched count + rate
+// (pixels/day) and extrapolate locally between the 60s server refreshes.
+function LivePixelsValue({ count, rate }: { count: number; rate: number }) {
+  const live = useLivePixels(count, rate);
+  return <>{live.toLocaleString()} pixels</>;
+}
 
 export default function LeaderboardPage() {
   const router = useRouter();
@@ -112,12 +121,13 @@ export default function LeaderboardPage() {
                   ? transformTitle(row.user.username)
                   : shortenAddress(row.user?.address || '')}
                 {row.user?.verified && <VerifiedBadge size={12} />}
+                {row.user?.isAgent && <AgentBadge size={12} />}
               </span>
               <span className='social-board__value'>
                 {board === 'mostFollowed'
                   ? `${row.count} followers`
                   : board === 'topPoints'
-                  ? `${row.count} pixels`
+                  ? <LivePixelsValue count={row.count || 0} rate={row.rate || 0} />
                   : board === 'topBurners'
                   ? `${row.count} ETH`
                   : `${row.count} SAGE`}

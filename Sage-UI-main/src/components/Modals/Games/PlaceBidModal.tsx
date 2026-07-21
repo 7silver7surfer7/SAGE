@@ -180,7 +180,7 @@ function PlaceBidModal({ isOpen, closeModal, auction, artist, dropName, currency
         <div className='games-modal__body'>
           <section className='games-modal__main'>
             <div className='games-modal__main-img-container'>
-              <BaseMedia src={auction.Nft.s3Path} isZoomable={true} fit='contain' />
+              <BaseMedia src={auction.Nft.s3Path} type={auction.Nft.mediaType} isZoomable={true} fit='contain' />
 
               {isOpenForBids && isRunning && (
                 <Countdown endTime={endTime} className='games-modal__countdown--float'></Countdown>

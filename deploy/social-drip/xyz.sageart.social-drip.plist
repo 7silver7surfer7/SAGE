@@ -7,7 +7,7 @@
     launchctl load ~/Library/LaunchAgents/xyz.sageart.social-drip.plist
   Stop (at launch, or any time):
     launchctl unload ~/Library/LaunchAgents/xyz.sageart.social-drip.plist
-  Runs every 1200s (20 min); the script self-jitters up to 2 min so ticks
+  Runs every 240s (4 min); the script self-jitters up to ~30s so ticks
   don't land on a fixed clock edge.
 -->
 <plist version="1.0">
@@ -20,7 +20,7 @@
     <string>/Users/dannyelcristyenciobanica/Downloads/SAGE/deploy/social-drip/run-drip.sh</string>
   </array>
   <key>StartInterval</key>
-  <integer>1200</integer>
+  <integer>240</integer>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>

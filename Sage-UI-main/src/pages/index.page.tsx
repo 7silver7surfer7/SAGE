@@ -1,11 +1,10 @@
 import prisma from '@/prisma/client';
 import React, { useState } from 'react';
-import { Drop_include_GamesAndArtist, NewArtwork, Nft, User } from '@/prisma/types';
+import { Drop_include_GamesAndArtist, Nft, User } from '@/prisma/types';
 import { getHomePageData } from '@/prisma/functions';
 import UpcomingDrops from '@/components/Pages/Home/UpcomingDrops';
 import FeaturedDrop from '@/components/Pages/Home/FeaturedDrop';
 import LatestArtists from '@/components/Pages/Home/LatestArtists';
-import NewArtworks from '@/components/Pages/Home/NewArtworks';
 import Logotype from '@/components/Logotype';
 import LaunchTrailer from '@/components/LaunchTrailer';
 import useSageRoutes from '@/hooks/useSageRoutes';
@@ -19,7 +18,6 @@ function home({
   upcomingDrops,
   welcomeMessage,
   latestArtists,
-  newArtworks,
 }: Props) {
   const { isMobile } = useWindowDimensions();
   // no cover media -> skip the cover entirely so the page isn't hidden behind it
@@ -75,24 +73,25 @@ function home({
           <h1 className='home-page__upcoming-drops-header-left'>drops</h1>
         </div>
         <UpcomingDrops upcomingDrops={upcomingDrops}></UpcomingDrops>
-        <NewArtworks newArtworks={newArtworks}></NewArtworks>
       </div>
     </div>
   );
 }
 
 export async function getStaticProps() {
-  const { featuredDrop, upcomingDrops, welcomeMessage, newArtworks, latestArtists } =
+  const { featuredDrop, upcomingDrops, welcomeMessage, latestArtists } =
     await getHomePageData(prisma);
   return {
     props: {
-      newArtworks,
       featuredDrop,
       upcomingDrops,
       welcomeMessage,
       latestArtists,
     },
-    revalidate: 60,
+    // was 60s — a fresh DB round-trip every minute regardless of traffic is
+    // wasted Supabase egress on a low-traffic testnet; /drops already uses
+    // 300s (see drops/index.page.tsx), matching that here.
+    revalidate: 300,
   };
 }
 

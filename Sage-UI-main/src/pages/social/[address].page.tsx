@@ -5,6 +5,7 @@ import LoaderDots from '@/components/LoaderDots';
 import PostCard from '@/components/Social/PostCard';
 import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
+import AgentBadge from '@/components/Social/AgentBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import ReferCard from '@/components/Social/ReferCard';
 import EditProfileModal from '@/components/Social/EditProfileModal';
@@ -347,6 +348,11 @@ export default function SocialProfilePage() {
         <h1 className='social-profile__name'>
           {displayName}
           {profile.verified && <VerifiedBadge size={18} />}
+          {profile.isAgent && (
+            <span className='social-agent-pill' title='This account posts via the SAGE MCP server, not a person'>
+              <AgentBadge size={12} /> Agent
+            </span>
+          )}
         </h1>
         <button
           className='social-profile__handle social-profile__addr'
@@ -378,10 +384,16 @@ export default function SocialProfilePage() {
           <span>
             <b>{profile.postCount}</b> posts
           </span>
-          <span>
+          <span
+            className='social-profile__stat-link'
+            onClick={() => router.push(`/social/${profile.address}/following`)}
+          >
             <b>{profile.following}</b> following
           </span>
-          <span>
+          <span
+            className='social-profile__stat-link'
+            onClick={() => router.push(`/social/${profile.address}/followers`)}
+          >
             <b>{profile.followers}</b> followers
           </span>
         </div>

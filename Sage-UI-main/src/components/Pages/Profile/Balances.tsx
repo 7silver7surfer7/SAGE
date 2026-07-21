@@ -37,12 +37,12 @@ export default function Balances() {
   );
 }
 
-// 0.01 pixels/day per SAGE, reward capped at 5,000,000 SAGE (= 50,000 pixels/day)
-// — matches SagePoints.economics() on-chain (rateScaled=1, capSage=5_000_000)
+// 0.25 pixels/day per SAGE, capped at 100,000 SAGE (= 25,000 pixels/day max)
+// — matches SagePoints.economics() on-chain (rateScaled=25, capSage=100_000).
 function getPixelRate(sageBalance: number) {
   if (isNaN(sageBalance) || sageBalance == 0) {
     return 0;
   }
-  const rate = sageBalance / 100;
-  return rate > 50000 ? 50000 : rate.toFixed(1);
+  const capped = Math.min(sageBalance, 100000);
+  return (capped * 0.25).toFixed(1);
 }

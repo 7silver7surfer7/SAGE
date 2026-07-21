@@ -1,5 +1,5 @@
 import useModal from '@/hooks/useModal';
-import { Drop_include_GamesAndArtist } from '@/prisma/types';
+import { DropFull } from '@/prisma/types';
 import { useApproveAndDeployDropMutation, useDeleteDropMutation } from '@/store/dropsReducer';
 import { Signer } from 'ethers';
 import { useState } from 'react';
@@ -12,7 +12,7 @@ import { AllowlistModal } from './AllowlistModal';
 import { EditDropModal } from './EditDropModal';
 
 interface Props {
-  drop: Drop_include_GamesAndArtist;
+  drop: DropFull;
 }
 
 interface AssetCheck {

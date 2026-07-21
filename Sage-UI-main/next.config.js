@@ -47,7 +47,24 @@ const nextConfig = {
       '/profile': { page: '/profile' },
     };
   },
+  // Keep the old /howtobuyash URL alive after the rename to /howtobuysage so
+  // existing links and bookmarks don't 404 (server mode — `next start` — so
+  // redirects() applies).
+  async redirects() {
+    return [
+      { source: '/howtobuyash', destination: '/howtobuysage', permanent: true },
+    ];
+  },
   staticPageGenerationTimeout: 180,
+  // Caps how many static-generation worker processes run in parallel during
+  // `next build`. Each worker opens its own Prisma connection pool — on an
+  // 8-core build host, uncapped workers × even a low per-worker
+  // connection_limit can exceed Supabase's session-mode pooler cap
+  // (pool_size: 15), failing the build with EMAXCONNSESSION as the number of
+  // drop pages grows.
+  experimental: {
+    cpus: 2,
+  },
   // SWC minifier: multi-threaded and far lighter on RAM than Terser during
   // `next build` — matters when cross-building the arm64 (Raspberry Pi) image.
   swcMinify: true,

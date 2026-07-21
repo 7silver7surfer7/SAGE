@@ -93,10 +93,15 @@ contract Auction is
     );
 
     /**
-     * @dev Throws if not called by the multisig account.
+     * @dev Throws if not called by the multisig account. Was checking
+     *  DEFAULT_ADMIN_ROLE (0x00) instead of the actual multisig address —
+     *  SageStorage's constructor grants DEFAULT_ADMIN_ROLE to the admin
+     *  wallet too, not just the multisig, so this let a plain admin key
+     *  authorize contract upgrades. Fixed to match every other contract's
+     *  onlyMultisig (SageNFT, SAGEOpenEdition, SageCollection, Rewards).
      */
     modifier onlyMultisig() {
-        require(sageStorage.hasRole(0x00, msg.sender), "Admin calls only");
+        require(sageStorage.multisig() == msg.sender, "Admin calls only");
         _;
     }
 
@@ -188,6 +193,14 @@ contract Auction is
             "Auction already exists"
         );
         auctions[_auctionInfo.auctionId] = _auctionInfo;
+        // _auctionInfo is caller-supplied calldata — never trust its bid/settlement
+        // fields. Without this, an attacker-controlled artist could seed a fake
+        // highestBid/highestBidder/settled=false and have settleAuction() pay out
+        // real funds for a bid that never happened.
+        AuctionInfo storage stored = auctions[_auctionInfo.auctionId];
+        stored.highestBid = 0;
+        stored.highestBidder = address(0);
+        stored.settled = false;
         // freeze the platform split for this auction at its creation-time value
         auctionArtistShare[_auctionInfo.auctionId] = _primaryArtistShare();
 

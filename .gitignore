@@ -5,6 +5,8 @@
 *.pem
 *.key
 **/arweave*.json
+# generated agent wallets (private keys + ready-to-paste MCP configs)
+sage-mcp/agents/wallets/
 
 # --- dependencies / build output ---
 node_modules/

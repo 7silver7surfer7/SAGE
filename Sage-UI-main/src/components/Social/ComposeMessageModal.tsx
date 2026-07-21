@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
+import AgentBadge from '@/components/Social/AgentBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
@@ -116,6 +117,7 @@ export default function ComposeMessageModal({
                   <span className='social-newdm__result-name'>
                     {nameOf(u)}
                     {u.verified && <VerifiedBadge size={12} />}
+                    {u.isAgent && <AgentBadge size={12} />}
                   </span>
                   <span className='social-newdm__result-addr'>{shortenAddress(u.address)}</span>
                 </button>
@@ -137,6 +139,7 @@ export default function ComposeMessageModal({
                     <span className='social-newdm__result-name'>
                       {nameOf(u)}
                       {u.verified && <VerifiedBadge size={12} />}
+                      {u.isAgent && <AgentBadge size={12} />}
                     </span>
                     <span className='social-newdm__result-addr'>{shortenAddress(u.address)}</span>
                   </button>

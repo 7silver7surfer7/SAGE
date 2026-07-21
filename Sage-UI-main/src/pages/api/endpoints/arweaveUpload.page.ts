@@ -7,6 +7,7 @@ import { OPTIMIZED_IMAGE_WIDTH } from '@/constants/config';
 import { arweaveUrl, sendArweaveTransaction } from '@/utilities/arweave-server';
 import { requireRole } from '@/utilities/apiAuth';
 import { mirrorToS3 } from '@/utilities/s3Mirror';
+import { cleanPrismaError } from '@/utilities/prismaError';
 
 export const config = { api: { bodyParser: false } };
 
@@ -90,7 +91,7 @@ async function handler(req: RequestWithFile, res: NextApiResponse) {
     res.json({ url, optimizedUrl });
   } catch (e: any) {
     console.log(e);
-    res.status(500).json({ error: (e as Error).message });
+    res.status(500).json({ error: cleanPrismaError(e) });
   }
 }
 

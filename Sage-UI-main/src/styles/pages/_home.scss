@@ -318,6 +318,15 @@ $tile-info-z: calc(#{$tile-img-z} + 1);
       color: m.t(base);
       background-color: m.t('accent');
     }
+    // sold-out collections: same accent treatment as Live, but the longer
+    // text needs the pill to size to content instead of the fixed LIVE box
+    &[data-status='SoldOut'] {
+      color: m.t(base);
+      background-color: m.t('accent');
+      aspect-ratio: auto;
+      width: auto;
+      padding: 8px 18px;
+    }
     display: flex;
   }
 }
@@ -395,102 +404,3 @@ $tile-info-z: calc(#{$tile-img-z} + 1);
   @include mobile-slide-row;
 }
 
-.home-page__new-artworks-section {
-  @include section-strip;
-  display: none;
-  @include b.min-width('medium') {
-    display: flex;
-  }
-}
-
-.home-page__new-artworks-section--mobile {
-  @include mobile-slide-section;
-  @include b.min-width('medium') {
-    display: none;
-  }
-}
-
-.home-page__new-artworks-header-section {
-  @include m.flex-col;
-  @include m.standard-width;
-  margin-top: 42px;
-}
-
-.home-page__new-artworks-flex-container--mobile {
-  @include mobile-slide-row;
-  @include b.min-width('medium') {
-    display: none;
-  }
-}
-
-.home-page__new-artworks-header {
-  @include section-header;
-}
-
-.home-page__new-artworks-subheader {
-  @include section-subheader();
-}
-
-.home-page__new-artworks-flex-container {
-  margin-top: 11px;
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-}
-
-.home-page__new-artworks-item {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 40vw;
-  @include b.min-width('medium') {
-    // width: 19%;
-  }
-}
-
-.home-page__new-artworks-media {
-  position: relative;
-  @include m.interact;
-  width: 100%;
-  aspect-ratio: 284/200;
-}
-
-.home-page__new-artworks-item-content {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  @include b.min-width('medium') {
-    gap: 20px;
-  }
-}
-
-.home-page__new-artworks-item-pfp {
-  @include m.pfp-container;
-  cursor: pointer;
-  width: 15px;
-  height: 15px;
-  @include b.min-width('medium') {
-    width: 30px;
-    height: 30px;
-  }
-}
-
-.home-page__new-artworks-item-right {
-  @include m.flex-col;
-  // @include m.flex-center;
-  height: 100%;
-  text-transform: uppercase;
-}
-.home-page__new-artworks-item-name {
-  // @include m.text-p5;
-  width: 100%;
-  font-weight: 600;
-  font-size: 10px;
-  line-height: 12px;
-}
-.home-page__new-artworks-item-artist-name {
-  font-size: 7px;
-  line-height: 8px;
-  color: #c4c4c4;
-  white-space: nowrap;
-}

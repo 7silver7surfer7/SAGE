@@ -2,7 +2,7 @@ import { EarnedPoints } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import prisma from '@/prisma/client';
 import { parameters } from '@/constants/config';
-import { pixelsOf } from '@/utilities/serverWallet';
+import { pixelsOf, pixelsDailyRate } from '@/utilities/serverWallet';
 import { getRequester } from '@/utilities/apiAuth';
 
 const handler = async (req: NextApiRequest, response: NextApiResponse) => {
@@ -27,6 +27,9 @@ const handler = async (req: NextApiRequest, response: NextApiResponse) => {
 
 export interface GetEarnedPointsResponse extends Omit<EarnedPoints, 'totalPointsEarned'> {
   totalPointsEarned: string;
+  // pixels/day the wallet currently earns — lets the client stream the balance
+  // up live between fetches. 0/absent for the legacy DB fallback.
+  dailyRate?: string;
 }
 
 async function getEarnedPoints(walletAddress: string, response: NextApiResponse) {
@@ -35,14 +38,18 @@ async function getEarnedPoints(walletAddress: string, response: NextApiResponse)
   // the DB only if the contract isn't configured (e.g. prod pre-launch).
   if (parameters.SAGE_POINTS_ADDRESS) {
     try {
-      const live = await pixelsOf(walletAddress);
+      const [live, rate] = await Promise.all([
+        pixelsOf(walletAddress),
+        pixelsDailyRate(walletAddress).catch(() => BigInt(0)),
+      ]);
       response.status(200).json({
         address: walletAddress,
         totalPointsEarned: live.toString(),
+        dailyRate: rate.toString(),
         signedMessage: '',
         updatedAt: new Date(),
       });
-      console.log(`getEarnedPoints(${walletAddress}) :: on-chain ${live}`);
+      console.log(`getEarnedPoints(${walletAddress}) :: on-chain ${live} (+${rate}/day)`);
       return;
     } catch (e) {
       console.error('SagePoints read failed, falling back to DB', e);

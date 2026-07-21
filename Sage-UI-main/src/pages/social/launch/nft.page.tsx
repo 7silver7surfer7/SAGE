@@ -1,12 +1,14 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
 import SocialShell from '@/components/Social/SocialShell';
 import EditionPanel from '@/components/Social/EditionPanel';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import { useCreateDropWithUploadsMutation } from '@/store/dropsReducer';
+import { useGetArtistNftContractAddressQuery } from '@/store/artistsReducer';
 import { useSetFollowGateMutation, useCreateDropPostMutation } from '@/store/socialReducer';
 import VerificationModal from '@/components/Social/VerificationModal';
+import { getNFTContract } from '@/utilities/contracts';
 import { useSigner } from 'wagmi';
 
 type LaunchKind = 'mint' | 'openEdition' | 'auction' | 'zip';
@@ -71,8 +73,38 @@ export default function LaunchNftPage() {
   const { data: signer } = useSigner();
   const [royalty, setRoyalty] = useState('10');
   const [showVerify, setShowVerify] = useState(false);
+  const [ticker, setTicker] = useState('');
 
   const isZip = kind === 'zip';
+  // Open Edition / Auction mint into the artist's ONE shared NFT contract —
+  // its ERC-721 symbol is set (and locked forever) the first time it
+  // deploys. Once it exists, a new ticker here would silently do nothing, so
+  // the field only makes sense before that first deploy. A ZIP collection
+  // always gets its own fresh contract, so it's never locked.
+  const { data: existingArtistContract } = useGetArtistNftContractAddressQuery(addr, {
+    skip: !addr,
+  });
+  const tickerLocked = !isZip && !!existingArtistContract;
+  // The locked state used to just say "it's fixed" with no way to see WHAT
+  // it's fixed to — reading it straight off the deployed contract means the
+  // ticker is always actually listed, editable or not.
+  const [existingTicker, setExistingTicker] = useState<string | null>(null);
+  useEffect(() => {
+    if (!tickerLocked || !existingArtistContract) {
+      setExistingTicker(null);
+      return undefined;
+    }
+    let cancelled = false;
+    getNFTContract(existingArtistContract)
+      .then((c) => c.symbol())
+      .then((s) => {
+        if (!cancelled) setExistingTicker(s);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [tickerLocked, existingArtistContract]);
 
   /** A real teaser — what it is, what it costs, when it ends — not a vague "watch this space." */
   const teaseDraft = () => {
@@ -120,7 +152,7 @@ export default function LaunchNftPage() {
       'Creating your drop — pinning art to IPFS, then your wallet prompts to deploy…'
     );
     try {
-      const dropId = await createDrop({
+      const { dropId, fullyDeployed } = await createDrop({
         artistWallet: addr,
         name: title.trim(),
         description: description.trim(),
@@ -166,9 +198,19 @@ export default function LaunchNftPage() {
         // social NFTs live on IPFS via Filebase — no admin-gated Arweave path
         storage: 'filebase',
         allowlist: { enabled: false, addresses: [] },
+        nftSymbol: tickerLocked ? undefined : ticker.trim() || undefined,
       }).unwrap();
       if (!dropId) throw new Error('drop creation failed — see the error above');
-      if (followersOnly && dropId) {
+      if (!fullyDeployed) {
+        // The drop record (and any media that DID upload) exists, but a
+        // later step failed — it is NOT live. Never post to the feed or
+        // show a "live" success state here: that would invite mints/bids
+        // on a drop that isn't actually deployed. The mutation already
+        // raised its own detailed error toast explaining what failed.
+        setBusy(false);
+        return;
+      }
+      if (followersOnly) {
         // followers auto-join the allowlist (pushed on-chain at deploy)
         await setFollowGate({ dropId, enabled: true })
           .unwrap()
@@ -257,6 +299,7 @@ export default function LaunchNftPage() {
                     setDurationHours('24');
                     setMaxPerUser('1');
                     setFollowersOnly(false);
+                    setTicker('');
                   }}
                 >
                   <span className='social-launch__kind-icon'>{k.icon}</span>
@@ -282,6 +325,34 @@ export default function LaunchNftPage() {
                   maxLength={60}
                   onChange={(e) => setTitle(e.target.value)}
                 />
+
+                {tickerLocked ? (
+                  <p className='social-launch__note'>
+                    Ticker: {existingTicker ? `$${existingTicker}` : '…'} — your artist contract
+                    already exists, so this was fixed permanently the first time you launched an
+                    open edition or auction and can't change now.
+                  </p>
+                ) : (
+                  <>
+                    <div className='social-launch__row'>
+                      <input
+                        className='social-search__input'
+                        placeholder={isZip ? 'Collection ticker (optional)' : 'Ticker (optional)'}
+                        value={ticker}
+                        maxLength={8}
+                        onChange={(e) =>
+                          setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+                        }
+                      />
+                    </div>
+                    <p className='social-launch__fine'>
+                      {isZip
+                        ? 'The ERC-721 symbol for this collection’s dedicated contract. Leave blank to auto-generate one from the title.'
+                        : 'The ERC-721 symbol for your shared artist contract — permanent once your first open edition or auction deploys. Leave blank to auto-generate one from your name.'}
+                    </p>
+                  </>
+                )}
+
                 <textarea
                   className='social-search__input social-launch__desc'
                   placeholder='Say something about it (shown on the drop page)'
@@ -361,6 +432,7 @@ export default function LaunchNftPage() {
                     <span>% ROYALTY</span>
                   </div>
                 </div>
+
                 <label className='social-launch__gate'>
                   <input
                     type='checkbox'

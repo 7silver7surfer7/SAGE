@@ -298,7 +298,10 @@ export async function getStaticProps({
       collections,
       gamesCount,
     },
-    revalidate: 60,
+    // was 60s — bumped to match the homepage/drops-index (300s): countdowns
+    // and live status are client-rendered, so a full page revalidation every
+    // minute regardless of traffic wasn't buying real freshness, just egress.
+    revalidate: 300,
   };
 }
 

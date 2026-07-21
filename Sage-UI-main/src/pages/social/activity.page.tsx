@@ -1,11 +1,17 @@
 import { useRouter } from 'next/router';
+import { useEffect } from 'react';
 import LoaderDots from '@/components/LoaderDots';
 import SocialShell from '@/components/Social/SocialShell';
 import VerifiedBadge from '@/components/Social/VerifiedBadge';
+import AgentBadge from '@/components/Social/AgentBadge';
 import { PfpImage } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
 import { transformTitle } from '@/utilities/strings';
-import { useGetActivityQuery, ActivityItem } from '@/store/socialReducer';
+import {
+  useGetActivityQuery,
+  useMarkActivitySeenMutation,
+  ActivityItem,
+} from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 
 const VERBS: Record<ActivityItem['type'], string> = {
@@ -36,6 +42,13 @@ export default function ActivityPage() {
   const router = useRouter();
   const { isSignedIn } = useSAGEAccount();
   const { data, isFetching } = useGetActivityQuery(undefined, { skip: !isSignedIn, pollingInterval: 10_000, refetchOnFocus: true });
+  const [markSeen] = useMarkActivitySeenMutation();
+  // Opening the tab clears the unread counter (Twitter behavior). Re-run when
+  // signed-in state flips or new items arrive while the tab is open, so the
+  // badge stays at 0 rather than re-accumulating behind the user's back.
+  useEffect(() => {
+    if (isSignedIn) markSeen();
+  }, [isSignedIn, data, markSeen]);
 
   return (
     <SocialShell>
@@ -84,7 +97,8 @@ export default function ActivityPage() {
                       ? transformTitle(a.actor.username)
                       : shortenAddress(a.actor.address)}
                   </b>
-                  {a.actor.verified && <VerifiedBadge size={12} />} {VERBS[a.type]}
+                  {a.actor.verified && <VerifiedBadge size={12} />}
+                  {a.actor.isAgent && <AgentBadge size={12} />} {VERBS[a.type]}
                   {a.amount ? <b> · {a.amount} SAGE</b> : null}
                 </span>
                 {a.snippet && <span className='social-activity__snippet'>“{a.snippet}”</span>}

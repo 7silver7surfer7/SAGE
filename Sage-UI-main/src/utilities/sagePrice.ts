@@ -2,19 +2,19 @@ import { ethers } from 'ethers';
 import {
   SAGE_PRICE_RPC_URL,
   SAGE_PRICE_CHAIN_ID,
-  SAGE_PRICE_PAIR_ADDRESS,
   SAGE_PRICE_TOKEN_ADDRESS,
+  SAGE_PRICE_FACTORY_ADDRESS,
+  SAGE_PRICE_ROUTER_ADDRESS,
 } from '@/constants/config';
 
 // SAGE lives on Robinhood Chain, which DexScreener does not index — so the old
 // DexScreener lookups always returned an empty result (blank price / $0 USD).
-// Instead we read the price straight from the token's on-chain Uniswap-v2
-// SAGE/WETH pair on Robinhood mainnet and convert to USD with the live ETH/USD
-// rate:
-//
-//   priceUsd(SAGE) = (WETH reserve / SAGE reserve) * USD-per-ETH
-//
-// Both SAGE and WETH use 18 decimals, so the reserve ratio is unitless.
+// SAGE is a pump.fun-style bonding-curve token (SocialTokenFactory) — until it
+// graduates, there IS no Uniswap pair at all, so price comes straight off the
+// curve's own virtual reserves; once graduated, a real pair exists and
+// SageSwapRouter's poolPriceWei() reads it. This mirrors the exact dual-source
+// logic already used for every other social token on its own detail page
+// (see social.page.ts's getTokenDetail, FACTORY_ABI / graduated branch).
 // Server-side only (uses an RPC provider + an external ETH/USD feed).
 
 const PAIR_ABI = [
@@ -56,26 +56,37 @@ export async function getEthUsd(): Promise<number> {
   return ethUsd;
 }
 
+const CURVE_ABI = [
+  'function curves(address) view returns (uint256 virtualTokenReserves, uint256 virtualEthReserves, uint256 realTokenReserves, uint256 realEthReserves, address creator, bool complete, bool airdropEnabled)',
+  'function spotPriceWei(address) view returns (uint256)',
+  'function pairOf(address) view returns (address)',
+];
+const ROUTER_ABI = ['function poolPriceWei(address) view returns (uint256)'];
+
 export async function getSagePriceUsd(): Promise<number> {
   const provider = new ethers.providers.StaticJsonRpcProvider(
     SAGE_PRICE_RPC_URL,
     SAGE_PRICE_CHAIN_ID
   );
-  const pair = new ethers.Contract(SAGE_PRICE_PAIR_ADDRESS, PAIR_ABI, provider);
+  const factory = new ethers.Contract(SAGE_PRICE_FACTORY_ADDRESS, CURVE_ABI, provider);
 
-  const [reserves, token0, ethUsd] = await Promise.all([
-    pair.getReserves(),
-    pair.token0(),
+  const [curve, pool, ethUsd] = await Promise.all([
+    factory.curves(SAGE_PRICE_TOKEN_ADDRESS),
+    factory.pairOf(SAGE_PRICE_TOKEN_ADDRESS).catch(() => ethers.constants.AddressZero),
     getEthUsd(),
   ]);
 
-  const sageIsToken0 = token0.toLowerCase() === SAGE_PRICE_TOKEN_ADDRESS.toLowerCase();
-  const sageReserve = sageIsToken0 ? reserves.reserve0 : reserves.reserve1;
-  const wethReserve = sageIsToken0 ? reserves.reserve1 : reserves.reserve0;
+  const graduated = pool && pool !== ethers.constants.AddressZero;
+  let spotWei: ethers.BigNumber;
+  if (graduated && curve.complete) {
+    const router = new ethers.Contract(SAGE_PRICE_ROUTER_ADDRESS, ROUTER_ABI, provider);
+    spotWei = await router.poolPriceWei(SAGE_PRICE_TOKEN_ADDRESS);
+  } else {
+    spotWei = await factory.spotPriceWei(SAGE_PRICE_TOKEN_ADDRESS);
+  }
 
-  const sage = Number(ethers.utils.formatUnits(sageReserve, 18));
-  const weth = Number(ethers.utils.formatUnits(wethReserve, 18));
-  if (!(sage > 0) || !(weth > 0)) throw new Error('empty SAGE/WETH pair reserves');
+  const priceEth = Number(ethers.utils.formatEther(spotWei));
+  if (!(priceEth > 0)) throw new Error('SAGE price unavailable');
 
-  return (weth / sage) * ethUsd;
+  return priceEth * ethUsd;
 }

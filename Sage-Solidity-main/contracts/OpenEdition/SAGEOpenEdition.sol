@@ -287,15 +287,25 @@ contract SAGEOpenEdition is Pausable {
                 require(okPlatform, "Platform ETH transfer failed");
             } else {
                 require(msg.value == 0, "Edition is not priced in ETH");
-                token.transferFrom(
-                    msg.sender,
-                    oe.nftContract.artist(),
-                    artistShare
+                // unchecked return meant a non-standard ERC20 that returns
+                // false instead of reverting on failure would silently mint
+                // NFTs below while neither the artist nor the platform got
+                // paid — checked everywhere else in the codebase, missed here.
+                require(
+                    token.transferFrom(
+                        msg.sender,
+                        oe.nftContract.artist(),
+                        artistShare
+                    ),
+                    "ERC20 payout failed"
                 );
-                token.transferFrom(
-                    msg.sender,
-                    sageStorage.multisig(),
-                    totalCostInTokens - artistShare
+                require(
+                    token.transferFrom(
+                        msg.sender,
+                        sageStorage.multisig(),
+                        totalCostInTokens - artistShare
+                    ),
+                    "ERC20 payout failed"
                 );
             }
         } else {

@@ -3,14 +3,6 @@ import type { DropWhereInput } from '@prisma/client';
 
 export type { User, Drop, Nft };
 
-export interface NewArtwork {
-  s3PathOptimized: Nft['s3PathOptimized'];
-  artistUsername: User['username'];
-  name: Nft['name'];
-  profilePicture: User['profilePicture'];
-  dropId?: Drop['id'];
-}
-
 export interface ArtistSales {
   username: string;
   walletAddress: string;
@@ -29,8 +21,31 @@ export type Auction_include_DropNftArtist = Prisma.AuctionGetPayload<{
   include: { Nft: true; Drop: { include: { Artist: true } } };
 }>;
 
+// The public drop/homepage/listing tiles + mint/bid modals only ever read
+// this subset — Auction_include_Nft / OpenEdition_include_Nft /
+// Lottery_include_Nft / Drop_include_GamesAndArtist all pull Nft through
+// this narrower select instead of a full `include: { Nft: true }`, which was
+// dragging arweavePath/tags/price/ownerAddress/etc. (unused here) into every
+// homepage load, drops-listing load, and drop-detail load. Audited against
+// every consumer of those four types as of 2026-07-15 — if a new consumer
+// needs another field, add it here (tsc will flag the missing field at the
+// call site immediately, it won't fail silently).
+type NftDisplaySelect = {
+  id: true;
+  name: true;
+  description: true;
+  s3Path: true;
+  s3PathOptimized: true;
+  mediaType: true;
+  numberOfEditions: true;
+  width: true;
+  height: true;
+  metadataPath: true;
+  artistDisplayName: true;
+};
+
 export type Auction_include_Nft = Prisma.AuctionGetPayload<{
-  include: { Nft: true };
+  include: { Nft: { select: NftDisplaySelect } };
 }>;
 
 export type AuctionNftWithArtist = Prisma.AuctionGetPayload<{
@@ -44,16 +59,16 @@ export type CollectedListingNft = Omit<GamePrize, 'dropId' | 'createdAt', 'uri'>
 
 export type Drop_include_GamesAndArtist = Prisma.DropGetPayload<{
   include: {
-    Lotteries: { include: { Nfts: true } };
-    Auctions: { include: { Nft: true } };
-    OpenEditions: { include: { Nft: true } };
+    Lotteries: { include: { Nfts: { select: NftDisplaySelect } } };
+    Auctions: { include: { Nft: { select: NftDisplaySelect } } };
+    OpenEditions: { include: { Nft: { select: NftDisplaySelect } } };
     CollectionMints: true;
     NftContract: { include: { Artist: true } };
   };
 }>;
 
 export type OpenEdition_include_Nft = Prisma.OpenEditionGetPayload<{
-  include: { Nft: true };
+  include: { Nft: { select: NftDisplaySelect } };
 }>;
 
 export type DropWithArtist = Prisma.DropGetPayload<{
@@ -91,7 +106,7 @@ export type GamePrize = {
 };
 
 export type Lottery_include_Nft = Prisma.LotteryGetPayload<{
-  include: { Nfts: true };
+  include: { Nfts: { select: NftDisplaySelect } };
 }>;
 
 export type LotteryWithNftsAndArtist = Prisma.LotteryGetPayload<{

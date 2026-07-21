@@ -61,6 +61,14 @@ contract Splitter is AccessControl, ReentrancyGuard {
         payable
         nonReentrant
     {
+        // setDestinations/setWeights are independent setters (so an admin
+        // can update one at a time), so this can't be enforced there without
+        // breaking that two-step flow — enforced here instead, right before
+        // any funds move. A shorter weights[] than destinations[] would
+        // revert this whole call (out-of-bounds); a longer one would
+        // silently strand the remainder (totalWeight counts weights nothing
+        // gets paid out to).
+        require(destinations.length == weights.length, "length mismatch");
         if (_erc20Address != address(0)) {
             require(
                 IERC20(_erc20Address).balanceOf(address(this)) >= _amount,
@@ -89,6 +97,7 @@ contract Splitter is AccessControl, ReentrancyGuard {
      * @param _amount The amount of tokens to split.
      */
     function split(uint256 _amount) public payable nonReentrant {
+        require(destinations.length == weights.length, "length mismatch");
         require((address(this).balance) >= _amount, "Not enough balance");
 
         uint16 _totalWeight = totalWeight;

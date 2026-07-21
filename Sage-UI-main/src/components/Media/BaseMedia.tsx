@@ -67,7 +67,10 @@ function BaseMedia({
   priority,
   fit = 'cover',
 }: BaseMediaProps) {
-  const isVideo = (): boolean => isVideoSrc(src);
+  // `type` is an explicit hint (e.g. Nft.mediaType) for hosts with no file
+  // extension to sniff — a Filebase/IPFS gateway URL is just a CID, so
+  // isVideoSrc's pattern match alone can't tell a video from an image there.
+  const isVideo = (): boolean => type === 'video' || isVideoSrc(src);
   // Images route through the same resilient /api/media proxy as video (gateway
   // retries + caching) — a banner or artwork image can 404 for hours on a
   // stale Arweave edge node exactly like an unpatched video used to.
@@ -88,7 +91,13 @@ function BaseMedia({
   // ratio is measured, instead of collapsing to 0 height for that first frame.
   const [naturalRatio, setNaturalRatio] = useState(1);
   useEffect(() => setNaturalRatio(1), [src]);
-  const adaptsToImage = fit === 'contain' && isZoomable && !isVideo();
+  // Video artwork needs the exact same treatment: without it,
+  // .games-modal__main-img-container (height:auto, relying on ITS child to
+  // establish real height) and this wrapper's height:100% (relying on the
+  // PARENT for height) never resolve — the container collapses to 0 and the
+  // video renders inside an invisible box. This case was never exercised
+  // before video detection worked in these modals, so the gap stayed latent.
+  const adaptsToImage = fit === 'contain' && isZoomable;
 
   const videoMustStartMuted = () => {
     if (typeof window !== 'undefined') {
@@ -156,7 +165,25 @@ function BaseMedia({
               overflow: 'hidden',
             }}
           >
-            <VideoJS options={videoJsOptions} onReady={() => {}} fit={fit} />
+            <VideoJS
+              options={videoJsOptions}
+              onReady={
+                adaptsToImage
+                  ? (player) => {
+                      const measure = () => {
+                        const w = player.videoWidth();
+                        const h = player.videoHeight();
+                        if (w && h) setNaturalRatio(w / h);
+                      };
+                      // dimensions aren't available yet at ready() with
+                      // preload:'metadata' — wait for the event that promises them
+                      player.one('loadedmetadata', measure);
+                      measure(); // covers a cached/instant-metadata video
+                    }
+                  : () => {}
+              }
+              fit={fit}
+            />
             {/* video.js preventDefault()s a tap's touchend ("Don't let browser
                 turn this into a click"), so on touch devices taps on the video
                 never become clicks and ancestor onClick handlers (artwork tiles

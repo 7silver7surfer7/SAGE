@@ -263,6 +263,15 @@
   @include countdown;
 }
 
+// Sits inline in the header row, across from the drop name — an alternative
+// to --float (which pins over the artwork) for callers that want the timer
+// next to the title instead of on top of the image/video.
+.games-modal__countdown--inline {
+  @include countdown;
+  padding: 8px 16px;
+  font-size: 14px;
+}
+
 .games-modal__countdown--float {
   @include countdown;
   // Sits over arbitrary artwork, not app chrome — a themed background could

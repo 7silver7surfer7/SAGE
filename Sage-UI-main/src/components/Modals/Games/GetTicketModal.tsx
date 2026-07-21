@@ -82,6 +82,7 @@ function GetTicketModal({
     isStarted,
     isLive,
     selectedNftS3Path,
+    selectedNftMediaType,
     selectedNftName,
   } = useLottery({
     lottery,
@@ -221,7 +222,7 @@ function GetTicketModal({
         <section className='games-modal__body'>
           <div className='games-modal__main'>
             <div className='games-modal__main-img-container'>
-              <BaseMedia src={selectedNftS3Path} isZoomable={true} fit='contain' />
+              <BaseMedia src={selectedNftS3Path} type={selectedNftMediaType} isZoomable={true} fit='contain' />
               {isLive && (
                 <Countdown
                   endTime={lottery.endTime}
