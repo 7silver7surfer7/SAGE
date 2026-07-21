@@ -36,6 +36,12 @@ gcloud run services update sage-testnet --region us-west1 \
   --update-env-vars "^|^DATABASE_CONNECTION_POOL_URL=${DBURL}" --quiet >/dev/null
 echo "  Cloud Run updated"
 
+# GitHub Actions secret (pixels-update.yml authenticates with its own copy —
+# missing this stranded the hourly job with auth failures after a rotation)
+echo "updating GitHub secret…"
+printf '%s' "$DBURL" | gh secret set DATABASE_CONNECTION_POOL_URL && echo "  gh secret updated" \
+  || echo "  gh secret update FAILED — run: gh secret set DATABASE_CONNECTION_POOL_URL"
+
 # verify: one live query through the new credential
 echo "verifying…"
 DATABASE_CONNECTION_POOL_URL="$DBURL" node -e '
