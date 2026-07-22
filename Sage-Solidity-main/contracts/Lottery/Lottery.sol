@@ -101,6 +101,13 @@ contract Lottery is
     // their slots and corrupt already-accumulated values. APPEND-ONLY.
     uint256 public totalPendingReturns;
 
+    // When true for a lottery, tickets can be bought ONLY through
+    // buyTicketsWithVoucher (a platform-signed per-wallet voucher) — the open
+    // buyTickets path is closed. Lets a lottery be gated WITHOUT a per-drop
+    // whitelist contract or any server-paid whitelist write. Appended after
+    // every pre-existing slot above (this proxy is already live) — APPEND-ONLY.
+    mapping(uint256 => bool) public voucherGated;
+
     // Sentinel meaning "native ETH" (constants use no storage slots).
     address public constant NATIVE_CURRENCY =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
@@ -256,6 +263,13 @@ contract Lottery is
 
     function getWhitelist(uint256 _lotteryId) public view returns (address) {
         return whitelists[_lotteryId];
+    }
+
+    function setVoucherGated(uint256 _lotteryId, bool _gated)
+        public
+        onlyAdmin
+    {
+        voucherGated[_lotteryId] = _gated;
     }
 
     function setWhitelist(uint256 _lotteryId, address _whitelist)
@@ -601,8 +615,53 @@ contract Lottery is
     function buyTickets(uint256 _lotteryId, uint256 _numberOfTicketsToBuy)
         public
         payable
-        whenNotPaused
         isWhitelisted(_lotteryId)
+    {
+        // a voucher-gated lottery is buyable ONLY via buyTicketsWithVoucher;
+        // the open path stays closed so a lottery with no whitelist isn't
+        // silently public
+        require(!voucherGated[_lotteryId], "Voucher required");
+        _buyTicketsCore(_lotteryId, _numberOfTicketsToBuy);
+    }
+
+    // Voucher path (mirrors OpenEdition.batchMintWithVoucher): a platform-signed
+    // voucher proves per-wallet eligibility INLINE, so a gated lottery needs no
+    // per-drop whitelist contract and no server-paid whitelist write. The
+    // voucher is bound to (purpose, chainid, this contract, msg.sender,
+    // lotteryId, deadline) — un-replayable across chain / contract / lottery /
+    // wallet; reuse within one lottery is bounded by that lottery's own
+    // maxTicketsPerUser + closeTime, exactly like a whitelist entry. The money
+    // path is UNCHANGED: both entry points funnel into the identical
+    // _buyTicketsCore below (the pre-voucher buyTickets body verbatim).
+    function buyTicketsWithVoucher(
+        uint256 _lotteryId,
+        uint256 _numberOfTicketsToBuy,
+        uint256 _deadline,
+        bytes calldata _sig
+    ) public payable {
+        require(block.timestamp <= _deadline, "Voucher expired");
+        bytes32 message = prefixed(
+            keccak256(
+                abi.encode(
+                    "SAGE_LOTTERY_VOUCHER",
+                    block.chainid,
+                    address(this),
+                    msg.sender,
+                    _lotteryId,
+                    _deadline
+                )
+            )
+        );
+        require(
+            ECDSAUpgradeable.recover(message, _sig) == signerAddress,
+            "Invalid voucher"
+        );
+        _buyTicketsCore(_lotteryId, _numberOfTicketsToBuy);
+    }
+
+    function _buyTicketsCore(uint256 _lotteryId, uint256 _numberOfTicketsToBuy)
+        internal
+        whenNotPaused
     {
         LotteryInfo storage lottery = lotteryHistory[_lotteryId];
         uint256 totalCostInTokens;
