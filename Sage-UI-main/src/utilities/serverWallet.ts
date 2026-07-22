@@ -225,6 +225,25 @@ export function getServerSigner(): ethers.Wallet {
 
 /** Deploys a fresh SageWhitelist owned by the platform storage roles. */
 export async function deployWhitelistServerSide(): Promise<string> {
+  // EIP-1167 clone (~97k gas incl. init) instead of a full bytecode deploy
+  // (~400k+): the factory holds one implementation, every drop gets a
+  // 45-byte proxy with its own storage. Behaviourally identical contract
+  // (same isWhitelisted/addAddresses/removeAddresses the games consume).
+  if (parameters.WHITELIST_FACTORY_ADDRESS) {
+    const f = new ethers.Contract(
+      parameters.WHITELIST_FACTORY_ADDRESS,
+      [
+        'function createWhitelist() returns (address)',
+        'event WhitelistCloned(address indexed clone)',
+      ],
+      getServerSigner()
+    );
+    const tx = await f.createWhitelist();
+    const receipt = await waitBounded(tx);
+    const ev = receipt.events?.find((e: any) => e.event === 'WhitelistCloned');
+    if (!ev?.args?.clone) throw new Error('clone deployed but no WhitelistCloned event');
+    return ev.args.clone;
+  }
   const factory = new ethers.ContractFactory(
     sageWhitelistJson.abi,
     sageWhitelistJson.bytecode,

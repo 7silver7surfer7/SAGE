@@ -23,6 +23,8 @@ export interface Parameters {
   // SAGE Social pump.fun-style token launchpad + buyer-paid voucher minter.
   // Empty string = feature disabled on this network.
   SOCIAL_TOKEN_FACTORY_ADDRESS: string;
+  // EIP-1167 clone factory for per-drop SageWhitelists; empty = full deploys
+  WHITELIST_FACTORY_ADDRESS: string;
   UNISWAP_FACTORY_ADDRESS: string;
   WETH_ADDRESS: string;
   SAGE_POINTS_ADDRESS: string;

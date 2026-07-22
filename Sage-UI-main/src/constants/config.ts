@@ -61,6 +61,7 @@ const configuration: Configuration = {
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x3297f9CEe3e0858325e826CbFF8FDE04Ee36DC49', // v9: dynamic mcap-tiered fees
+    WHITELIST_FACTORY_ADDRESS: '0x6837736F51e0FF4FE25d2B55195583EcafA9AE2a', // EIP-1167 clones, 2026-07-22
     // chain-wide dex indexer (reads every pair, not just our launches)
     UNISWAP_FACTORY_ADDRESS: '0xDfB9F8A7eF56C39C1eaE28f502b754321A82a625',
     WETH_ADDRESS: '0xC433C2fb24456290625217e297D9C5db1762a82f',
@@ -88,6 +89,7 @@ const configuration: Configuration = {
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x3297f9CEe3e0858325e826CbFF8FDE04Ee36DC49', // v9: dynamic mcap-tiered fees
+    WHITELIST_FACTORY_ADDRESS: '0x6837736F51e0FF4FE25d2B55195583EcafA9AE2a', // EIP-1167 clones, 2026-07-22
     // chain-wide dex indexer (reads every pair, not just our launches)
     UNISWAP_FACTORY_ADDRESS: '0xDfB9F8A7eF56C39C1eaE28f502b754321A82a625',
     WETH_ADDRESS: '0xC433C2fb24456290625217e297D9C5db1762a82f',
@@ -115,6 +117,7 @@ const configuration: Configuration = {
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0x3297f9CEe3e0858325e826CbFF8FDE04Ee36DC49', // v9: dynamic mcap-tiered fees
+    WHITELIST_FACTORY_ADDRESS: '0x6837736F51e0FF4FE25d2B55195583EcafA9AE2a', // EIP-1167 clones, 2026-07-22
     // chain-wide dex indexer (reads every pair, not just our launches)
     UNISWAP_FACTORY_ADDRESS: '0xDfB9F8A7eF56C39C1eaE28f502b754321A82a625',
     WETH_ADDRESS: '0xC433C2fb24456290625217e297D9C5db1762a82f',
@@ -158,6 +161,7 @@ const configuration: Configuration = {
     // prior "audit round 3" factory (0x6a22f664…) is now superseded for new
     // launches but stays live for any token that already graduated on it.
     SOCIAL_TOKEN_FACTORY_ADDRESS: '0xcF7BF8EB756849dc46f7eD26a7D5F4CA17616Cde', // LP-to-treasury, 2026-07-19
+    WHITELIST_FACTORY_ADDRESS: '0xa025C60C8efbC10085AE89CA5e9994385BA44284', // EIP-1167 clones, 2026-07-22
     // chain-wide dex indexer: the canonical Uniswap V2 factory this chain's
     // whole ecosystem trades on (17.5k pairs at index time) + its WETH
     UNISWAP_FACTORY_ADDRESS: '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f',
