@@ -457,9 +457,13 @@ async function attachDropTiming(serialized: any[]): Promise<any[]> {
   return serialized;
 }
 
+// profilePicture is deliberately ABSENT: a handful of users store 75-127KB
+// base64 pfps, and joining them into every post row meant every feed poll
+// re-shipped those blobs from Supabase (a top egress driver — 50GB moved
+// against a 26MB DB). pfpVerifiedMap() hydrates Author.profilePicture from
+// the in-process userCards cache instead, on every serialization path.
 const AUTHOR_SELECT = {
   username: true,
-  profilePicture: true,
   pfpNftId: true,
   verifiedAt: true,
   isAgent: true,
@@ -487,6 +491,23 @@ const postInclude = (viewer?: string | null) => ({
  * and (c) the wallet still owns the NFT (selling it un-verifies).
  */
 async function pfpVerifiedMap(posts: any[]): Promise<Record<string, boolean>> {
+  // Hydrate author avatars from the userCards cache — AUTHOR_SELECT no longer
+  // pulls profilePicture from the DB (see its comment). Runs on EVERY
+  // serialization path, so serializePost keeps reading p.Author.profilePicture
+  // exactly as before, it just arrives from process memory.
+  const addrs = new Set<string>();
+  for (const p of posts) {
+    if (p.Author) addrs.add(p.authorAddress);
+    if (p.Quoted?.Author) addrs.add(p.Quoted.authorAddress);
+  }
+  if (addrs.size) {
+    const cards = await userCards(Array.from(addrs));
+    for (const p of posts) {
+      if (p.Author) p.Author.profilePicture = cards[p.authorAddress]?.profilePicture ?? null;
+      if (p.Quoted?.Author)
+        p.Quoted.Author.profilePicture = cards[p.Quoted.authorAddress]?.profilePicture ?? null;
+    }
+  }
   const authors = new Map<string, { pfpNftId: number | null; profilePicture: string | null }>();
   for (const p of posts) {
     if (p.Author?.pfpNftId) authors.set(p.authorAddress, p.Author);
@@ -1859,6 +1880,7 @@ async function setNftPfp(req: NextApiRequest, res: NextApiResponse, r: { walletA
     where: { walletAddress: r.walletAddress },
     data: { profilePicture: image, pfpNftId: nft.id },
   });
+  userCardCache.delete(r.walletAddress); // card changed — don't serve the stale pfp for 5 min
   res.json({ ok: true, profilePicture: image, pfpVerified: true });
 }
 
@@ -1993,6 +2015,7 @@ async function purchaseVerification(
     where: { walletAddress: r.walletAddress },
     data: { verifiedAt: new Date(), verifiedTxHash: txHash },
   });
+  userCardCache.delete(r.walletAddress); // checkmark just appeared — bust the card cache
   // premium perk: the alpha group chat spins up automatically
   await prisma.socialGroupChat
     .create({ data: { ownerAddress: r.walletAddress } })
@@ -2193,26 +2216,55 @@ async function excludeBanned<T>(rows: T[], addressOf: (r: T) => string): Promise
   return banned.size ? rows.filter((r) => !banned.has(addressOf(r))) : rows;
 }
 
+// Per-user card cache, 5-min TTL. userCards() feeds every surface that shows
+// an avatar (feed, holders, trades tape, leaderboard, token detail), and a
+// handful of users have 75-127KB base64 pfps stored in the User row — without
+// this cache those blobs were re-fetched from Supabase on EVERY render pass
+// and dominated egress (the whole DB is ~26MB; we moved 50GB). Supabase bills
+// DB→server bytes, so serving repeats from process memory is the whole fix.
+// 5 min of staleness on a username/pfp/checkmark change is invisible.
+const userCardCache = new Map<string, { card: any; at: number }>();
+const USER_CARD_TTL = 5 * 60_000;
 async function userCards(addresses: string[]) {
-  const users = await prisma.user.findMany({
-    where: { walletAddress: { in: addresses } },
-    select: {
-      walletAddress: true,
-      username: true,
-      profilePicture: true,
-      verifiedAt: true,
-      isAgent: true,
-    },
-  });
   const map: Record<string, any> = {};
-  for (const u of users)
-    map[u.walletAddress] = {
-      address: u.walletAddress,
-      username: u.username,
-      profilePicture: u.profilePicture,
-      verified: !!u.verifiedAt,
-      isAgent: !!u.isAgent, // sage-mcp AI agent — see AgentBadge.tsx
-    };
+  const now = Date.now();
+  const misses: string[] = [];
+  for (const a of addresses) {
+    const hit = userCardCache.get(a);
+    if (hit && now - hit.at < USER_CARD_TTL) {
+      if (hit.card) map[a] = hit.card;
+    } else {
+      misses.push(a);
+    }
+  }
+  if (misses.length) {
+    const users = await prisma.user.findMany({
+      where: { walletAddress: { in: misses } },
+      select: {
+        walletAddress: true,
+        username: true,
+        profilePicture: true,
+        verifiedAt: true,
+        isAgent: true,
+      },
+    });
+    const found = new Set<string>();
+    for (const u of users) {
+      const card = {
+        address: u.walletAddress,
+        username: u.username,
+        profilePicture: u.profilePicture,
+        verified: !!u.verifiedAt,
+        isAgent: !!u.isAgent, // sage-mcp AI agent — see AgentBadge.tsx
+      };
+      map[u.walletAddress] = card;
+      userCardCache.set(u.walletAddress, { card, at: now });
+      found.add(u.walletAddress);
+    }
+    // negative-cache wallets with no User row (holders lists are full of
+    // them) so they don't re-query every pass
+    for (const a of misses) if (!found.has(a)) userCardCache.set(a, { card: null, at: now });
+  }
   return map;
 }
 
@@ -3654,6 +3706,66 @@ async function getMyTokenHoldings(address: string, res: NextApiResponse) {
 }
 
 /** Paginated holders (trade-derived balances) — the holders column. */
+// Per-token in-memory trade ledger with INCREMENTAL refresh. The ledger is
+// append-only in practice, and its hottest readers (holders verification
+// every 60s, the token detail's chart window + count every rebuild) were
+// re-pulling the same ~8k rows from Supabase over and over — repeated
+// full-table reads of a 4MB table were a top egress line item (~50GB moved
+// against a 26MB database). Now: one full pull per 30 min per instance
+// (safety net for the rare in-place fix, e.g. a trader re-attribution),
+// id > maxSeen deltas in between, everything else served from memory.
+type LedgerRow = {
+  id: number;
+  trader: string;
+  side: string;
+  ethAmount: number;
+  tokenAmount: number;
+  priceEth: number;
+  createdAt: Date;
+};
+const ledgerCache = new Map<string, { rows: LedgerRow[]; maxId: number; fullAt: number }>();
+const ledgerInFlight = new Map<string, Promise<LedgerRow[]>>();
+const LEDGER_FULL_REFRESH_MS = 30 * 60_000;
+const LEDGER_SELECT = {
+  id: true,
+  trader: true,
+  side: true,
+  ethAmount: true,
+  tokenAmount: true,
+  priceEth: true,
+  createdAt: true,
+} as const;
+function tokenLedger(token: string): Promise<LedgerRow[]> {
+  const key = token.toLowerCase();
+  const running = ledgerInFlight.get(key);
+  if (running) return running;
+  const p = (async () => {
+    const now = Date.now();
+    const c = ledgerCache.get(key);
+    if (!c || now - c.fullAt > LEDGER_FULL_REFRESH_MS) {
+      const rows = await prisma.socialTokenTrade.findMany({
+        where: { tokenAddress: token },
+        orderBy: { id: 'asc' },
+        select: LEDGER_SELECT,
+      });
+      ledgerCache.set(key, { rows, maxId: rows.length ? rows[rows.length - 1].id : 0, fullAt: now });
+      return rows;
+    }
+    const fresh = await prisma.socialTokenTrade.findMany({
+      where: { tokenAddress: token, id: { gt: c.maxId } },
+      orderBy: { id: 'asc' },
+      select: LEDGER_SELECT,
+    });
+    if (fresh.length) {
+      c.rows.push(...fresh);
+      c.maxId = fresh[fresh.length - 1].id;
+    }
+    return c.rows;
+  })().finally(() => ledgerInFlight.delete(key));
+  ledgerInFlight.set(key, p);
+  return p;
+}
+
 // Incremental Transfer-recipient indexing (mirrors syncPoolTrades' shape:
 // bounded chunks per sweep, cursor persisted with GREATEST, idempotent
 // inserts). The trade ledger only discovers wallets that traded THROUGH us —
@@ -3757,10 +3869,7 @@ async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: 
   const computeFresh = async () => {
     await syncTransferees(token);
     const [trades, transferees] = await Promise.all([
-      prisma.socialTokenTrade.findMany({
-        where: { tokenAddress: token },
-        select: { trader: true, side: true, tokenAmount: true },
-      }),
+      tokenLedger(token),
       prisma.socialTokenTransferee.findMany({
         where: { tokenAddress: token },
         select: { address: true },
@@ -3834,10 +3943,7 @@ async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: 
       .catch((e) => console.error('holders cold build failed', e))
       .finally(() => holdersRefreshing.delete(key));
   }
-  const trades = await prisma.socialTokenTrade.findMany({
-    where: { tokenAddress: token },
-    select: { trader: true, side: true, tokenAmount: true },
-  });
+  const trades = await tokenLedger(token);
   const nets = new Map<string, number>();
   for (const t of trades) {
     const d = t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
@@ -4291,16 +4397,10 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
     await syncPoolTrades(launch.id, token, curve.pair);
   }
 
-  // last 500 trades, chronological. DESC-then-reverse: with post-graduation
-  // indexing a busy token holds thousands of rows, and taking the FIRST 500
-  // froze the chart at ancient history — the newest trades are the chart.
-  const trades = (
-    await prisma.socialTokenTrade.findMany({
-      where: { tokenAddress: token },
-      orderBy: { id: 'desc' },
-      take: 500,
-    })
-  ).reverse();
+  // last 500 trades, chronological — served from the in-memory ledger cache
+  // (id > maxSeen deltas only); the newest trades are the chart.
+  const ledger = await tokenLedger(token);
+  const trades = ledger.slice(-500);
 
   // live-verified against chain balanceOf (SWR-cached) — ledger-derived nets
   // kept a fully-exited wallet in the top 5 (aggregator-split sell recorded
@@ -4317,19 +4417,11 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
   // market header numbers (pump.fun-style): USD mcap, ATH, 24h change.
   // priceEth is ETH per 1M tokens → mcap = price × 1000 (1B supply) × ETH/USD
   const ethUsd = await boostEthUsd();
-  // TRUE all-time high — an aggregate over the FULL trade ledger, not the
-  // last-500 chart window (which quietly turned "ATH" into "recent high":
-  // SAGE displayed $111k while its real peak was ~$579k). Max'd with the
-  // live spot so a fresh peak shows before its trade row lands.
-  const athPriceEth = Math.max(
-    (
-      await prisma.socialTokenTrade.aggregate({
-        where: { tokenAddress: token },
-        _max: { priceEth: true },
-      })
-    )._max.priceEth ?? 0,
-    curve?.priceEth || 0
-  );
+  // TRUE all-time high — over the FULL ledger (the cache holds every row),
+  // not the last-500 chart window (which quietly turned "ATH" into "recent
+  // high": SAGE displayed $111k while its real peak was ~$579k). Max'd with
+  // the live spot so a fresh peak shows before its trade row lands.
+  const athPriceEth = ledger.reduce((m, t) => Math.max(m, t.priceEth), curve?.priceEth || 0);
   const dayAgo = Date.now() - 24 * 3600 * 1000;
   const before24h = [...trades].reverse().find((t) => +t.createdAt <= dayAgo);
   // baseline: last trade before the 24h window; if the token is younger than
@@ -4365,8 +4457,8 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
     uniswapPair: curve?.pair ?? null,
     bondingProgressPct: Math.round(soldPct * 10) / 10,
     holderCount,
-    // real total — `trades` is the last-500 chart window, not the count
-    tradeCount: await prisma.socialTokenTrade.count({ where: { tokenAddress: token } }),
+    // real total — the ledger cache holds every row, so its length IS the count
+    tradeCount: ledger.length,
     series: trades.map((t) => ({ t: t.createdAt, price: t.priceEth })),
     trades: await (async () => {
       const recent = trades.slice(-30).reverse();
