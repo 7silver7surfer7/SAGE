@@ -28,6 +28,7 @@ const {
   LOTTERY_ADDRESS,
   AUCTION_ADDRESS,
   OPENEDITION_ADDRESS,
+  OPENEDITION_VOUCHER_ADDRESS,
   COLLECTION_ADDRESS,
   NFTFACTORY_ADDRESS,
   MARKETPLACE_ADDRESS,
@@ -92,6 +93,17 @@ export async function getAuctionContract(signer?: Signer): Promise<AuctionContra
 export async function getOpenEditionContract(signer?: Signer): Promise<Contract> {
   return await getContract(
     OPENEDITION_ADDRESS,
+    OpenEditionJson.contractName,
+    OpenEditionJson.abi,
+    signer
+  );
+}
+
+// Same ABI, the voucher-gated OpenEdition address — its extra
+// batchMintWithVoucher/voucherGated members are present in the compiled ABI.
+export async function getOpenEditionVoucherContract(signer?: Signer): Promise<Contract> {
+  return await getContract(
+    OPENEDITION_VOUCHER_ADDRESS,
     OpenEditionJson.contractName,
     OpenEditionJson.abi,
     signer

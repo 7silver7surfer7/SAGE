@@ -211,6 +211,10 @@ model OpenEdition {
   maxPerUser      Int       @default(0) // 0 = unlimited
   mintCount       Int       @default(0) // cached on-chain mint count
   isLive          Boolean   @default(false)
+  // Gas-free gating: when true this edition lives on OPENEDITION_VOUCHER_ADDRESS
+  // and mints ONLY via batchMintWithVoucher (a platform-signed per-wallet
+  // voucher). false = the classic whitelist path on OPENEDITION_ADDRESS.
+  voucherGated    Boolean   @default(false)
   startTime       DateTime
   endTime         DateTime
   Drop            Drop      @relation(fields: [dropId], references: [id])

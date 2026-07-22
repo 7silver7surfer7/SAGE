@@ -20,7 +20,9 @@ import {
   approveERC20Transfer,
   extractErrorMessage,
   getOpenEditionContract,
+  getOpenEditionVoucherContract,
 } from '@/utilities/contracts';
+import { requestGameVoucher } from '@/utilities/gameVoucher';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import { toDecimalString } from '@/utilities/decimalString';
 import useAllowlistGate from '@/hooks/useAllowlistGate';
@@ -149,7 +151,14 @@ export default function MintOpenEditionModal({
     }
     setIsMinting(true);
     try {
-      const contract = await getOpenEditionContract(signer);
+      // voucher-gated editions live on the voucher contract and mint via a
+      // platform-signed per-wallet voucher (no on-chain whitelist, zero server
+      // gas). Everything else — approval, ETH value, post-mint registration —
+      // is identical, so only the contract instance and the mint call change.
+      const isVoucher = openEdition.voucherGated;
+      const contract = isVoucher
+        ? await getOpenEditionVoucherContract(signer)
+        : await getOpenEditionContract(signer);
       const weiTotal = ethers.utils.parseEther(toDecimalString(openEdition.costTokens * quantity));
       // ETH editions carry the payment as msg.value — no ERC-20 approval step
       if (requiresSAGE && !isEthEdition) {
@@ -162,15 +171,29 @@ export default function MintOpenEditionModal({
       // contract on its own. claimPointsAndMint verifies the signed balance
       // from the oracle and claims it on-chain (if not already claimed)
       // before minting, in one transaction.
-      const tx = requiresPoints
-        ? await contract.claimPointsAndMint(
-            openEdition.editionId,
-            quantity,
-            earnedPoints!.totalPointsEarned,
-            earnedPoints!.signedMessage,
-            ethOverrides
-          )
-        : await contract.batchMint(openEdition.editionId, quantity, ethOverrides);
+      let tx;
+      if (isVoucher) {
+        // the server checks eligibility (allowlist / IP-gate / follow-gate) and
+        // signs; the wallet redeems it here, paying only its own gas
+        const v = await requestGameVoucher('oe', openEdition.id);
+        tx = await contract.batchMintWithVoucher(
+          openEdition.editionId,
+          quantity,
+          v.deadline,
+          v.signature,
+          ethOverrides
+        );
+      } else if (requiresPoints) {
+        tx = await contract.claimPointsAndMint(
+          openEdition.editionId,
+          quantity,
+          earnedPoints!.totalPointsEarned,
+          earnedPoints!.signedMessage,
+          ethOverrides
+        );
+      } else {
+        tx = await contract.batchMint(openEdition.editionId, quantity, ethOverrides);
+      }
       const receipt = await tx.wait(1);
       dispatch(
         dropsApi.util.invalidateTags([

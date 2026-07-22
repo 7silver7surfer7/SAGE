@@ -57,6 +57,7 @@ const configuration: Configuration = {
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
     OPENEDITION_ADDRESS: '0x7BaBf8b8043527D7a5dfB50F32dEe97898Db5091', // security fix: spoofable-artist-check redeploy, 2026-07-15
+    OPENEDITION_VOUCHER_ADDRESS: '0x224EC65Cd5F65a60D05399798d05b5D2daFa0705', // voucher-gated OE, 2026-07-22
     COLLECTION_ADDRESS: '0xd592dB71A8f8DBae57d6D6eC5a209E674B36eEc6', // one-tx collection-drop deploy (createCollectionWithNewNft + DedicatedNftDeployer), 2026-07-14
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
@@ -85,6 +86,7 @@ const configuration: Configuration = {
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
     OPENEDITION_ADDRESS: '0x7BaBf8b8043527D7a5dfB50F32dEe97898Db5091', // security fix: spoofable-artist-check redeploy, 2026-07-15
+    OPENEDITION_VOUCHER_ADDRESS: '0x224EC65Cd5F65a60D05399798d05b5D2daFa0705', // voucher-gated OE, 2026-07-22
     COLLECTION_ADDRESS: '0xd592dB71A8f8DBae57d6D6eC5a209E674B36eEc6', // one-tx collection-drop deploy (createCollectionWithNewNft + DedicatedNftDeployer), 2026-07-14
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
@@ -113,6 +115,7 @@ const configuration: Configuration = {
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
     OPENEDITION_ADDRESS: '0x7BaBf8b8043527D7a5dfB50F32dEe97898Db5091', // security fix: spoofable-artist-check redeploy, 2026-07-15
+    OPENEDITION_VOUCHER_ADDRESS: '0x224EC65Cd5F65a60D05399798d05b5D2daFa0705', // voucher-gated OE, 2026-07-22
     COLLECTION_ADDRESS: '0xd592dB71A8f8DBae57d6D6eC5a209E674B36eEc6', // one-tx collection-drop deploy (createCollectionWithNewNft + DedicatedNftDeployer), 2026-07-14
     ASHTOKEN_ADDRESS: '0x5498Ab846Bc64819eB4Fa8c1A76d7DDef594AA0B', // SAGE token (Robinhood testnet deployment)
     SOCIAL_COLLECTS_ADDRESS: '0x78cBa250326a19891f67581e2bD8e0D1A11Eb07e',
@@ -143,6 +146,7 @@ const configuration: Configuration = {
     REWARDS_ADDRESS: '0x652595ffD447513DcA1B5e532618Af60C8791E60',
     AUCTION_ADDRESS: '0x83Eac0DCfd0bC5D52Edf4e631CdDb6C0e6438E03', // same contract — UUPS-upgraded in place with audit fixes, 2026-07-15
     OPENEDITION_ADDRESS: '0x78cA991872839Bfa6223A41039E3895ce8eefF5D', // audit fix: unchecked transferFrom, 2026-07-15
+    OPENEDITION_VOUCHER_ADDRESS: '0xD2145cB292A3570Da725276939D61FC546b8A5c8', // voucher-gated OE (mainnet), 2026-07-22
     COLLECTION_ADDRESS: '0xc9821B48922111fBe9067f4f63bdD0A6599aC81C', // audit fix: was still on the old SAGE token, 2026-07-15. The old address (0x2c25d0...) stays valid forever for collection #1 (sold out 100/100) via its own stored CollectionMint.contractAddress row.
     // New pump.fun-style bonding-curve SAGE token, launched via SocialTokenFactory
     // (creator = the treasury multisig, permanent). Replaces the old fixed-supply

@@ -11,6 +11,10 @@ export interface Parameters {
   LOTTERY_ADDRESS: string;
   AUCTION_ADDRESS: string;
   OPENEDITION_ADDRESS: string;
+  // Voucher-gated OpenEdition (gas-free gating via batchMintWithVoucher).
+  // Empty = feature not deployed on this network; gated drops fall back to
+  // the whitelist path on OPENEDITION_ADDRESS.
+  OPENEDITION_VOUCHER_ADDRESS: string;
   COLLECTION_ADDRESS: string;
   REWARDS_ADDRESS: string;
   ASHTOKEN_ADDRESS: string;
