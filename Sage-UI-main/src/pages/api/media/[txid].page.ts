@@ -35,6 +35,32 @@ import { s3MirrorUrl } from '@/utilities/s3Mirror';
 const CACHE_DIR =
   process.env.MEDIA_CACHE_DIR || path.join(os.tmpdir(), 'arweave-media-cache');
 const TXID_RE = /^[A-Za-z0-9_-]{43}$/; // base64url tx id — also SSRF guard
+
+// SECURITY (audit H2): this proxy serves same-origin bytes whose Content-Type
+// is set by whoever mirrored them (the arweave-mirror S3 PUT does not sign the
+// content-type). Left unguarded, any signed-in wallet could store a text/html
+// object and serve executable HTML/JS on the app origin (stored XSS against a
+// victim's session). We close it at the serving layer — the guarantee, no
+// matter what got uploaded — two ways:
+//   1. Coerce any non-media content-type to an opaque download. Real media
+//      (image/video/audio, SVG, JSON metadata) passes through so <img>/<video>
+//      still render; text/html, xhtml, and application/javascript become
+//      application/octet-stream so the browser never treats them as a document.
+//   2. Every response carries X-Content-Type-Options: nosniff (no MIME
+//      sniffing back to html) and a locked-down CSP (default-src 'none';
+//      sandbox) so even a directly-navigated/iframed object cannot run script,
+//      submit forms, or reach the network.
+const SAFE_MEDIA_TYPE =
+  /^(image\/(png|jpe?g|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon|tiff|svg\+xml)|video\/(mp4|webm|ogg|quicktime|x-m4v|mpeg)|audio\/(mpeg|mp3|ogg|wav|webm|aac|flac|x-m4a)|application\/(json|octet-stream|pdf)|text\/plain)(\s*;.*)?$/i;
+function safeMediaType(type: string): string {
+  return SAFE_MEDIA_TYPE.test((type || '').trim()) ? type : 'application/octet-stream';
+}
+function applyMediaTypeHeaders(res: NextApiResponse, type: string) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  res.setHeader('Content-Type', safeMediaType(type));
+}
 const MAX_BYTES = 200 * 1024 * 1024;
 // Cloud Run caps non-chunked (Content-Length) responses at 32MB; responses at
 // or above this threshold are streamed with chunked transfer-encoding instead
@@ -462,7 +488,7 @@ async function tryColdStream(
   res.status(200);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-  res.setHeader('Content-Type', type);
+  applyMediaTypeHeaders(res, type);
   try {
     for (const buf of prefix) {
       if (!res.write(buf)) await once(res, 'drain');
@@ -510,7 +536,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const { file, type, size } = await getPoster(txid);
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      res.setHeader('Content-Type', type);
+      applyMediaTypeHeaders(res, type);
       if (size < RESPONSE_LENGTH_DECLARE_MAX) res.setHeader('Content-Length', size);
       if (req.method === 'HEAD') {
         res.end();
@@ -566,7 +592,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader('Accept-Ranges', 'bytes');
     // content-addressed: the bytes for a tx id can never change
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.setHeader('Content-Type', type);
+    applyMediaTypeHeaders(res, type);
 
     const range = req.headers.range;
     if (range) {

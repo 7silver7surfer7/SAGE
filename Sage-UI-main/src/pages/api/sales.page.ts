@@ -95,10 +95,61 @@ async function registerSale(body: any, response: NextApiResponse) {
   // succeeded on the configured chain.
   try {
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
-    const receipt = await provider.getTransactionReceipt(txHash);
+    const [receipt, tx] = await Promise.all([
+      provider.getTransactionReceipt(txHash),
+      provider.getTransaction(txHash),
+    ]);
     if (!receipt || receipt.status !== 1) {
       response.status(400).json({ error: 'txHash not found or not a successful transaction' });
       return;
+    }
+    // SECURITY (audit M4): bind the recorded sale to what the tx ACTUALLY did,
+    // so a real-but-unrelated txHash (e.g. a self-transfer) plus an inflated
+    // amountTokens can't forge creator-ranking revenue or admin dashboard
+    // totals. Two checks:
+    //  1. the tx must have interacted with the platform contract for this event
+    //     type (direct target or an emitted log) — kills arbitrary txHashes.
+    const expectedContract: Record<string, string | undefined> = {
+      MARKETPLACE: parameters.MARKETPLACE_ADDRESS,
+      AUCTION: parameters.AUCTION_ADDRESS,
+      LOTTERY: parameters.LOTTERY_ADDRESS,
+    };
+    const platform = expectedContract[String(eventType)];
+    const touched =
+      !!platform &&
+      ((tx?.to && tx.to.toLowerCase() === platform.toLowerCase()) ||
+        receipt.logs.some((l) => l.address.toLowerCase() === platform!.toLowerCase()));
+    if (!touched) {
+      response.status(400).json({ error: 'txHash did not interact with the expected sale contract' });
+      return;
+    }
+    //  2. the claimed token amount can't exceed the value that actually moved in
+    //     the tx (native value + SAGE Transfer logs). Only enforced for priced
+    //     sales; a 5% slack absorbs rounding while still rejecting order-of-
+    //     magnitude inflation. Parse failures skip the bound (never false-reject).
+    if (amountTokens !== undefined && Number(amountTokens) > 0) {
+      let claimedWei: ethers.BigNumber | null = null;
+      try {
+        claimedWei = ethers.utils.parseEther(String(amountTokens));
+      } catch {
+        claimedWei = null;
+      }
+      if (claimedWei) {
+        let movedWei = tx?.value ? ethers.BigNumber.from(tx.value) : ethers.BigNumber.from(0);
+        const transferTopic = ethers.utils.id('Transfer(address,address,uint256)');
+        const sageToken = parameters.ASHTOKEN_ADDRESS.toLowerCase();
+        for (const l of receipt.logs) {
+          if (l.address.toLowerCase() === sageToken && l.topics[0] === transferTopic && l.data && l.data !== '0x') {
+            try {
+              movedWei = movedWei.add(ethers.BigNumber.from(l.data));
+            } catch {}
+          }
+        }
+        if (claimedWei.gt(movedWei.mul(105).div(100))) {
+          response.status(400).json({ error: 'claimed amount exceeds the value moved on-chain' });
+          return;
+        }
+      }
     }
   } catch (e) {
     console.log(e);

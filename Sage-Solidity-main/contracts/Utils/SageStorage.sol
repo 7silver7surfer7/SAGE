@@ -29,8 +29,16 @@ contract SageStorage is ISageStorage, AccessControl {
     /// @dev Construct
     constructor(address _admin, address _multisig) {
         multisig = _multisig;
+        // SECURITY (audit H1): DEFAULT_ADMIN_ROLE is the role-admin of every
+        // operational role (MINTER/BURNER/ADMIN/MANAGE_POINTS), so whoever holds
+        // it can grantRole itself MINTER on every SageNFT — and revokeRole the
+        // multisig. The multisig is the SOLE custodian of DEFAULT_ADMIN_ROLE;
+        // the operational key (_admin, the server-side oracle wallet) must get
+        // only ADMIN_ROLE, never DEFAULT_ADMIN_ROLE. (Previously _admin was also
+        // granted DEFAULT_ADMIN_ROLE here, letting the hot key take over the
+        // whole platform — see scripts/revoke_admin_default_admin_role.js for
+        // the fix on already-deployed instances.)
         _setupRole(DEFAULT_ADMIN_ROLE, _multisig);
-        _setupRole(DEFAULT_ADMIN_ROLE, _admin);
         _setupRole(ADMIN_ROLE, _admin);
         _setRoleAdmin(ARTIST_ROLE, ADMIN_ROLE);
     }

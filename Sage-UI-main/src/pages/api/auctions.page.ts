@@ -1,8 +1,10 @@
 import { NextApiRequest, NextApiResponse } from 'next';
+import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
 import { getRequester } from '@/utilities/apiAuth';
 import { getUnclaimedAuctionWinner } from '@/utilities/contracts';
-import { isEthCurrency } from '@/constants/config';
+import { isEthCurrency, parameters } from '@/constants/config';
+import AuctionJson from '@/constants/abis/Auction/Auction.sol/Auction.json';
 import { Auction_include_Nft, GamePrize, User, Drop } from '@/prisma/types';
 
 interface FlattenArgs {
@@ -190,6 +192,25 @@ async function getUnclaimedAuctionNfts(walletAddress: string, response: NextApiR
   }
 }
 
+// Reads the auction's CURRENT top bid straight from chain (audit M3), so a bid
+// row can never be fabricated. Returns null if the read fails.
+async function getOnChainTopBid(
+  auctionId: number
+): Promise<{ bidder: string; bid: ethers.BigNumber } | null> {
+  try {
+    const provider = new ethers.providers.StaticJsonRpcProvider(
+      parameters.RPC_URL,
+      Number(parameters.CHAIN_ID)
+    );
+    const contract = new ethers.Contract(parameters.AUCTION_ADDRESS, AuctionJson.abi, provider);
+    const s = await contract.getAuction(auctionId);
+    return { bidder: s.highestBidder, bid: s.highestBid };
+  } catch (e) {
+    console.log('getOnChainTopBid error', e);
+    return null;
+  }
+}
+
 async function saveBid(
   bidderAddress: string,
   auctionId: number,
@@ -202,12 +223,29 @@ async function saveBid(
     response.status(401).end('Not Authenticated');
     return;
   }
-  if (isNaN(auctionId) || isNaN(amount) || isNaN(blockTimestamp)) {
+  if (isNaN(auctionId) || isNaN(blockTimestamp)) {
     response.status(500);
     return;
   }
+  // SECURITY (audit M3): never trust the client-supplied bid. Read the auction's
+  // current top bid from chain — the caller must actually BE the current highest
+  // bidder, and we record the on-chain bid amount, not the number they sent.
+  // This makes fabricated / inflated bid rows impossible (previously any signed-
+  // in wallet could POST an arbitrary amount to manufacture FOMO).
+  const top = await getOnChainTopBid(auctionId);
+  if (!top) {
+    response.status(502).json({ error: 'could not read auction state on-chain' });
+    return;
+  }
+  if (!top.bidder || top.bidder.toLowerCase() !== bidderAddress.toLowerCase()) {
+    response.status(403).json({ error: 'not the current highest bidder for this auction' });
+    return;
+  }
+  // ETH and SAGE are both 18-decimal on Robinhood Chain, so formatEther is the
+  // correct unit conversion for either auction currency.
+  const onChainAmount = Number(ethers.utils.formatEther(top.bid));
   await prisma.bidHistory.create({
-    data: { auctionId, amount, bidderAddress, blockTimestamp },
+    data: { auctionId, amount: onChainAmount, bidderAddress, blockTimestamp },
   });
   await new Promise((r) => setTimeout(r, 500)); // give it a split second before finishing the request
   response.status(200);
