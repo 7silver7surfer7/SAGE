@@ -513,6 +513,7 @@ async function insertDrop(data: any, response: NextApiResponse) {
         royaltyPercentage,
         currency,
         ipGateEnabled: data.ipGateEnabled === true || data.ipGateEnabled === 'true',
+        voucherGating: data.voucherGating === true || data.voucherGating === 'true',
         // the self-serve social launcher always uploads to Filebase — the
         // one signal that already exists to tell it apart from an
         // admin-curated marketplace drop (Arweave)

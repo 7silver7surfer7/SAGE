@@ -50,6 +50,7 @@ export default function CreateDropPanel() {
   const [allowlistEnabled, setAllowlistEnabled] = useState(false);
   const [allowlistText, setAllowlistText] = useState('');
   const [ipGateEnabled, setIpGateEnabled] = useState(false);
+  const [voucherGating, setVoucherGating] = useState(false);
   const [royaltyPercentage, setRoyaltyPercentage] = useState(12);
   // payment currency for every game in this drop; baked on-chain at deploy
   const [currency, setCurrency] = useState<'SAGE' | 'ETH'>('SAGE');
@@ -204,6 +205,7 @@ export default function CreateDropPanel() {
       signer: approveNow ? (signer as any) : undefined,
       allowlist,
       ipGateEnabled,
+      voucherGating,
       royaltyPercentage,
       currency,
       collection:
@@ -685,6 +687,16 @@ export default function CreateDropPanel() {
             />
             limit one mint per IP address — minters claim a spot before minting
             (bot speed bump; VPN users can still rotate)
+          </label>
+          <label className='create-drop-panel__checkbox-label'>
+            <input
+              type='checkbox'
+              checked={voucherGating}
+              onChange={(e) => setVoucherGating(e.target.checked)}
+            />
+            gas-free gating — for gated OPEN EDITIONS, skip the on-chain
+            whitelist; eligible minters get a signed voucher and pay their own
+            gas (the platform pays nothing). Lotteries still use the whitelist.
           </label>
           <label className='create-drop-panel__checkbox-label'>
             <input

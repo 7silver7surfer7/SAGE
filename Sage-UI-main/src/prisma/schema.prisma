@@ -68,6 +68,13 @@ model Drop {
   // SAGE Social follow gate: when on, anyone who follows this drop's artist
   // on SAGE Social is auto-added to the drop's allowlist (DB + on-chain).
   followGateEnabled                Boolean     @default(false)
+  // Gas-free gating (opt-in): when true, the drop's games deploy on the
+  // VOUCHER contracts (voucherGated=true) instead of a per-drop SageWhitelist.
+  // Eligibility (allowlist / IP-gate / follow-gate) still populates
+  // DropAllowlistEntry, but nothing is written on-chain — the server signs a
+  // per-wallet voucher at mint time and the minter redeems it themselves.
+  // Zero platform gas. Default false = the classic whitelist path.
+  voucherGating                    Boolean     @default(false)
   NftContract                      NftContract @relation("ContractDrops", fields:[artistAddress], references: [artistAddress])
   ApprovedByUser                   User?       @relation("Drop_approvedByToUser", fields: [approvedBy], references: [walletAddress])
   Auctions                         Auction[]

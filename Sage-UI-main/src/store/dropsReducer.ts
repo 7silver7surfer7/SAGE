@@ -9,6 +9,7 @@ import {
   getLotteryContract,
   getNFTContract,
   getOpenEditionContract,
+  getOpenEditionVoucherContract,
 } from '@/utilities/contracts';
 import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.json';
 import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
@@ -93,6 +94,9 @@ export interface CreateDropRequest {
    *  (salted-IP dedup) which whitelists the wallet on-chain. Sybil speed
    *  bump, not a wall. */
   ipGateEnabled?: boolean;
+  /** Gas-free gating: gated open editions deploy on the voucher contract and
+   *  mint via a signed voucher instead of an on-chain whitelist. */
+  voucherGating?: boolean;
   /** Custom ERC-721 ticker/symbol for this drop's NFT contract. For Open
    *  Edition/Auction this only takes effect the FIRST time this artist's
    *  shared contract deploys (immutable after — ignored on later drops); for
@@ -225,6 +229,7 @@ export const dropsApi = baseApi.injectEndpoints({
                 royaltyPercentage: req.royaltyPercentage,
                 currency: req.currency || 'SAGE',
                 ipGateEnabled: !!req.ipGateEnabled,
+                voucherGating: !!req.voucherGating,
                 storage: req.storage || 'arweave',
                 nftSymbol: req.nftSymbol,
               },
@@ -708,9 +713,19 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   // Gated drop? Deploy its SageWhitelist + push the addresses BEFORE the games,
   // so lotteries/open editions can be wired to it at creation. Ungated drops
   // get AddressZero — identical to the pre-allowlist behavior.
-  const whitelistAddress = await deployStep('allowlist contract', () =>
-    deployAndSyncAllowlist(drop, signer, fetchWithBQ)
-  );
+  //
+  // Voucher-gating (opt-in, gas-free): the open editions deploy on the voucher
+  // contract instead (see deployOpenEditions), so they need no whitelist. Skip
+  // the whitelist entirely UNLESS the drop also has lotteries or collection
+  // mints, which still use the on-chain list (their voucher path isn't wired
+  // yet). Auctions are UI-gated and never needed the whitelist.
+  const needsWhitelist =
+    !(drop as any).voucherGating ||
+    (drop.Lotteries?.length ?? 0) > 0 ||
+    (drop.CollectionMints?.length ?? 0) > 0;
+  const whitelistAddress = needsWhitelist
+    ? await deployStep('allowlist contract', () => deployAndSyncAllowlist(drop, signer, fetchWithBQ))
+    : ethers.constants.AddressZero;
   await deployStep('auctions', () =>
     deployAuctions(drop, artistNftContractAddress, signer, fetchWithBQ)
   );
@@ -1771,8 +1786,14 @@ async function deployOpenEditions(
 ) {
   const toDeploy = drop.OpenEditions.filter((oe) => !oe.contractAddress);
   if (toDeploy.length === 0) return;
-  console.log(`deployOpenEditions() :: Deploying ${toDeploy.length} open edition(s)...`);
-  const openEditionContract = await getOpenEditionContract(signer);
+  // gas-free gating: this drop's editions live on the voucher contract and
+  // mint via a signed voucher (no whitelist). whitelistAddress is already
+  // AddressZero here for a voucher-only drop.
+  const isVoucher = !!(drop as any).voucherGating;
+  console.log(`deployOpenEditions() :: Deploying ${toDeploy.length} open edition(s)${isVoucher ? ' (voucher-gated)' : ''}...`);
+  const openEditionContract = isVoucher
+    ? await getOpenEditionVoucherContract(signer)
+    : await getOpenEditionContract(signer);
   for (const oe of toDeploy) {
     const startTime = Math.floor(new Date(oe.startTime).getTime() / 1000);
     const closeTime = Math.floor(new Date(oe.endTime).getTime() / 1000);
@@ -1800,14 +1821,17 @@ async function deployOpenEditions(
         nftUri: oe.Nft.metadataPath,
         nftContract: artistNftContractAddress,
         // AddressZero = ungated; a gated drop passes its SageWhitelist so the
-        // contract enforces the allowlist on every mint path
+        // contract enforces the allowlist on every mint path. A voucher-gated
+        // edition uses AddressZero here and closes the open path with the
+        // voucherGated flag instead (ignored by the legacy 11-field ABI).
         whitelist: whitelistAddress,
         costTokens,
         currency: currencyAddressFor((drop as any).currency),
+        voucherGated: isVoucher,
       });
       await tx.wait();
     }
-    const params = `id=${oe.id}&address=${openEditionContract.address}`;
+    const params = `id=${oe.id}&address=${openEditionContract.address}&voucherGated=${isVoucher}`;
     await fetchWithBQ(`drops?action=UpdateOpenEditionContractAddress&${params}`);
     if ((drop as any).isSocial) {
       try {

@@ -199,7 +199,12 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       await updateLotteryContractAddress(Number(id), address as string, response);
       break;
     case 'UpdateOpenEditionContractAddress':
-      await updateOpenEditionContractAddress(Number(id), address as string, response);
+      await updateOpenEditionContractAddress(
+        Number(id),
+        address as string,
+        request.query.voucherGated === 'true',
+        response
+      );
       break;
     case 'UpdateCollectionContractAddress':
       await updateCollectionContractAddress(Number(id), address as string, response);
@@ -512,15 +517,16 @@ async function updateLotteryContractAddress(
 async function updateOpenEditionContractAddress(
   id: number,
   contractAddress: string,
+  voucherGated: boolean,
   response: NextApiResponse
 ) {
-  console.log(`updateOpenEditionContractAddress(${id}, ${contractAddress})`);
+  console.log(`updateOpenEditionContractAddress(${id}, ${contractAddress}, voucher=${voucherGated})`);
   try {
     // the on-chain OpenEdition struct's `id` is this row's DB id (see
     // deployOpenEditions in dropsReducer.ts), so editionId == id once deployed
     const result = await prisma.openEdition.update({
       where: { id },
-      data: { contractAddress, editionId: id },
+      data: { contractAddress, editionId: id, voucherGated },
     });
     response.json(result);
   } catch (e) {
