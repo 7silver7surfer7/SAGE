@@ -197,6 +197,10 @@ model Lottery {
   maxTickets                  Int        @default(0)
   maxTicketsPerUser           Int        @default(0)
   whitelistId                 Int?
+  // Gas-free gating: when true, this lottery has voucherGated=true set on-chain
+  // and tickets are bought via buyTicketsWithVoucher (a signed per-wallet
+  // voucher) instead of the whitelist. false = the classic whitelist path.
+  voucherGated                Boolean    @default(false)
   prizesAwardedAt             DateTime?
   endTime                     DateTime
   startTime                   DateTime

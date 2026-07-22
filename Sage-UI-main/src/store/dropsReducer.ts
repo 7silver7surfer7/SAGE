@@ -714,15 +714,12 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   // so lotteries/open editions can be wired to it at creation. Ungated drops
   // get AddressZero — identical to the pre-allowlist behavior.
   //
-  // Voucher-gating (opt-in, gas-free): the open editions deploy on the voucher
-  // contract instead (see deployOpenEditions), so they need no whitelist. Skip
-  // the whitelist entirely UNLESS the drop also has lotteries or collection
-  // mints, which still use the on-chain list (their voucher path isn't wired
-  // yet). Auctions are UI-gated and never needed the whitelist.
+  // Voucher-gating (opt-in, gas-free): open editions AND lotteries both take
+  // the voucher path (voucherGated set on-chain), so they need no whitelist.
+  // Skip the whitelist entirely UNLESS the drop has collection mints, whose
+  // voucher path isn't wired yet. Auctions are UI-gated and never needed it.
   const needsWhitelist =
-    !(drop as any).voucherGating ||
-    (drop.Lotteries?.length ?? 0) > 0 ||
-    (drop.CollectionMints?.length ?? 0) > 0;
+    !(drop as any).voucherGating || (drop.CollectionMints?.length ?? 0) > 0;
   const whitelistAddress = needsWhitelist
     ? await deployStep('allowlist contract', () => deployAndSyncAllowlist(drop, signer, fetchWithBQ))
     : ethers.constants.AddressZero;
@@ -1714,6 +1711,7 @@ async function deployLotteries(
   fetchWithBQ: any,
   whitelistAddress: string = ethers.constants.AddressZero
 ) {
+  const isVoucher = !!(drop as any).voucherGating;
   const createParams = [];
   for (const l of drop.Lotteries) {
     if (l.contractAddress) {
@@ -1756,16 +1754,27 @@ async function deployLotteries(
       await tx.wait();
     }
     for (const { lotteryID } of createParams) {
-      const params = `id=${lotteryID}&address=${lotteryContract.address}`;
+      const params = `id=${lotteryID}&address=${lotteryContract.address}&voucherGated=${isVoucher}`;
       await fetchWithBQ(`drops?action=UpdateLotteryContractAddress&${params}`);
     }
   }
   // Gate pass — separate from the create loop above on purpose: LotteryInfo has
-  // no whitelist field, so gating needs a setWhitelist call per lottery. Iterate
-  // ALL of the drop's lotteries (not just freshly-created ones) and skip those
-  // already pointed at the contract, so a re-run after an interruption wires
-  // lotteries the create loop skipped.
-  if (whitelistAddress !== ethers.constants.AddressZero) {
+  // no whitelist field, so gating needs a per-lottery call. Iterate ALL of the
+  // drop's lotteries (not just freshly-created ones) and skip those already
+  // gated, so a re-run after an interruption wires lotteries the create loop
+  // skipped. Voucher-gating: setVoucherGated(id, true) instead of setWhitelist —
+  // the lottery becomes buyable ONLY via buyTicketsWithVoucher (zero server gas,
+  // no whitelist contract).
+  if (isVoucher) {
+    // cast: the refreshed runtime ABI has these, but typechain types lag
+    const lotteryContract = (await getLotteryContract(signer)) as any;
+    for (const l of drop.Lotteries) {
+      if (await lotteryContract.voucherGated(l.id)) continue;
+      console.log(`deployLotteries() :: setVoucherGated(${l.id}, true)`);
+      const vtx = await lotteryContract.setVoucherGated(l.id, true);
+      await vtx.wait();
+    }
+  } else if (whitelistAddress !== ethers.constants.AddressZero) {
     const lotteryContract = await getLotteryContract(signer);
     for (const l of drop.Lotteries) {
       const current = await lotteryContract.getWhitelist(l.id);

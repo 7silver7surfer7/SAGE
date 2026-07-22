@@ -188,6 +188,7 @@ function GetTicketModal({
         ticketCostTokens: getPriceCoins().toString(),
         signer: signer as Signer,
         earnedPoints: earnedPoints,
+        voucherGated: (lottery as any).voucherGated,
       };
       await buyTickets(request);
     } catch (e) {

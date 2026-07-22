@@ -196,7 +196,12 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       await updateAuctionContractAddress(Number(id), address as string, response);
       break;
     case 'UpdateLotteryContractAddress':
-      await updateLotteryContractAddress(Number(id), address as string, response);
+      await updateLotteryContractAddress(
+        Number(id),
+        address as string,
+        request.query.voucherGated === 'true',
+        response
+      );
       break;
     case 'UpdateOpenEditionContractAddress':
       await updateOpenEditionContractAddress(
@@ -499,13 +504,14 @@ async function updateAuctionContractAddress(
 async function updateLotteryContractAddress(
   id: number,
   contractAddress: string,
+  voucherGated: boolean,
   response: NextApiResponse
 ) {
-  console.log(`updateLotteryContractAddress(${id}, ${contractAddress})`);
+  console.log(`updateLotteryContractAddress(${id}, ${contractAddress}, voucher=${voucherGated})`);
   try {
     const result = await prisma.lottery.update({
       where: { id },
-      data: { contractAddress },
+      data: { contractAddress, voucherGated },
     });
     response.json(result);
   } catch (e) {

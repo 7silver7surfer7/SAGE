@@ -5,6 +5,7 @@ import {
   extractErrorMessage,
   getLotteryContract,
 } from '@/utilities/contracts';
+import { requestGameVoucher } from '@/utilities/gameVoucher';
 import { BigNumber, ContractTransaction, ethers, Signer } from 'ethers';
 import { toast } from 'react-toastify';
 import { pointsApi } from './pointsReducer';
@@ -22,6 +23,9 @@ export interface BuyTicketRequest {
   ticketCostPoints: string;
   signer: Signer;
   earnedPoints: GetEarnedPointsResponse;
+  // gas-free gating: buy via a server-signed voucher (buyTicketsWithVoucher)
+  // instead of the whitelist path
+  voucherGated?: boolean;
 }
 
 export interface TicketCountMap {
@@ -67,7 +71,7 @@ const lotteriesApi = baseApi.injectEndpoints({
     ),
     buyTickets: builder.mutation<boolean, BuyTicketRequest>({
       queryFn: async (
-        { lotteryId, numTickets, ticketCostPoints, ticketCostTokens, signer, earnedPoints },
+        { lotteryId, numTickets, ticketCostPoints, ticketCostTokens, signer, earnedPoints, voucherGated },
         { dispatch }
       ) => {
         const purchaseCostTokens = BigNumber.from(numTickets).mul(ticketCostTokens);
@@ -98,7 +102,20 @@ const lotteriesApi = baseApi.injectEndpoints({
         }
         const ethValue = isEthLottery ? purchaseCostTokens : undefined;
         try {
-          if (purchaseCostPoints) {
+          if (voucherGated) {
+            // gas-free gating: the server checks eligibility and signs; the
+            // buyer redeems the voucher themselves, paying only their own gas
+            const v = await requestGameVoucher('lottery', lotteryId);
+            // cast: refreshed runtime ABI has buyTicketsWithVoucher; types lag
+            const contract = (await getLotteryContract(signer)) as any;
+            var tx = (await contract.buyTicketsWithVoucher(
+              lotteryId,
+              numTickets,
+              v.deadline,
+              v.signature,
+              ethValue ? { value: ethValue } : {}
+            )) as ContractTransaction;
+          } else if (purchaseCostPoints) {
             dispatch(pointsApi.endpoints.withholdEscrowPoints.initiate(purchaseCostPoints));
             var tx = await buyTicketsUsingPoints(signer, lotteryId, numTickets, earnedPoints, ethValue);
           } else {
