@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Activate voucher-gated games</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 760px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px; padding: 18px 20px; margin: 16px 0; }
+  .card h2 { margin: 0 0 6px; font-size: 1.05rem; }
+  .card p.desc { margin: 0 0 10px; font-size: .88rem; opacity: .8; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: .88rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82em; word-break: break-all; }
+  button { font-size: 1rem; padding: 11px 18px; border-radius: 10px; border: 0; background: #0c9d68; color: #fff; cursor: pointer; margin-top: 8px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 12px; padding: 11px 13px; border-radius: 8px; background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .87rem; }
+  .warn { color: #b45309; } .err { color: #dc2626; } .ok { color: #0c9d68; }
+</style>
+</head>
+<body>
+  <h1>Activate voucher-gated games 🎟️</h1>
+  <p class="sub">Two multisig actions that switch the gas-free voucher paths on for future gated
+  drops. Existing drops are untouched. Sign with the multisig
+  (<code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code>).</p>
+
+  <button id="connectBtn">connect wallet</button>
+  <div class="row"><span>Connected</span><code id="connected">not connected</code></div>
+
+  <div class="card">
+    <h2>1 · Grant the voucher OpenEdition minting rights</h2>
+    <p class="desc">grantRole(role.minter, OE) on SageStorage. Lets the new open-edition contract
+    mint when a collector redeems a signed voucher (they pay their own gas).</p>
+    <div class="row"><span>OpenEdition (voucher)</span><code>0xD2145cB292A3570Da725276939D61FC546b8A5c8</code></div>
+    <button id="grantBtn" disabled>grant role.minter</button>
+    <div class="status" id="grantStatus">Connect the multisig first.</div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Upgrade the Lottery to the voucher implementation</h2>
+    <p class="desc">upgradeTo(newImpl) on the live Lottery proxy (UUPS). Adds buyTicketsWithVoucher +
+    the voucherGated flag; every existing lottery keeps working unchanged (storage was validated
+    append-only). No re-initialization.</p>
+    <div class="row"><span>Lottery proxy</span><code>0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54</code></div>
+    <div class="row"><span>New implementation</span><code>0xC433C2fb24456290625217e297D9C5db1762a82f</code></div>
+    <button id="upgradeBtn" disabled>upgrade lottery</button>
+    <div class="status" id="upgradeStatus">Connect the multisig first.</div>
+  </div>
+
+<script>
+  const CHAIN_ID = '0x1237'; // 4663
+  const MULTISIG = '0x3e099af007cab8233d44782d8e6fe80fecdc321e';
+  const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
+  const ROLE_MINTER = '43c12360602d49748153591f2df5a853821ec8410115f225b90a7a49bd5d2bb9';
+  const OE = '0xD2145cB292A3570Da725276939D61FC546b8A5c8';
+  const LOTTERY_PROXY = '0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54';
+  const LOTTERY_IMPL = '0xC433C2fb24456290625217e297D9C5db1762a82f';
+  const GRANT_SEL = '0x2f2ff15d';   // grantRole(bytes32,address)
+  const HASROLE_SEL = '0x91d14854'; // hasRole(bytes32,address)
+  const UPGRADE_SEL = '0x3659cfe6'; // upgradeTo(address)
+
+  const $ = (id) => document.getElementById(id);
+  let account = null;
+  const pad = (a) => a.toLowerCase().replace('0x', '').padStart(64, '0');
+
+  $('connectBtn').onclick = async () => {
+    if (!window.ethereum) { alert('MetaMask not found'); return; }
+    const cid = await ethereum.request({ method: 'eth_chainId' });
+    if (cid.toLowerCase() !== CHAIN_ID) {
+      try { await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] }); }
+      catch { alert('Switch to Robinhood Chain mainnet (4663)'); return; }
+    }
+    account = (await ethereum.request({ method: 'eth_requestAccounts' }))[0];
+    $('connected').textContent = account;
+    const wrong = account.toLowerCase() !== MULTISIG;
+    for (const [b, s] of [['grantBtn','grantStatus'],['upgradeBtn','upgradeStatus']]) {
+      $(b).disabled = false;
+      $(s).innerHTML = wrong ? '<span class="warn">Not the multisig — this will revert. Switch accounts.</span>' : 'Ready.';
+    }
+  };
+
+  async function send(to, data, statusEl, okMsg) {
+    $(statusEl).textContent = 'Sending…';
+    try {
+      const h = await ethereum.request({ method: 'eth_sendTransaction', params: [{ from: account, to, data }] });
+      $(statusEl).textContent = 'Sent: ' + h + '\nWaiting…';
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const rc = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [h] });
+        if (rc) { $(statusEl).innerHTML = rc.status === '0x1' ? '<span class="ok">' + okMsg + '</span>' : '<span class="err">Reverted — connected as the multisig?</span>'; return; }
+      }
+      $(statusEl).innerHTML = '<span class="warn">Still pending: ' + h + '</span>';
+    } catch (e) { $(statusEl).innerHTML = '<span class="err">' + (e.message || e) + '</span>'; }
+  }
+
+  $('grantBtn').onclick = async () => {
+    $('grantBtn').disabled = true;
+    const already = await ethereum.request({ method: 'eth_call', params: [{ to: STORAGE, data: HASROLE_SEL + ROLE_MINTER + pad(OE) }, 'latest'] });
+    if (already && already.endsWith('1')) { $('grantStatus').innerHTML = '<span class="ok">Already granted.</span>'; return; }
+    await send(STORAGE, GRANT_SEL + ROLE_MINTER + pad(OE), 'grantStatus', 'Granted ✓ — voucher OpenEdition can mint.');
+    $('grantBtn').disabled = false;
+  };
+  $('upgradeBtn').onclick = async () => {
+    $('upgradeBtn').disabled = true;
+    await send(LOTTERY_PROXY, UPGRADE_SEL + pad(LOTTERY_IMPL), 'upgradeStatus', 'Upgraded ✓ — buyTicketsWithVoucher is live; existing lotteries unaffected.');
+    $('upgradeBtn').disabled = false;
+  };
+</script>
+</body>
+</html>
