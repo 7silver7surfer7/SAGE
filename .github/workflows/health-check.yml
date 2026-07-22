@@ -1,0 +1,41 @@
+name: Production health check
+
+# Lightweight uptime + liveness alerting: GitHub emails the repo owner when a
+# workflow run fails, so a failing check IS the alert — no external service,
+# no signup, no secrets. Catches the silent failure modes that matter most on
+# the free-tier setup:
+#  - site down / Cloud Run broken (homepage)
+#  - DB unreachable or PAUSED (feed reads Postgres; Supabase free pauses a
+#    project after 7 idle days — sustained failure here is the early warning)
+#  - pixels keeper dead (SyncPixelBank must answer in db mode)
+# Each check retries once after 30s so a single transient blip doesn't page.
+on:
+  schedule:
+    - cron: '7,37 * * * *' # twice an hour, off the minute-zero stampede
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Homepage
+        run: |
+          for i in 1 2; do
+            code=$(curl -sL -o /dev/null -w "%{http_code}" --max-time 30 "https://sageart.xyz/") && [ "$code" = "200" ] && exit 0
+            echo "attempt $i: HTTP ${code:-timeout}"; sleep 30
+          done
+          echo "::error::homepage unhealthy"; exit 1
+      - name: Feed (exercises the database)
+        run: |
+          for i in 1 2; do
+            body=$(curl -sL --max-time 30 "https://sageart.xyz/api/social/?action=GetFeed&scope=global") && echo "$body" | grep -q '"posts"' && exit 0
+            echo "attempt $i: ${body:0:120}"; sleep 30
+          done
+          echo "::error::feed/database unhealthy — if this persists, check whether the Supabase project is paused"; exit 1
+      - name: Pixels keeper endpoint
+        run: |
+          for i in 1 2; do
+            body=$(curl -sL --max-time 120 "https://sageart.xyz/api/social/?action=SyncPixelBank") && echo "$body" | grep -q '"mode":"db"' && exit 0
+            echo "attempt $i: ${body:0:120}"; sleep 30
+          done
+          echo "::error::pixels ledger not answering in db mode"; exit 1
