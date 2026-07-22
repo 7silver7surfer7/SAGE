@@ -1333,29 +1333,18 @@ async function syncFollowerIntoGatedDrops(artist: string, follower: string): Pro
   });
   const granted: string[] = [];
   for (const d of drops) {
-    try {
-      let syncedAt: Date | null = null;
-      if (!(await isWhitelistedOnChain(d.whitelistContractAddress!, follower))) {
-        await addToWhitelistOnChain(d.whitelistContractAddress!, [follower]);
-      }
-      syncedAt = new Date();
-      await prisma.dropAllowlistEntry.upsert({
-        where: { dropId_address: { dropId: d.id, address: follower.toLowerCase() } },
-        update: { syncedAt },
-        create: { dropId: d.id, address: follower.toLowerCase(), syncedAt },
-      });
-      granted.push(d.name);
-    } catch (e) {
-      console.error(`follow-gate sync failed for drop ${d.id}`, e);
-      // keep the ledger truthful even when the chain write failed
-      await prisma.dropAllowlistEntry
-        .upsert({
-          where: { dropId_address: { dropId: d.id, address: follower.toLowerCase() } },
-          update: {},
-          create: { dropId: d.id, address: follower.toLowerCase() },
-        })
-        .catch(() => {});
-    }
+    // ENQUEUE ONLY — no per-follow transaction. The old flow sent one
+    // addAddresses tx (plus an isWhitelisted read) for EVERY follow of a
+    // gated artist; pending entries (syncedAt: null) now flush in ONE
+    // batched tx per drop via flushDropAllowlist — triggered by drop-page
+    // views and the 10-min cron, so a follower is on-chain within seconds
+    // of anyone looking at the drop, minutes worst-case.
+    await prisma.dropAllowlistEntry.upsert({
+      where: { dropId_address: { dropId: d.id, address: follower.toLowerCase() } },
+      update: {},
+      create: { dropId: d.id, address: follower.toLowerCase() },
+    });
+    granted.push(d.name);
   }
   return granted;
 }

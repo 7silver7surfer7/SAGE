@@ -3,6 +3,7 @@ import { Nft, Prisma, Role } from '@prisma/client';
 import { readPresetDropsFromS3, uploadBufferToS3 } from '@/utilities/awsS3-server';
 import { deleteFromS3Mirror } from '@/utilities/s3Mirror';
 import { isVideoSrc } from '@/utilities/media';
+import { flushDropAllowlist, flushAllPendingAllowlists } from '@/utilities/allowlistFlush';
 import { PresetDrop } from '@/store/dropsReducer';
 import { withArtistDisplayNameOverride } from '@/prisma/functions';
 import { requireRole } from '@/utilities/apiAuth';
@@ -67,6 +68,17 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
   const {
     query: { action, id, address },
   } = request;
+  // Unauthenticated cron poke (the SyncPixelBank pattern — CI holds no
+  // credentials): flush every gated drop's pending follow-gate entries in one
+  // batched tx per drop. Must run BEFORE the role gate: everything below
+  // requires a session, and this is invoked by a bare curl on a schedule.
+  // Safe unauthenticated — it can only push the DB's own allowlist ledger
+  // on-chain (idempotent), never modify it.
+  if (action === 'SyncAllowlists') {
+    const r = await flushAllPendingAllowlists();
+    response.json(r);
+    return;
+  }
   const allowedRoles = ACTION_ROLES[String(action)];
   if (!allowedRoles) {
     response.status(400).end('Bad Request');
@@ -275,6 +287,10 @@ async function getDropsPendingApproval(response: NextApiResponse) {
   }
 }
 
+// lazy allowlist-flush throttle: a viewed gated drop drains its pending
+// queue at most once per 30s per instance (mirrors the pool-sync pattern)
+const allowlistFlushAt = new Map<number, number>();
+
 async function getFullDrop(id: number, response: NextApiResponse) {
   console.log(`getFullDrop(${id})`);
   try {
@@ -289,6 +305,17 @@ async function getFullDrop(id: number, response: NextApiResponse) {
       },
     });
     if (result) withArtistDisplayNameOverride(result);
+    // follow-gate enqueues without transacting; viewing the drop flushes the
+    // batch so anyone about to mint is on-chain before they reach the button.
+    // AWAITED deliberately — Cloud Run throttles CPU after the response, so a
+    // fire-and-forget tx stalls (same lesson as syncPoolTrades). At most one
+    // request per 30s per instance pays the ~2s; everyone else skips through.
+    if (result?.whitelistContractAddress && (allowlistFlushAt.get(id) ?? 0) < Date.now() - 30_000) {
+      allowlistFlushAt.set(id, Date.now());
+      await flushDropAllowlist(id, result.whitelistContractAddress).catch((e) =>
+        console.error(`lazy allowlist flush failed for drop ${id}`, e)
+      );
+    }
     response.json(result);
   } catch (e) {
     console.log({ e });
