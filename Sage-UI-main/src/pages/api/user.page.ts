@@ -6,6 +6,7 @@ import { Prisma, Role } from '@prisma/client';
 import type { SafeUserUpdate } from '@/prisma/types';
 import { UserDisplayInfo } from '@/store/usersReducer';
 import { getERC20Contract } from '@/utilities/contracts';
+import { uploadBufferToS3 } from '@/utilities/awsS3-server';
 
 export default async (req: NextApiRequest, res: NextApiResponse) => {
   const {
@@ -189,11 +190,30 @@ function pickSafeUserUpdate(input: Record<string, unknown>): SafeUserUpdate {
 
 async function updateUser(user: SafeUserUpdate, walletAddress: string, res: NextApiResponse) {
   try {
+    const data = pickSafeUserUpdate(user as Record<string, unknown>);
+    // Avatars must live in S3, never as base64 in the row: a 75-127KB blob in
+    // User.profilePicture gets re-shipped from the DB on every surface that
+    // shows the avatar and was a top Supabase-egress driver (the existing
+    // blobs were migrated out 2026-07-21 — this keeps new ones from landing).
+    if (typeof data.profilePicture === 'string' && data.profilePicture.startsWith('data:')) {
+      const m = data.profilePicture.match(/^data:(image\/(png|jpeg|webp|gif));base64,(.+)$/);
+      if (!m) return res.status(400).json({ error: 'unsupported profile picture format' });
+      const buffer = Buffer.from(m[3], 'base64');
+      if (buffer.length > 2 * 1024 * 1024)
+        return res.status(400).json({ error: 'profile picture too large (2MB max)' });
+      const ext = m[2] === 'jpeg' ? 'jpg' : m[2];
+      data.profilePicture = await uploadBufferToS3(
+        'social',
+        `${walletAddress.slice(2, 10).toLowerCase()}-${Date.now()}-pfp.${ext}`,
+        m[1],
+        buffer
+      );
+    }
     const updatedUser = await prisma.user.update({
       where: {
         walletAddress,
       },
-      data: pickSafeUserUpdate(user as Record<string, unknown>),
+      data,
     });
     res.status(200).json(updatedUser);
   } catch (e) {
