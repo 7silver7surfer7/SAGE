@@ -82,6 +82,67 @@ const BOOST_STRENGTH_MAX = 45; // at $50/day
 // score = (1 + engagement + boostBonus) / (ageHours + 2)^GRAVITY
 const FEED_GRAVITY = 1.6;
 const FEED_POOL = 600; // rank over the most recent N top-level posts
+
+// One viewer-agnostic feed pool per instance, refreshed at most every 10s
+// (the client polls at 15s, so nobody ever sees staler-than-poll data; a
+// composer's own fresh post bypasses this via the pinned-mine query). The
+// per-viewer like/repost/collect flags overlay the shared objects via
+// SHALLOW COPIES — the cached posts themselves are never mutated, so
+// concurrent requests for different viewers can't cross-contaminate.
+const FEED_POOL_TTL_MS = 10_000;
+let feedPoolCache: { posts: any[]; at: number } | null = null;
+let feedPoolInFlight: Promise<any[]> | null = null;
+function sharedFeedPool(): Promise<any[]> {
+  if (feedPoolCache && Date.now() - feedPoolCache.at < FEED_POOL_TTL_MS) {
+    return Promise.resolve(feedPoolCache.posts);
+  }
+  if (feedPoolInFlight) return feedPoolInFlight;
+  feedPoolInFlight = prisma.socialPost
+    .findMany({
+      where: { replyToId: null, deletedAt: null, Author: { bannedAt: null } },
+      include: postInclude(null), // viewer joins overlay separately
+      orderBy: { id: 'desc' },
+      take: FEED_POOL,
+    })
+    .then((posts) => {
+      feedPoolCache = { posts, at: Date.now() };
+      return posts;
+    })
+    .finally(() => {
+      feedPoolInFlight = null;
+    });
+  return feedPoolInFlight;
+}
+
+type ViewerState = { liked: Set<number>; reposted: Set<number>; collected: Set<number>; viewer: string | null };
+async function viewerStateFor(viewer: string | null, posts: any[]): Promise<ViewerState> {
+  const none: ViewerState = { liked: new Set(), reposted: new Set(), collected: new Set(), viewer };
+  if (!viewer || posts.length === 0) return none;
+  const ids = posts.map((p) => p.id);
+  const [likes, reposts, collects] = await Promise.all([
+    prisma.socialLike.findMany({ where: { userAddress: viewer, postId: { in: ids } }, select: { postId: true } }),
+    prisma.socialRepost.findMany({ where: { userAddress: viewer, postId: { in: ids } }, select: { postId: true } }),
+    prisma.socialCollect.findMany({ where: { collectorAddress: viewer, postId: { in: ids } }, select: { postId: true } }),
+  ]);
+  return {
+    liked: new Set(likes.map((x) => x.postId)),
+    reposted: new Set(reposts.map((x) => x.postId)),
+    collected: new Set(collects.map((x) => x.postId)),
+    viewer,
+  };
+}
+
+/** Shallow copy with the viewer's joins synthesized — serializePost sees the
+ *  exact shape postInclude(viewer) would have produced. */
+function overlayViewerState(p: any, vs: ViewerState) {
+  if (!vs.viewer) return p;
+  return {
+    ...p,
+    Likes: vs.liked.has(p.id) ? [{ userAddress: vs.viewer }] : [],
+    Reposts: vs.reposted.has(p.id) ? [{ userAddress: vs.viewer }] : [],
+    Collects: vs.collected.has(p.id) ? [{ collectorAddress: vs.viewer }] : [],
+  };
+}
 const FEED_PAGE = 20;
 
 // paid verification: $10 worth of SAGE to the platform treasury buys the
@@ -642,6 +703,11 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
   // ── global: hot-ranked over a recent pool, offset-paginated ──
   if (scope === 'global') {
     const offset = req.query.cursor ? Number(req.query.cursor) : 0;
+    // The 600-post pool is VIEWER-AGNOSTIC (ranking happens in JS below) but
+    // was fetched per request WITH per-viewer joins — ~400KB from Supabase on
+    // every poll of every user, the single biggest egress line after the
+    // avatar fix. Now: one shared pool per 10s per instance, and the viewer's
+    // like/repost/collect state overlays it as three id-only queries (bytes).
     // Every refresh remixes the feed: the client sends a fresh `seed` per
     // page-load, and we jitter each post's hot score ±30% with a hash of
     // (seed, postId). Deterministic per seed, so pagination within one
@@ -657,17 +723,13 @@ async function getFeed(req: NextApiRequest, res: NextApiResponse) {
       }
       return ((h >>> 0) % 10000) / 10000;
     };
-    const pool = await prisma.socialPost.findMany({
-      where: { replyToId: null, deletedAt: null, Author: { bannedAt: null } },
-      include: postInclude(viewer),
-      orderBy: { id: 'desc' },
-      take: FEED_POOL,
-    });
+    const pool = await sharedFeedPool();
+    const viewerState = await viewerStateFor(viewer, pool);
     const now = Date.now();
     const ranked = pool
       .map((p) => ({ p, s: hotScore(p, now) * (0.7 + 0.6 * jitter(p.id)) }))
       .sort((a, b) => b.s - a.s)
-      .map((x) => x.p);
+      .map((x) => overlayViewerState(x.p, viewerState));
     // Twitter behavior: YOUR own fresh posts lead your feed. A brand-new post
     // has zero engagement so ranking would bury it — pin the viewer's posts
     // from the last 10 minutes to the top of page 1 (any composer path, any
@@ -3728,7 +3790,11 @@ type LedgerRow = {
 };
 const ledgerCache = new Map<string, { rows: LedgerRow[]; maxId: number; fullAt: number }>();
 const ledgerInFlight = new Map<string, Promise<LedgerRow[]>>();
-const LEDGER_FULL_REFRESH_MS = 30 * 60_000;
+// 4h, not 30min: rows are append-only in practice (the full re-pull only
+// exists to absorb a rare in-place fix like a trader re-attribution), and
+// each full pull ships the whole ~8k-row table again — with the 5GB/month
+// egress target every needless full pull counts
+const LEDGER_FULL_REFRESH_MS = 4 * 3600_000;
 const LEDGER_SELECT = {
   id: true,
   trader: true,
@@ -3856,6 +3922,34 @@ async function syncTransferees(token: string): Promise<void> {
   }
 }
 
+// Transferee list, incrementally cached like the trade ledger (rows are
+// insert-only; id > maxSeen deltas after one full pull per instance).
+const transfereeCache = new Map<string, { addrs: string[]; maxId: number }>();
+async function cachedTransferees(token: string): Promise<{ address: string }[]> {
+  const key = token.toLowerCase();
+  const c = transfereeCache.get(key);
+  if (!c) {
+    const rows = await prisma.socialTokenTransferee.findMany({
+      where: { tokenAddress: token },
+      orderBy: { id: 'asc' },
+      select: { id: true, address: true },
+    });
+    const entry = { addrs: rows.map((r) => r.address), maxId: rows.length ? rows[rows.length - 1].id : 0 };
+    transfereeCache.set(key, entry);
+    return entry.addrs.map((address) => ({ address }));
+  }
+  const fresh = await prisma.socialTokenTransferee.findMany({
+    where: { tokenAddress: token, id: { gt: c.maxId } },
+    orderBy: { id: 'asc' },
+    select: { id: true, address: true },
+  });
+  if (fresh.length) {
+    c.addrs.push(...fresh.map((r) => r.address));
+    c.maxId = fresh[fresh.length - 1].id;
+  }
+  return c.addrs.map((address) => ({ address }));
+}
+
 // The ledger's per-trader nets are an approximation, not truth: an
 // aggregator-split sell only shows the leg that hit OUR pair, and raw
 // transfers never appear at all — so a wallet that fully exited can keep
@@ -3873,10 +3967,7 @@ async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: 
     await syncTransferees(token);
     const [trades, transferees] = await Promise.all([
       tokenLedger(token),
-      prisma.socialTokenTransferee.findMany({
-        where: { tokenAddress: token },
-        select: { address: true },
-      }),
+      cachedTransferees(token),
     ]);
     const nets = new Map<string, number>();
     for (const t of trades) {
