@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nightly SAGE DB backup (pg_dump -> backups/db/ + S3) — the daily-backup
+  replacement that makes the Supabase free tier safe for production.
+  Install:
+    cp deploy/db-backup/xyz.sageart.db-backup.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/xyz.sageart.db-backup.plist
+  Runs daily at 04:30 local; RunAtLoad fires one immediately on install so a
+  fresh machine always has at least one dump.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>xyz.sageart.db-backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/dannyelcristyenciobanica/Downloads/SAGE/deploy/db-backup/run-backup.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/dannyelcristyenciobanica/Downloads/SAGE/deploy/db-backup/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/dannyelcristyenciobanica/Downloads/SAGE/deploy/db-backup/launchd.err</string>
+</dict>
+</plist>
