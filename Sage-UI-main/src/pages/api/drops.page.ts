@@ -14,6 +14,8 @@ import {
   isWhitelistedOnChain,
   setCollectionWhitelistOnChain,
   setContractMetadataOnChain,
+  signOpenEditionVoucher,
+  signLotteryVoucher,
 } from '@/utilities/serverWallet';
 import { sendArweaveTransaction } from '@/utilities/arweave-server';
 import { createHash } from 'crypto';
@@ -62,6 +64,10 @@ const ACTION_ROLES: Record<string, Role[]> = {
   // (deploys/wires the whitelist server-side).
   ClaimMintSpot: [Role.USER, Role.ARTIST, Role.ADMIN],
   EnableIpGate: [Role.ADMIN],
+  // Voucher-gated minting: an eligible wallet asks the server to SIGN a
+  // per-wallet voucher (no on-chain whitelist write, zero server gas), then
+  // redeems it itself via batchMintWithVoucher / buyTicketsWithVoucher.
+  GetGameVoucher: [Role.USER, Role.ARTIST, Role.ADMIN],
 };
 
 async function handler(request: NextApiRequest, response: NextApiResponse) {
@@ -227,6 +233,9 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       break;
     case 'EnableIpGate':
       await enableIpGate(Number(id), response);
+      break;
+    case 'GetGameVoucher':
+      await getGameVoucher(request, walletAddress, response);
       break;
     default:
       response.status(500);
@@ -878,6 +887,64 @@ async function enableIpGate(id: number, response: NextApiResponse) {
  * (requester), never the query string, so it can't be spoofed. Ungated drops
  * always answer allowed.
  */
+/**
+ * Voucher-gated minting: an eligible wallet requests a short-lived,
+ * per-wallet voucher for a specific open edition or lottery. The server
+ * checks eligibility off-chain (the same DropAllowlistEntry ledger that
+ * admin-allowlist, follow-gate and IP-gate claims all write to), then signs
+ * a voucher the wallet redeems itself via batchMintWithVoucher /
+ * buyTicketsWithVoucher — no on-chain whitelist write, zero server gas. The
+ * contract re-verifies the signature and binds it to msg.sender + chain +
+ * contract + drop + expiry, so a leaked voucher is useless to anyone else.
+ */
+async function getGameVoucher(
+  request: NextApiRequest,
+  walletAddress: string,
+  response: NextApiResponse
+) {
+  const game = String(request.query.game || ''); // 'oe' | 'lottery'
+  const recordId = Number(request.query.recordId);
+  if (!recordId || (game !== 'oe' && game !== 'lottery')) {
+    response.status(400).json({ error: "game ('oe'|'lottery') and recordId required" });
+    return;
+  }
+  // resolve the game contract + on-chain id + owning drop
+  let dropId: number, contractAddress: string | null, onchainId: number | null;
+  if (game === 'oe') {
+    const oe = await prisma.openEdition.findUnique({ where: { id: recordId }, select: { dropId: true, contractAddress: true, editionId: true } });
+    if (!oe) { response.status(404).json({ error: 'open edition not found' }); return; }
+    ({ dropId, contractAddress } = oe);
+    onchainId = oe.editionId;
+  } else {
+    const lot = await prisma.lottery.findUnique({ where: { id: recordId }, select: { dropId: true, contractAddress: true } });
+    if (!lot) { response.status(404).json({ error: 'lottery not found' }); return; }
+    dropId = lot.dropId;
+    contractAddress = lot.contractAddress;
+    onchainId = recordId; // the on-chain lotteryID is the DB id
+  }
+  if (!contractAddress || onchainId === null) {
+    response.status(409).json({ error: 'this drop is not deployed on-chain yet' });
+    return;
+  }
+  // eligibility: allowlisted for this drop (covers admin allowlist, follow-gate
+  // and IP-gate claims — all land in DropAllowlistEntry). An ungated drop
+  // shouldn't be voucher-gated, so absence of a gate = not eligible here.
+  const entry = await prisma.dropAllowlistEntry.findUnique({
+    where: { dropId_address: { dropId, address: walletAddress.toLowerCase() } },
+  });
+  if (!entry) {
+    response.status(403).json({ error: 'not eligible for this drop' });
+    return;
+  }
+  const chainId = Number(parameters.CHAIN_ID);
+  const deadline = Math.floor(Date.now() / 1000) + 3600; // 1h to submit the mint
+  const signature =
+    game === 'oe'
+      ? await signOpenEditionVoucher(chainId, contractAddress, walletAddress, onchainId, deadline)
+      : await signLotteryVoucher(chainId, contractAddress, walletAddress, onchainId, deadline);
+  response.json({ signature, deadline, contractAddress, onchainId });
+}
+
 async function checkDropAllowlist(id: number, walletAddress: string, response: NextApiResponse) {
   try {
     const drop = await prisma.drop.findUnique({

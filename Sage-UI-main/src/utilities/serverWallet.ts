@@ -145,6 +145,55 @@ export async function signCollectVoucher(
 }
 
 /**
+ * Game-gate voucher signer — proves a wallet is eligible to mint/buy a
+ * voucher-gated open edition or lottery WITHOUT any on-chain whitelist write.
+ * The digest mirrors the contracts' batchMintWithVoucher / buyTicketsWithVoucher
+ * exactly: prefixed(keccak256(abi.encode(TAG, chainid, contract, minter, id,
+ * deadline))), signed by the oracle (== the contracts' immutable signerAddress).
+ * The server signs only AFTER confirming eligibility (allowlist / IP-gate /
+ * follow-gate) in its own DB, then the contract re-verifies the signature and
+ * binds it to msg.sender + this chain + this contract + this drop + expiry.
+ */
+async function signGameVoucher(
+  tag: 'SAGE_OE_VOUCHER' | 'SAGE_LOTTERY_VOUCHER',
+  chainId: number,
+  contractAddress: string,
+  minter: string,
+  id: number,
+  deadline: number
+): Promise<string> {
+  const inner = ethers.utils.keccak256(
+    ethers.utils.defaultAbiCoder.encode(
+      ['string', 'uint256', 'address', 'address', 'uint256', 'uint256'],
+      [tag, chainId, contractAddress, minter, id, deadline]
+    )
+  );
+  // personal_sign applies the "\x19Ethereum Signed Message:\n32" prefix, which
+  // is exactly the contracts' prefixed() helper — so ECDSA.recover matches.
+  return getServerSigner().signMessage(ethers.utils.arrayify(inner));
+}
+
+export function signOpenEditionVoucher(
+  chainId: number,
+  oeContract: string,
+  minter: string,
+  editionId: number,
+  deadline: number
+): Promise<string> {
+  return signGameVoucher('SAGE_OE_VOUCHER', chainId, oeContract, minter, editionId, deadline);
+}
+
+export function signLotteryVoucher(
+  chainId: number,
+  lotteryContract: string,
+  minter: string,
+  lotteryId: number,
+  deadline: number
+): Promise<string> {
+  return signGameVoucher('SAGE_LOTTERY_VOUCHER', chainId, lotteryContract, minter, lotteryId, deadline);
+}
+
+/**
  * EIP-712 voucher for SocialFaucet — a wallet's ONE lifetime SAGE claim. The
  * server signs only after it has confirmed (in its own DB) that neither this
  * wallet nor this request's IP hash has claimed before; the contract then
