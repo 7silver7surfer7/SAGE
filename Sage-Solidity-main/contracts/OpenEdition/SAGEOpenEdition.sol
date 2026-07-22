@@ -37,6 +37,11 @@ contract SAGEOpenEdition is Pausable {
         uint256 costTokens; // Cost per mint (SAGE wei, or ETH wei for ETH editions)
         uint256 id; // Open edition id
         address currency; // address(0) = SAGE token, NATIVE_CURRENCY = native ETH
+        // When true, this edition can ONLY be minted through
+        // batchMintWithVoucher (a platform-signed per-wallet voucher) — the
+        // open batchMint path is closed. This is how a drop is gated WITHOUT a
+        // per-drop whitelist contract or any server-paid whitelist write.
+        bool voucherGated;
     }
 
     // Sentinel meaning "native ETH"
@@ -237,19 +242,58 @@ contract SAGEOpenEdition is Pausable {
         return openEditions[_id].mintCount;
     }
 
-    function batchMint(uint256 _id, uint256 _amount)
-        public
-        payable
-        whenNotPaused
-    {
+    function batchMint(uint256 _id, uint256 _amount) public payable {
+        OpenEdition storage oe = openEditions[_id];
+        // a voucher-gated edition is mintable ONLY via batchMintWithVoucher;
+        // the open path stays closed so an edition with no whitelist isn't
+        // silently public
+        require(!oe.voucherGated, "Voucher required");
+        isWhitelisted(oe);
+        _mintCore(_id, _amount);
+    }
+
+    // Voucher path: a platform-signed voucher proves eligibility INLINE, so a
+    // gated drop needs no per-drop whitelist contract and no server-paid
+    // whitelist write — the minter carries their own gate and pays only their
+    // own mint gas. The voucher is bound to (purpose, chainid, this contract,
+    // minter, edition, deadline), so it cannot be replayed on another
+    // chain / contract / edition / wallet; reuse within one edition is bounded
+    // by that edition's own limitPerUser + closeTime, exactly like a whitelist
+    // entry. The money path is UNCHANGED: both entry points funnel into the
+    // identical _mintCore below, which is the pre-voucher batchMint body verbatim.
+    function batchMintWithVoucher(
+        uint256 _id,
+        uint256 _amount,
+        uint256 _deadline,
+        bytes calldata _sig
+    ) public payable {
+        require(block.timestamp <= _deadline, "Voucher expired");
+        bytes32 message = prefixed(
+            keccak256(
+                abi.encode(
+                    "SAGE_OE_VOUCHER",
+                    block.chainid,
+                    address(this),
+                    msg.sender,
+                    _id,
+                    _deadline
+                )
+            )
+        );
+        require(
+            ECDSA.recover(message, _sig) == signerAddress,
+            "Invalid voucher"
+        );
+        _mintCore(_id, _amount);
+    }
+
+    function _mintCore(uint256 _id, uint256 _amount) internal whenNotPaused {
         require(_amount > 0, "Can't mint 0");
         OpenEdition storage oe = openEditions[_id];
         require(
             oe.startTime <= block.timestamp && oe.closeTime > block.timestamp,
             "Not open"
         );
-
-        isWhitelisted(oe);
 
         uint256 amountMinted = mintedByUser[_id][msg.sender];
 
