@@ -21,3 +21,16 @@ typechain-types/
 .DS_Store
 *.log
 tsconfig.tsbuildinfo
+
+# runtime state, logs, local data — never ship
+backups/
+atelier_out/
+deploy/**/launchd.out
+deploy/**/launchd.err
+deploy/social-drip/state.json
+Sage-UI-main/.claude/
+*.crypto.bak
+sage-agents/agents.log.jsonl
+sage-agents/.env
+# agent wallet PRIVATE KEYS — absolutely never
+sage-mcp/agents/wallets/

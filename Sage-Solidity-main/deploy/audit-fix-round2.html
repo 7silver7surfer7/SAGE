@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Deploy Audit Fixes — Round 2</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .card h2 { margin: 0 0 6px; font-size: 1.1rem; }
+  .card p.desc { margin: 0 0 12px; font-size: .9rem; opacity: .8; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  .row b { font-weight: 600; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; margin-top: 8px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem; }
+  .warn { color: #b45309; }
+  .err { color: #dc2626; }
+  .ok { color: #0c9d68; }
+  .top-status { padding: 10px 14px; border-radius: 8px; background: rgba(128,128,128,.12);
+    font-size: .9rem; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <h1>Deploy Audit Fixes — Round 2 🛡️</h1>
+  <p class="sub">Three remaining multisig-only actions from the second audit pass. Must be
+  signed by the multisig wallet (<code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code>).</p>
+
+  <div class="top-status" id="topStatus">Connect MetaMask with the multisig wallet selected.</div>
+  <button id="connectBtn">connect wallet</button>
+  <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
+  <div class="row"><span>Required signer (current multisig)</span><code id="multisig">—</code></div>
+
+  <div class="card" id="card-lottery">
+    <h2>Lottery v3 upgrade</h2>
+    <p class="desc">Adds access control to refund() (previously callable by anyone for any
+    participant, letting an attacker force-zero their refunds balance and permanently block
+    claimPrize()), tracks failed native payouts so withdrawNative() can't sweep them, and adds
+    a multisig-only setOutstandingRefunds() backstop for correcting the counters if they ever
+    diverge from real state.</p>
+    <div class="row"><span>Proxy</span><code>0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54</code></div>
+    <div class="row"><span>New implementation</span><code>0xDA41dfe81EDEe53a5Ccb23265814f6F5B6dB4D7B</code></div>
+    <div class="row"><span>Current implementation</span><code id="impl-lottery">—</code></div>
+    <button id="btn-lottery" disabled>connect wallet first</button>
+    <div class="status" id="status-lottery"></div>
+  </div>
+
+  <div class="card" id="card-nftfactory">
+    <h2>NFTFactory: carry over existing registration</h2>
+    <p class="desc">NFTFactory has been redeployed a second time today (SageNFT's
+    setArtistShare bound fix), so the one registered artist needs re-adding again —
+    setArtistContract() is multisig-gated, so I can't do this myself.</p>
+    <div class="row"><span>New factory</span><code>0x9b389595544b270bD55e10c80006C9667CBf133e</code></div>
+    <div class="row"><span>Artist</span><code>0x20ef0B30580FE176d6171DF59344CbC158Ebf867</code></div>
+    <div class="row"><span>NFT contract</span><code>0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1</code></div>
+    <div class="row"><span>Currently registered as</span><code id="current-registration">—</code></div>
+    <button id="btn-nftfactory" disabled>connect wallet first</button>
+    <div class="status" id="status-nftfactory"></div>
+  </div>
+
+  <div class="card" id="card-revoke">
+    <h2>SageStorage: revoke admin wallet's DEFAULT_ADMIN_ROLE</h2>
+    <p class="desc">The admin/deployer wallet holds OpenZeppelin's root DEFAULT_ADMIN_ROLE in
+    addition to its intended ADMIN_ROLE — meaning it can currently grant/revoke MINTER_ROLE,
+    BURNER_ROLE, MANAGE_POINTS_ROLE, and DEFAULT_ADMIN_ROLE itself, including stripping the
+    multisig's own privileges. This revokes just that excess role from the admin wallet. It
+    keeps ADMIN_ROLE and everything that gates (SageConfig, SageWhitelist, SageStorage
+    setAddress/deleteAddress, granting ARTIST_ROLE, various onlyAdmin game functions) — it only
+    loses the ability to manage the four DEFAULT_ADMIN_ROLE-gated roles, which become
+    multisig-only going forward. The multisig executing this itself (rather than the admin
+    wallet self-revoking) matches how Auction's own onlyMultisig fix was rolled out.</p>
+    <div class="row"><span>SageStorage</span><code>0x43E26D8B5c559DECb09d65F325e1405589775BA2</code></div>
+    <div class="row"><span>Admin wallet</span><code>0x8994eF592c15071B2E947Eb67f7E65612F29Da85</code></div>
+    <div class="row"><span>Currently holds DEFAULT_ADMIN_ROLE</span><code id="admin-has-role">—</code></div>
+    <button id="btn-revoke" disabled>connect wallet first</button>
+    <div class="status" id="status-revoke"></div>
+  </div>
+
+<script>
+(async function () {
+  const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
+  const CHAIN_ID = '0x1237'; // 4663 (Robinhood Chain mainnet)
+  const SEL_MULTISIG = '0x4783c35b';   // multisig()
+  const SEL_UPGRADE_TO = '0x3659cfe6'; // upgradeTo(address)
+  const IMPL_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
+
+  const LOTTERY_PROXY = '0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54';
+  const LOTTERY_NEW_IMPL = '0xda41dfe81edee53a5ccb23265814f6f5b6db4d7b';
+
+  const NFT_FACTORY = '0x9b389595544b270bD55e10c80006C9667CBf133e';
+  const ARTIST = '0x20ef0B30580FE176d6171DF59344CbC158Ebf867';
+  const NFT_CONTRACT = '0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1';
+  // setArtistContract(address,address) selector + getContractAddress(address) selector
+  const SEL_SET_ARTIST_CONTRACT = '0x5b0caff6';
+  const SEL_GET_CONTRACT_ADDRESS = '0x622bc90e';
+
+  const ADMIN_WALLET = '0x8994eF592c15071B2E947Eb67f7E65612F29Da85';
+  const DEFAULT_ADMIN_ROLE = '0x' + '0'.repeat(64);
+  // hasRole(bytes32,address) / revokeRole(bytes32,address) selectors
+  const SEL_HAS_ROLE = '0x91d14854';
+  const SEL_REVOKE_ROLE = '0xd547741f';
+
+  const topStatus = document.getElementById('topStatus');
+  const connectBtn = document.getElementById('connectBtn');
+  const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
+  const pad = (a) => a.slice(2).padStart(64, '0');
+
+  if (!window.ethereum) {
+    topStatus.textContent = 'MetaMask not detected.';
+    topStatus.className = 'top-status err';
+    return;
+  }
+
+  let account = null;
+  let multisig = null;
+
+  const readMultisig = async () =>
+    '0x' + (await ethereum.request({ method: 'eth_call', params: [{ to: STORAGE, data: SEL_MULTISIG }, 'latest'] })).slice(-40);
+  const readImpl = async (proxy) =>
+    '0x' + (await ethereum.request({ method: 'eth_getStorageAt', params: [proxy, IMPL_SLOT, 'latest'] })).slice(-40);
+  const readRegisteredContract = async () =>
+    '0x' + (await ethereum.request({ method: 'eth_call', params: [{ to: NFT_FACTORY, data: SEL_GET_CONTRACT_ADDRESS + pad(ARTIST) }, 'latest'] })).slice(-40);
+  const readAdminHasDefaultAdminRole = async () => {
+    const data = SEL_HAS_ROLE + DEFAULT_ADMIN_ROLE.slice(2) + pad(ADMIN_WALLET);
+    const result = await ethereum.request({ method: 'eth_call', params: [{ to: STORAGE, data }, 'latest'] });
+    return result.slice(-1) === '1'; // ABI bool is right-aligned 0/1 in the 32-byte word
+  };
+
+  function setStatus(key, msg, cls) {
+    const el = document.getElementById('status-' + key);
+    el.textContent = msg;
+    el.className = 'status ' + (cls || '');
+  }
+
+  function gateButton(key, btn, ready, readyLabel) {
+    if (account && multisig && account.toLowerCase() !== multisig.toLowerCase()) {
+      setStatus(key, 'Connected wallet ' + short(account) + ' is NOT the multisig ' + short(multisig) + '. Switch accounts in MetaMask.', 'warn');
+      btn.disabled = true;
+      btn.textContent = 'wrong wallet — switch account';
+      return;
+    }
+    if (!ready) return;
+    btn.disabled = false;
+    btn.textContent = readyLabel;
+  }
+
+  async function refreshLottery() {
+    const btn = document.getElementById('btn-lottery');
+    const impl = await readImpl(LOTTERY_PROXY);
+    document.getElementById('impl-lottery').textContent = impl;
+    if (impl.toLowerCase() === LOTTERY_NEW_IMPL) {
+      setStatus('lottery', 'Already upgraded — the proxy points at the new implementation. Nothing to send.', 'ok');
+      btn.disabled = true;
+      btn.textContent = 'already upgraded';
+      return;
+    }
+    setStatus('lottery', 'Ready. Clicking sends upgradeTo — approve it on your device.', '');
+    gateButton('lottery', btn, true, 'upgrade lottery contract');
+  }
+
+  async function refreshNftFactory() {
+    const btn = document.getElementById('btn-nftfactory');
+    const registered = await readRegisteredContract();
+    document.getElementById('current-registration').textContent = registered;
+    if (registered.toLowerCase() === NFT_CONTRACT.toLowerCase()) {
+      setStatus('nftfactory', 'Already registered on the new factory. Nothing to send.', 'ok');
+      btn.disabled = true;
+      btn.textContent = 'already registered';
+      return;
+    }
+    setStatus('nftfactory', 'Ready. Clicking sends setArtistContract — approve it on your device.', '');
+    gateButton('nftfactory', btn, true, 'register artist on new factory');
+  }
+
+  async function refreshRevoke() {
+    const btn = document.getElementById('btn-revoke');
+    const hasRole = await readAdminHasDefaultAdminRole();
+    document.getElementById('admin-has-role').textContent = hasRole;
+    if (!hasRole) {
+      setStatus('revoke', 'Already revoked — the admin wallet no longer holds DEFAULT_ADMIN_ROLE. Nothing to send.', 'ok');
+      btn.disabled = true;
+      btn.textContent = 'already revoked';
+      return;
+    }
+    setStatus('revoke', 'Ready. Clicking sends revokeRole — approve it on your device.', '');
+    gateButton('revoke', btn, true, "revoke admin wallet's DEFAULT_ADMIN_ROLE");
+  }
+
+  async function ensureNetwork() {
+    const chainId = await ethereum.request({ method: 'eth_chainId' });
+    if (chainId.toLowerCase() !== CHAIN_ID) {
+      topStatus.textContent = 'Wrong network — switch MetaMask to Robinhood Chain mainnet (4663).';
+      topStatus.className = 'top-status warn';
+      try { await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] }); }
+      catch { return false; }
+    }
+    return true;
+  }
+
+  async function refreshAll() {
+    if (!(await ensureNetwork())) return;
+    multisig = await readMultisig();
+    document.getElementById('multisig').textContent = multisig;
+    topStatus.textContent = 'Connected. Review each card below.';
+    topStatus.className = 'top-status';
+    await refreshLottery();
+    await refreshNftFactory();
+    await refreshRevoke();
+  }
+
+  async function sendTx(key, to, data, onConfirmed) {
+    const btn = document.getElementById('btn-' + key);
+    try {
+      if (!(await ensureNetwork())) return;
+      btn.disabled = true;
+      setStatus(key, 'Sending transaction — approve on your device…', '');
+      const txHash = await ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: account, to, data }],
+      });
+      setStatus(key, 'Sent: ' + txHash + '\nWaiting for confirmation…', '');
+      for (let i = 0; i < 60; i++) {
+        const rcpt = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+        if (rcpt) {
+          if (rcpt.status === '0x1') {
+            await onConfirmed();
+            btn.textContent = 'done ✓';
+          } else {
+            setStatus(key, 'Transaction reverted. Is the connected wallet the current multisig?', 'err');
+            btn.disabled = false;
+          }
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      setStatus(key, 'Still pending — check the tx in MetaMask: ' + txHash, 'warn');
+    } catch (e) {
+      setStatus(key, 'Error: ' + (e && e.message || e), 'err');
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('btn-lottery').onclick = () => sendTx(
+    'lottery', LOTTERY_PROXY, SEL_UPGRADE_TO + pad(LOTTERY_NEW_IMPL),
+    async () => {
+      const impl = await readImpl(LOTTERY_PROXY);
+      setStatus('lottery', 'Confirmed ✓  implementation is now ' + impl, 'ok');
+    }
+  );
+
+  document.getElementById('btn-nftfactory').onclick = () => sendTx(
+    'nftfactory', NFT_FACTORY, SEL_SET_ARTIST_CONTRACT + pad(ARTIST) + pad(NFT_CONTRACT),
+    async () => {
+      const registered = await readRegisteredContract();
+      setStatus('nftfactory', 'Confirmed ✓  registered contract is now ' + registered, 'ok');
+    }
+  );
+
+  document.getElementById('btn-revoke').onclick = () => sendTx(
+    'revoke', STORAGE, SEL_REVOKE_ROLE + DEFAULT_ADMIN_ROLE.slice(2) + pad(ADMIN_WALLET),
+    async () => {
+      const hasRole = await readAdminHasDefaultAdminRole();
+      document.getElementById('admin-has-role').textContent = hasRole;
+      setStatus('revoke', 'Confirmed ✓  admin wallet holds DEFAULT_ADMIN_ROLE: ' + hasRole, 'ok');
+    }
+  );
+
+  connectBtn.onclick = async () => {
+    const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+    account = accounts[0];
+    document.getElementById('connected').textContent = account;
+    await refreshAll();
+  };
+
+  ethereum.on?.('accountsChanged', (accs) => {
+    account = accs[0] || null;
+    document.getElementById('connected').textContent = account || 'not connected';
+    if (account) refreshAll();
+  });
+
+  try {
+    multisig = await readMultisig();
+    document.getElementById('multisig').textContent = multisig;
+    await refreshLottery();
+    await refreshNftFactory();
+    await refreshRevoke();
+  } catch {}
+})();
+</script>
+</body>
+</html>

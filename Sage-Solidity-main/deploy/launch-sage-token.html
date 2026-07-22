@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Launch SAGE Token</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 680px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  .row b { font-weight: 600; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem; }
+  .warn { color: #b45309; }
+  .err { color: #dc2626; }
+  .ok { color: #0c9d68; }
+  a { color: #0c9d68; }
+  .mono { font-family: ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+  <h1>Launch SAGE Token 🌿</h1>
+  <p class="sub">Calls <code>launch()</code> on the already-deployed SocialTokenFactory. Nothing is signed until you approve in your wallet.</p>
+
+  <div class="card">
+    <div class="row"><span>Network</span><b>Robinhood Mainnet (4663)</b></div>
+    <div class="row"><span>Contract</span><b class="mono">0xeF0c6F3461A373B4b6703EeBc5d44bF3885a200f</b></div>
+    <div class="row"><span>Function</span><b>launch(string,string,bool)</b></div>
+    <div class="row"><span>name / symbol</span><b>SAGE / SAGE</b></div>
+    <div class="row"><span>enableAirdrop</span><b>false</b></div>
+    <div class="row"><span>Value (dev-buy)</span><b>0 ETH</b></div>
+    <div class="row"><span>Creator (fee recipient, permanent)</span><b class="mono">whichever wallet sends this tx</b></div>
+  </div>
+
+  <div class="card warn" style="font-size:.88rem">
+    ⚠ Send this from <code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code> (the treasury) —
+    the wallet that sends this transaction permanently becomes the token's fee-receiving
+    "creator." There is no way to change this after launch.
+  </div>
+
+  <button id="connect">Connect Wallet</button>
+  <button id="launch" disabled>Launch SAGE</button>
+
+  <div class="status" id="status">Not connected.</div>
+
+  <script>
+    const NET = { chainIdHex: "0x1237", label: "Robinhood Chain Mainnet",
+      rpc: "https://rpc.mainnet.chain.robinhood.com", explorer: "https://robinhoodchain.blockscout.com" };
+    const FACTORY = "0xeF0c6F3461A373B4b6703EeBc5d44bF3885a200f";
+    const TREASURY = "0x3e099af007cab8233d44782d8e6fe80fecdc321e";
+    // Pre-encoded launch("SAGE","SAGE",false) — verified independently via ethers before
+    // this page existed. Hardcoded (not re-encoded here) so there's no hand-rolled ABI
+    // encoder in this page that could silently get the offsets wrong.
+    const CALLDATA = "0x85cab537000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004534147450000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000045341474500000000000000000000000000000000000000000000000000000000";
+    // keccak256("TokenLaunched(address,address,string,string,bool)") — used only to
+    // pick the right log out of the receipt; not required for the send itself.
+    const TOKEN_LAUNCHED_TOPIC0 = "0x03de023d768bf93890259720a6a37c35c9e9c24ad766108bb3779756c5c4abad";
+
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status");
+    let connectedAddr = null;
+
+    function log(msg, cls) {
+      statusEl.className = "status" + (cls ? " " + cls : "");
+      statusEl.textContent = msg;
+    }
+
+    async function ensureNetwork() {
+      const eth = window.ethereum;
+      const current = await eth.request({ method: "eth_chainId" });
+      if (current.toLowerCase() === NET.chainIdHex.toLowerCase()) return;
+      try {
+        await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: NET.chainIdHex }] });
+      } catch (e) {
+        if (e.code === 4902) {
+          await eth.request({ method: "wallet_addEthereumChain", params: [{
+            chainId: NET.chainIdHex, chainName: NET.label, rpcUrls: [NET.rpc],
+            blockExplorerUrls: [NET.explorer], nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }
+          }] });
+        } else { throw e; }
+      }
+    }
+
+    $("connect").onclick = async () => {
+      if (!window.ethereum) { log("No wallet extension detected. Install one and reload.", "err"); return; }
+      try {
+        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+        connectedAddr = accounts[0];
+        $("launch").disabled = false;
+        const match = connectedAddr.toLowerCase() === TREASURY;
+        log("Connected: " + connectedAddr + "\n" +
+          (match ? "✓ This is the treasury address." :
+           "⚠ This is NOT the treasury (" + TREASURY + ").\nWhoever sends this tx becomes the permanent fee recipient — double check before launching."),
+          match ? "ok" : "warn");
+      } catch (e) { log("Connect failed: " + (e.message || e), "err"); }
+    };
+
+    $("launch").onclick = async () => {
+      $("launch").disabled = true;
+      try {
+        log("Switching to Robinhood Mainnet if needed…");
+        await ensureNetwork();
+        log("Confirm the transaction in your wallet…");
+        const txHash = await window.ethereum.request({
+          method: "eth_sendTransaction",
+          params: [{ from: connectedAddr, to: FACTORY, data: CALLDATA, value: "0x0" }]
+        });
+        log("Sent: " + txHash + "\nWaiting for confirmation…");
+
+        let receipt = null;
+        while (!receipt) {
+          await new Promise((r) => setTimeout(r, 3000));
+          receipt = await window.ethereum.request({ method: "eth_getTransactionReceipt", params: [txHash] });
+        }
+        if (receipt.status !== "0x1") throw new Error("Transaction reverted — see explorer for details.");
+
+        const log0 = receipt.logs.find(
+          (l) => l.address.toLowerCase() === FACTORY.toLowerCase() && l.topics[0].toLowerCase() === TOKEN_LAUNCHED_TOPIC0
+        );
+        const tokenAddr = log0 ? "0x" + log0.topics[1].slice(-40) : null;
+
+        const url = NET.explorer + "/tx/" + txHash;
+        statusEl.className = "status ok";
+        statusEl.innerHTML = "✅ SAGE launched\n\n" +
+          (tokenAddr ? "Token address:\n<b class='mono'>" + tokenAddr + "</b>\n\n" : "") +
+          "<a href='" + url + "' target='_blank' rel='noopener'>View transaction ↗</a>" +
+          (tokenAddr ? "\n\nSend this address back to Claude to continue the migration." : "\n\n(Couldn't auto-read the token address from the receipt — check the tx on the explorer for the TokenLaunched event.)");
+      } catch (e) {
+        log("Launch failed: " + (e.data?.message || e.message || e), "err");
+        $("launch").disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Deploy Audit Fixes — Auction &amp; Lottery</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .7; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .card h2 { margin: 0 0 6px; font-size: 1.1rem; }
+  .card p.desc { margin: 0 0 12px; font-size: .9rem; opacity: .8; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  .row b { font-weight: 600; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; margin-top: 8px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem; }
+  .warn { color: #b45309; }
+  .err { color: #dc2626; }
+  .ok { color: #0c9d68; }
+  .top-status { padding: 10px 14px; border-radius: 8px; background: rgba(128,128,128,.12);
+    font-size: .9rem; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <h1>Deploy Audit Fixes 🛡️</h1>
+  <p class="sub">Points the Auction and Lottery proxies at their fixed implementations on
+  Robinhood Chain mainnet. Must be signed by the multisig wallet
+  (<code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code>). All live auction/lottery state
+  is preserved — this only swaps the code.</p>
+
+  <div class="top-status" id="topStatus">Connect MetaMask with the multisig wallet selected.</div>
+  <button id="connectBtn">connect wallet</button>
+  <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
+  <div class="row"><span>Required signer (current multisig)</span><code id="multisig">—</code></div>
+
+  <div class="card" id="card-auction">
+    <h2>Auction</h2>
+    <p class="desc">Fixes the Critical bug where createAuction() trusted caller-supplied
+    highestBid/highestBidder/settled fields instead of zeroing them, plus the onlyMultisig
+    check that was reading DEFAULT_ADMIN_ROLE instead of the real multisig.</p>
+    <div class="row"><span>Proxy</span><code>0x83Eac0DCfd0bC5D52Edf4e631CdDb6C0e6438E03</code></div>
+    <div class="row"><span>New implementation</span><code>0xffb76ABe64E0a7ceEB8243Eb247ece30ecFf3A16</code></div>
+    <div class="row"><span>Current implementation</span><code id="impl-auction">—</code></div>
+    <button id="btn-auction" disabled>connect wallet first</button>
+    <div class="status" id="status-auction"></div>
+  </div>
+
+  <div class="card" id="card-lottery">
+    <h2>Lottery</h2>
+    <p class="desc">Blocks withdraw()/withdrawNative() from sweeping funds still owed via
+    outstanding refunds, and fixes a uint16 truncation on participantTicketCount that could
+    let a user bypass the per-user ticket cap on large purchases.</p>
+    <div class="row"><span>Proxy</span><code>0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54</code></div>
+    <div class="row"><span>New implementation</span><code>0x33d2739244f69Ed71DCC877a30691D2A5dc9b11e</code></div>
+    <div class="row"><span>Current implementation</span><code id="impl-lottery">—</code></div>
+    <button id="btn-lottery" disabled>connect wallet first</button>
+    <div class="status" id="status-lottery"></div>
+  </div>
+
+<script>
+(async function () {
+  const STORAGE = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
+  const CHAIN_ID = '0x1237'; // 4663 (Robinhood Chain mainnet)
+  const SEL_MULTISIG = '0x4783c35b';   // multisig()
+  const SEL_UPGRADE_TO = '0x3659cfe6'; // upgradeTo(address)
+  const IMPL_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
+
+  const CONTRACTS = [
+    { key: 'auction', label: 'Auction',
+      proxy: '0x83Eac0DCfd0bC5D52Edf4e631CdDb6C0e6438E03',
+      newImpl: '0xffb76abe64e0a7ceeb8243eb247ece30ecff3a16' },
+    { key: 'lottery', label: 'Lottery',
+      proxy: '0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54',
+      newImpl: '0x33d2739244f69ed71dcc877a30691d2a5dc9b11e' },
+  ];
+
+  const topStatus = document.getElementById('topStatus');
+  const connectBtn = document.getElementById('connectBtn');
+  const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
+
+  if (!window.ethereum) {
+    topStatus.textContent = 'MetaMask not detected.';
+    topStatus.className = 'top-status err';
+    return;
+  }
+
+  let account = null;
+  let multisig = null;
+
+  const readMultisig = async () =>
+    '0x' + (await ethereum.request({ method: 'eth_call', params: [{ to: STORAGE, data: SEL_MULTISIG }, 'latest'] })).slice(-40);
+  const readImpl = async (proxy) =>
+    '0x' + (await ethereum.request({ method: 'eth_getStorageAt', params: [proxy, IMPL_SLOT, 'latest'] })).slice(-40);
+
+  function setStatus(key, msg, cls) {
+    const el = document.getElementById('status-' + key);
+    el.textContent = msg;
+    el.className = 'status ' + (cls || '');
+  }
+
+  async function refreshOne(c) {
+    const btn = document.getElementById('btn-' + c.key);
+    const impl = await readImpl(c.proxy);
+    document.getElementById('impl-' + c.key).textContent = impl;
+    if (impl.toLowerCase() === c.newImpl) {
+      setStatus(c.key, 'Already upgraded — the proxy points at the new implementation. Nothing to send.', 'ok');
+      btn.disabled = true;
+      btn.textContent = 'already upgraded';
+      return;
+    }
+    if (account && multisig && account.toLowerCase() !== multisig.toLowerCase()) {
+      setStatus(c.key, 'Connected wallet ' + short(account) + ' is NOT the multisig ' + short(multisig) + '. Switch accounts in MetaMask.', 'warn');
+      btn.disabled = true;
+      btn.textContent = 'wrong wallet — switch account';
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = 'upgrade ' + c.label.toLowerCase() + ' contract';
+    setStatus(c.key, 'Ready. Clicking sends upgradeTo — approve it on your device.', '');
+  }
+
+  async function ensureNetwork() {
+    const chainId = await ethereum.request({ method: 'eth_chainId' });
+    if (chainId.toLowerCase() !== CHAIN_ID) {
+      topStatus.textContent = 'Wrong network — switch MetaMask to Robinhood Chain mainnet (4663).';
+      topStatus.className = 'top-status warn';
+      try { await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] }); }
+      catch { return false; }
+    }
+    return true;
+  }
+
+  async function refreshAll() {
+    if (!(await ensureNetwork())) return;
+    multisig = await readMultisig();
+    document.getElementById('multisig').textContent = multisig;
+    topStatus.textContent = 'Connected. Review each contract card below.';
+    topStatus.className = 'top-status';
+    for (const c of CONTRACTS) await refreshOne(c);
+  }
+
+  async function sendUpgrade(c) {
+    const btn = document.getElementById('btn-' + c.key);
+    try {
+      if (!(await ensureNetwork())) return;
+      btn.disabled = true;
+      setStatus(c.key, 'Sending transaction — approve on your device…', '');
+      const data = SEL_UPGRADE_TO + c.newImpl.slice(2).padStart(64, '0');
+      const txHash = await ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: account, to: c.proxy, data }],
+      });
+      setStatus(c.key, 'Sent: ' + txHash + '\nWaiting for confirmation…', '');
+      for (let i = 0; i < 60; i++) {
+        const rcpt = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+        if (rcpt) {
+          if (rcpt.status === '0x1') {
+            const impl = await readImpl(c.proxy);
+            setStatus(c.key, 'Confirmed ✓  implementation is now ' + impl, 'ok');
+            btn.textContent = 'upgraded ✓';
+          } else {
+            setStatus(c.key, 'Transaction reverted. Is the connected wallet the current multisig?', 'err');
+            btn.disabled = false;
+          }
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      setStatus(c.key, 'Still pending — check the tx in MetaMask: ' + txHash, 'warn');
+    } catch (e) {
+      setStatus(c.key, 'Error: ' + (e && e.message || e), 'err');
+      btn.disabled = false;
+    }
+  }
+
+  for (const c of CONTRACTS) {
+    document.getElementById('btn-' + c.key).onclick = () => sendUpgrade(c);
+  }
+
+  connectBtn.onclick = async () => {
+    const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+    account = accounts[0];
+    document.getElementById('connected').textContent = account;
+    await refreshAll();
+  };
+
+  ethereum.on?.('accountsChanged', (accs) => {
+    account = accs[0] || null;
+    document.getElementById('connected').textContent = account || 'not connected';
+    if (account) refreshAll();
+  });
+
+  try {
+    multisig = await readMultisig();
+    document.getElementById('multisig').textContent = multisig;
+  } catch {}
+})();
+</script>
+</body>
+</html>
