@@ -7,6 +7,11 @@ import SageNFTJson from '@/constants/abis/NFT/SageNFT.sol/SageNFT.json';
 import NFTFactoryJson from '@/constants/abis/NFT/NFTFactory.sol/NFTFactory.json';
 import MarketplaceJson from '@/constants/abis/Market/Marketplace.sol/Marketplace.json';
 import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SAGEOpenEdition.json';
+// The voucher OE has a DIFFERENT struct (12 fields incl. voucherGated) +
+// batchMintWithVoucher. It MUST stay separate from the legacy 11-field ABI —
+// encoding the 12-field createOpenEdition struct against the old global
+// contract would corrupt the call.
+import OpenEditionVoucherJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SAGEOpenEditionVoucher.json';
 import CollectionJson from '@/constants/abis/Collection/SageCollection.sol/SageCollection.json';
 import StorageJson from '@/constants/abis/Utils/SageStorage.sol/SageStorage.json';
 import ERC20StandardJson from '@/constants/abis/ERC-20/ERC20Standard.json';
@@ -99,13 +104,13 @@ export async function getOpenEditionContract(signer?: Signer): Promise<Contract>
   );
 }
 
-// Same ABI, the voucher-gated OpenEdition address — its extra
-// batchMintWithVoucher/voucherGated members are present in the compiled ABI.
+// The voucher-gated OpenEdition — its own 12-field ABI (voucherGated struct
+// field + batchMintWithVoucher).
 export async function getOpenEditionVoucherContract(signer?: Signer): Promise<Contract> {
   return await getContract(
     OPENEDITION_VOUCHER_ADDRESS,
-    OpenEditionJson.contractName,
-    OpenEditionJson.abi,
+    OpenEditionVoucherJson.contractName,
+    OpenEditionVoucherJson.abi,
     signer
   );
 }
