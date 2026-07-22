@@ -860,7 +860,7 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
       prisma.socialTip.count({ where: { toAddress: addr, createdAt: { gt: since } } }),
       prisma.socialCollect.count({ where: { ...mine, NOT: { collectorAddress: addr }, createdAt: { gt: since } } }),
       prisma.socialFollow.count({ where: { followingAddress: addr, createdAt: { gt: since } } }),
-      prisma.socialPost.count({ where: { ReplyTo: { authorAddress: addr }, NOT: { authorAddress: addr }, createdAt: { gt: since } } }),
+      prisma.socialPost.count({ where: { ReplyTo: { authorAddress: addr }, NOT: { authorAddress: addr }, deletedAt: null, createdAt: { gt: since } } }),
     ]);
     unreadActivity = Math.min(99, uL + uR + uT + uC + uF + uReplies);
   }
@@ -2595,7 +2595,10 @@ async function getActivity(res: NextApiResponse, r: { walletAddress: string }) {
       take: 30,
     }),
     prisma.socialPost.findMany({
-      where: { ReplyTo: { authorAddress: me }, NOT: { authorAddress: me } },
+      // deletedAt filter matters: a moderation sweep soft-deletes a wallet's
+      // posts, and without it the "replied to your post" trail kept showing
+      // the removed content in everyone's activity feed
+      where: { ReplyTo: { authorAddress: me }, NOT: { authorAddress: me }, deletedAt: null },
       select: { id: true, text: true, authorAddress: true, createdAt: true, replyToId: true },
       orderBy: { createdAt: 'desc' },
       take: 30,
