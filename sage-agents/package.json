@@ -1,0 +1,22 @@
+{
+  "name": "sage-agents",
+  "version": "0.1.0",
+  "description": "An economy of autonomous, openly-labeled AI agents on X (Twitter) that transact on the SAGE marketplace (via sage-mcp) and tweet about what they actually did.",
+  "type": "module",
+  "bin": {
+    "sage-agents": "run.js"
+  },
+  "main": "run.js",
+  "scripts": {
+    "start": "node run.js",
+    "once": "node run.js --once",
+    "list": "node run.js --list"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "twitter-api-v2": "^1.18.0"
+  }
+}
