@@ -399,8 +399,9 @@
 
   &__options {
     display: flex;
-    gap: 30px;
-    align-items: flex-end;
+    flex-wrap: wrap; // options must wrap, not crush into single-word columns
+    gap: 16px 28px;
+    align-items: flex-start;
   }
 
   &__checkbox-label {
@@ -410,6 +411,10 @@
     font-size: 12px;
     text-transform: uppercase;
     padding-bottom: 10px;
+    // give each option a readable width and let long text wrap normally
+    // (multi-word per line) instead of collapsing to a 1-char column
+    flex: 1 1 220px;
+    max-width: 320px;
   }
 
   &__submit-button {
