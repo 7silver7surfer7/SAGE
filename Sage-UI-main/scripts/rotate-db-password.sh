@@ -41,6 +41,13 @@ echo "  Cloud Run updated"
 # deleted. If a future workflow needs DB access, prefer a public throttled
 # API endpoint (the SyncPixelBank pattern) over re-uploading credentials.
 
+# the nightly-backup launchd agent keeps its own credential copy in
+# ~/.sage-db-backup — refresh it or backups silently start failing
+if [ -d "$HOME/.sage-db-backup" ]; then
+  bash deploy/db-backup/install.sh >/dev/null 2>&1 && echo "  backup agent env refreshed" \
+    || echo "  WARN: backup agent refresh failed — run deploy/db-backup/install.sh manually"
+fi
+
 # verify: one live query through the new credential
 echo "verifying…"
 DATABASE_CONNECTION_POOL_URL="$DBURL" node -e '
