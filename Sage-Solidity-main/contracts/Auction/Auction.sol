@@ -264,10 +264,13 @@ contract Auction is
         external
     {
         require(auctions[_auctionId].startTime > 0, "Auction doesn't exist");
+        // SECURITY (audit M1): admin-only. The artist could previously set their
+        // OWN share to 100% (_shareBps=10000), zeroing the platform's primary-
+        // sale commission mid-auction. The share is set at creation; this is a
+        // corrective/backfill tool, not an artist-facing control.
         require(
-            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
-                msg.sender == auctions[_auctionId].nftContract.artist(),
-            "Admin or the NFT's artist only"
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender),
+            "Admin only"
         );
         require(_shareBps <= 10000, "Invalid share");
         auctionArtistShare[_auctionId] = _shareBps;

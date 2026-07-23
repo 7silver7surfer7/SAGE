@@ -249,10 +249,13 @@ contract SageCollection is Pausable {
         external
     {
         require(collections[_id].startTime > 0, "Collection doesn't exist");
+        // SECURITY (audit M2): admin-only. The artist could previously set their
+        // OWN share to 100% (_shareBps=10000), zeroing the platform's primary-
+        // sale commission on every subsequent mint. The share is set at creation;
+        // this is a corrective/backfill tool, not an artist-facing control.
         require(
-            sageStorage.hasRole(keccak256("role.admin"), msg.sender) ||
-                msg.sender == collections[_id].nftContract.artist(),
-            "Admin or the NFT's artist only"
+            sageStorage.hasRole(keccak256("role.admin"), msg.sender),
+            "Admin only"
         );
         require(_shareBps <= 10000, "Invalid share");
         collectionArtistShare[_id] = _shareBps;

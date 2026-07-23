@@ -1204,6 +1204,13 @@ async function createDropPost(
   res: NextApiResponse,
   r: { walletAddress: string }
 ) {
+  // SECURITY (audit pass-2 M): apply the same ban/participation gate + rate
+  // limit as createPost — this path previously skipped both, so a banned
+  // artist could keep posting and there was no spam limit.
+  if (!(await canParticipate(r.walletAddress)))
+    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
+  if (rateLimited(r.walletAddress, 'dropPost', 10))
+    return res.status(429).json({ error: 'slow down — 10 posts per minute max' });
   const dropId = Number(req.body?.dropId);
   const kind = String(req.body?.kind || '');
   if (!dropId || !['auction', 'openEdition', 'collection'].includes(kind))
@@ -1305,6 +1312,15 @@ async function toggleFollow(
     // adds are one-way by design (same as unclaiming an IP-gated spot)
     return res.json({ following: false });
   }
+  // SECURITY (audit pass-2 M): a NEW follow of a gated artist mints a platform-
+  // gas-funded on-chain allowlist slot (syncFollowerIntoGatedDrops below). Gate
+  // it behind the same invite requirement as posting + a rate limit, so a Sybil
+  // can't script unlimited free wallets into gated drops. (Unfollow is ungated,
+  // above.)
+  if (!(await canParticipate(r.walletAddress)))
+    return res.status(403).json({ error: 'SAGE Social is invite-only — redeem an invite code to follow', needsInvite: true });
+  if (rateLimited(r.walletAddress, 'follow', 30))
+    return res.status(429).json({ error: 'slow down' });
   // the target must be a known user (has signed in at least once)
   const targetUser = await prisma.user.findUnique({ where: { walletAddress: target } });
   if (!targetUser) return res.status(404).json({ error: 'user not found' });
@@ -3233,20 +3249,39 @@ async function requestCollectVoucher(
   });
   if (already) return res.status(400).json({ error: 'already collected' });
 
-  // points-only: collectPrice holds the pixel price directly
-  const currency = 'POINTS' as const;
-  const amount = 0;
+  // SECURITY (audit pass-2 HIGH): honor the post's collect currency. An ETH-
+  // priced collectible must be paid on-chain to the author and verified here —
+  // previously this handler ALWAYS took the points path, so an ETH-priced art
+  // NFT could be minted for ~1 free-accruing pixel. Mirrors collectPost's ETH
+  // branch (on-chain payment + unique-payTxHash replay guard).
+  let currency: 'ETH' | 'POINTS' = post.collectCurrency === 'ETH' ? 'ETH' : 'POINTS';
+  let amount = 0;
+  let payTxHash: string | null = null;
   let pointsSpent: bigint | null = null;
   if (post.collectPrice > 0) {
-    const pointsPrice = BigInt(Math.ceil(post.collectPrice));
-    try {
-      await debitPixelsAtomic(r.walletAddress, post.authorAddress, id, pointsPrice);
-    } catch (e: any) {
-      return res
-        .status(e?.message === 'pixels-conflict' ? 409 : 400)
-        .json({ error: e?.message === 'pixels-conflict' ? 'pixels are busy — try again' : e.message });
+    if (currency === 'ETH') {
+      if (!txHash) return res.status(400).json({ error: 'payment tx required' });
+      // payTxHash is globally unique — reject a tx already used by any collect
+      const dupe = await prisma.socialCollect.findFirst({ where: { payTxHash: txHash } });
+      if (dupe) return res.status(400).json({ error: 'this payment was already used' });
+      try {
+        // 5% tolerance for rounding between quote and signed value
+        amount = await verifyPayment(txHash, r.walletAddress, post.authorAddress, post.collectPrice * 0.95, 'ETH');
+      } catch (e: any) {
+        return res.status(400).json({ error: `payment not verified: ${e.message}` });
+      }
+      payTxHash = txHash;
+    } else {
+      const pointsPrice = BigInt(Math.ceil(post.collectPrice));
+      try {
+        await debitPixelsAtomic(r.walletAddress, post.authorAddress, id, pointsPrice);
+      } catch (e: any) {
+        return res
+          .status(e?.message === 'pixels-conflict' ? 409 : 400)
+          .json({ error: e?.message === 'pixels-conflict' ? 'pixels are busy — try again' : e.message });
+      }
+      pointsSpent = pointsPrice;
     }
-    pointsSpent = pointsPrice;
   }
 
   // freeze metadata (Filebase/IPFS if configured, else the on-site tokenURI)
@@ -3292,7 +3327,7 @@ async function requestCollectVoucher(
         amount,
         currency,
         pointsSpent,
-        payTxHash: amount > 0 ? txHash : null,
+        payTxHash,
         mintTxHash: 'voucher', // buyer submits the mint; tx not known server-side
         contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
         tokenId: 0, // assigned on-chain when the collector redeems
@@ -3310,13 +3345,25 @@ async function requestCollectVoucher(
  * is the one appended by Google's front end (earlier hops are spoofable).
  */
 function faucetClientIp(req: NextApiRequest): string | null {
-  const cf = req.headers['cf-connecting-ip'];
-  if (typeof cf === 'string' && cf) return cf;
-  const xff = req.headers['x-forwarded-for'];
-  const raw = Array.isArray(xff) ? xff[xff.length - 1] : xff;
-  if (!raw) return req.socket?.remoteAddress || null;
-  const hops = raw.split(',').map((s) => s.trim()).filter(Boolean);
-  return hops[hops.length - 1] || null;
+  // SECURITY (audit pass-2 M): cf-connecting-ip / x-forwarded-for are client-
+  // settable unless the request provably came through our trusted front end.
+  // When TRUSTED_PROXY_SECRET is configured (the front end injects x-sage-proxy),
+  // only trust the forwarded headers on a secret match; otherwise fall back to
+  // the socket peer. When it's unset we keep the CF-authoritative behavior
+  // (prod always sits behind Cloudflare), so nothing breaks by default.
+  const secret = process.env.TRUSTED_PROXY_SECRET;
+  const trusted = !secret || req.headers['x-sage-proxy'] === secret;
+  if (trusted) {
+    const cf = req.headers['cf-connecting-ip'];
+    if (typeof cf === 'string' && cf) return cf;
+    const xff = req.headers['x-forwarded-for'];
+    const raw = Array.isArray(xff) ? xff[xff.length - 1] : xff;
+    if (raw) {
+      const hops = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      if (hops[hops.length - 1]) return hops[hops.length - 1];
+    }
+  }
+  return req.socket?.remoteAddress || null;
 }
 
 /** Salted hash — raw IPs are never stored. */
@@ -3338,6 +3385,13 @@ async function requestFaucetVoucher(
 ) {
   const faucetAddress = parameters.SOCIAL_FAUCET_ADDRESS;
   if (!faucetAddress) return res.status(400).json({ error: 'the faucet is not enabled here' });
+  // SECURITY (audit pass-2 M): gate the faucet behind a redeemed invite. The
+  // per-wallet + per-IP claim rows are the only other Sybil defenses and both
+  // are cheap to spoof (fresh wallets are free; the IP hash derives from a
+  // client-settable header). The scarce, operator-controlled invite is the real
+  // rate limiter on faucet drain.
+  if (!(await canParticipate(r.walletAddress)))
+    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
   const ip = faucetClientIp(req);
   if (!ip) return res.status(400).json({ error: 'could not determine your network' });
   const ipHash = hashFaucetIp(ip);
@@ -3498,9 +3552,25 @@ async function recordEditionLaunch(
     if (!rcpt || rcpt.status !== 1) throw new Error('launch tx not mined');
     if (rcpt.from.toLowerCase() !== r.walletAddress.toLowerCase()) throw new Error('not your launch');
     if (rcpt.to?.toLowerCase() !== launcher.toLowerCase()) throw new Error('wrong launcher');
+    // SECURITY (audit pass-2 HIGH): bind the claimed editionAddress to the
+    // EditionCreated event in THIS tx — otherwise any tx to the launcher could
+    // be replayed to register (hijack/squat) an arbitrary edition address with
+    // attacker metadata. Mirrors recordTokenLaunch's TokenLaunched check.
+    const iface = new ethers.utils.Interface([
+      'event EditionCreated(address indexed edition, address indexed artist, string name, string symbol, uint256 priceWei, uint256 maxSupply, bool isCollection)',
+    ]);
+    const created = rcpt.logs
+      .map((l) => { try { return iface.parseLog(l); } catch { return null; } })
+      .find((p) => p?.name === 'EditionCreated');
+    if (!created) throw new Error('no EditionCreated event in tx');
+    if (created.args.edition.toLowerCase() !== edition.toLowerCase())
+      throw new Error('edition does not match the launch tx');
   } catch (e: any) {
     return res.status(400).json({ error: `launch not verified: ${e.message}` });
   }
+  // reject launchTxHash reuse (belt-and-suspenders alongside editionAddress @unique)
+  if (await prisma.socialNftEdition.findFirst({ where: { launchTxHash } }))
+    return res.status(400).json({ error: 'this launch tx was already used' });
   try {
     const row = await prisma.socialNftEdition.create({
       data: {

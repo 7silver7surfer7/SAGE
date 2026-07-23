@@ -1,4 +1,6 @@
 import { promises as dns } from 'dns';
+import http from 'http';
+import https from 'https';
 
 /**
  * Server-side link unfurling for SAGE Social — the first URL in a post is
@@ -39,85 +41,106 @@ function isPrivateIp(ip: string): boolean {
 }
 
 /**
- * SSRF guard: only public-looking http(s) hosts — never loopback/private.
- * Checks BOTH the hostname string AND (via a real DNS lookup) the address it
- * actually resolves to, so a domain an attacker controls DNS for can't
- * rebind a public-looking hostname to an internal/metadata IP. `fetch()`
- * itself does its own separate DNS resolution — see the comment on
- * fetchWithLimit for why that residual TOCTOU gap is accepted.
+ * SSRF guard + DNS PIN (audit M5). Validates the URL is a public http(s) host,
+ * resolves it once, and returns the concrete public IP so the caller connects
+ * to EXACTLY that address — never a second, unvalidated resolution. This closes
+ * the DNS-rebinding TOCTOU: the previous code validated the resolved IP but
+ * then let fetch() do its OWN independent lookup, which an attacker controlling
+ * a ~0-TTL record could answer as public on the check and internal on connect.
+ * Every resolved address must be public (a mixed answer is rejected outright).
  */
-async function isSafeUrl(raw: string): Promise<boolean> {
+async function resolveSafe(
+  raw: string
+): Promise<{ url: URL; ip: string; family: number } | null> {
   let u: URL;
   try {
     u = new URL(raw);
   } catch {
-    return false;
+    return null;
   }
-  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
   const host = u.hostname.toLowerCase();
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false;
-  if (host.startsWith('[')) return false; // bracketed IPv6 literal, handled below via lookup
-  if (isPrivateIp(host)) return false;
+  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return null;
+  const bare = host.startsWith('[') ? host.slice(1, -1) : host; // unwrap [IPv6]
+  if (isPrivateIp(bare)) return null;
   try {
-    const addrs = await dns.lookup(host, { all: true, verbatim: true });
-    if (addrs.some((a) => isPrivateIp(a.address))) return false;
+    const addrs = await dns.lookup(bare, { all: true, verbatim: true });
+    if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) return null;
+    return { url: u, ip: addrs[0].address, family: addrs[0].family };
   } catch {
-    return false; // unresolvable host — nothing safe to fetch anyway
+    return null; // unresolvable host — nothing safe to fetch anyway
   }
-  return true;
 }
 
 async function fetchWithLimit(url: string, accept: string): Promise<string | null> {
-  // Manual redirect handling: `redirect: 'follow'` would let a fetch to a
-  // safe, public-looking URL silently 30x to an internal/metadata address —
-  // isSafeUrl() was only ever checked on the ORIGINAL url, never on
-  // redirect targets. Re-validate every hop, capped at 5.
+  // Manual redirect handling: an auto-followed redirect could 30x a safe,
+  // public URL to an internal/metadata address. Re-validate AND re-pin every
+  // hop (capped at 5) — each request connects only to the just-validated IP.
   let current = url;
   for (let hop = 0; hop < 5; hop++) {
-    if (!(await isSafeUrl(current))) return null;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 5000);
-    try {
-      const res = await fetch(current, {
-        signal: ctrl.signal,
-        redirect: 'manual',
-        headers: {
-          // a browsery UA — many sites hide OG tags from unknown bots
-          'user-agent':
-            'Mozilla/5.0 (compatible; SAGESocialBot/1.0; +https://sageart.xyz) facebookexternalhit/1.1',
-          accept,
-        },
-      });
-      if (res.status >= 300 && res.status < 400) {
-        const loc = res.headers.get('location');
-        if (!loc) return null;
-        current = new URL(loc, current).toString();
-        continue; // re-validate the new target on the next loop iteration
-      }
-      if (!res.ok) return null;
-      // cap the read at 512KB — we only need the <head>
-      const reader = res.body?.getReader();
-      if (!reader) return null;
-      const chunks: Uint8Array[] = [];
-      let total = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          chunks.push(value);
-          total += value.length;
-          if (total > 512 * 1024) {
-            ctrl.abort();
-            break;
+    const safe = await resolveSafe(current);
+    if (!safe) return null;
+    const { url: u, ip, family } = safe;
+    const lib = u.protocol === 'https:' ? https : http;
+    const result = await new Promise<{ status: number; location: string | null; body: string | null }>(
+      (resolve) => {
+        const req = lib.get(
+          {
+            protocol: u.protocol,
+            hostname: u.hostname, // Host header + TLS SNI/cert use the real name…
+            port: u.port || (u.protocol === 'https:' ? 443 : 80),
+            path: u.pathname + u.search,
+            // …but the socket connects to the exact IP we validated — no
+            // re-resolution, so DNS can't rebind to an internal address here.
+            // Node 22's Happy Eyeballs (autoSelectFamily) calls lookup with
+            // {all:true} and expects an array, so handle both callback forms.
+            lookup: (_h: string, opts: any, cb: any) =>
+              opts && opts.all ? cb(null, [{ address: ip, family }]) : cb(null, ip, family),
+            headers: {
+              'user-agent':
+                'Mozilla/5.0 (compatible; SAGESocialBot/1.0; +https://sageart.xyz) facebookexternalhit/1.1',
+              accept,
+            },
+            timeout: 5000,
+          },
+          (res) => {
+            const status = res.statusCode || 0;
+            if (status >= 300 && status < 400) {
+              res.resume();
+              resolve({ status, location: res.headers.location || null, body: null });
+              return;
+            }
+            if (status < 200 || status >= 300) {
+              res.resume();
+              resolve({ status, location: null, body: null });
+              return;
+            }
+            const chunks: Buffer[] = [];
+            let total = 0;
+            res.on('data', (c: Buffer) => {
+              chunks.push(c);
+              total += c.length;
+              if (total > 512 * 1024) {
+                res.destroy();
+                resolve({ status, location: null, body: Buffer.concat(chunks).toString('utf8') });
+              }
+            });
+            res.on('end', () =>
+              resolve({ status, location: null, body: Buffer.concat(chunks).toString('utf8') })
+            );
+            res.on('error', () => resolve({ status, location: null, body: null }));
           }
-        }
+        );
+        req.on('timeout', () => req.destroy());
+        req.on('error', () => resolve({ status: 0, location: null, body: null }));
       }
-      return Buffer.concat(chunks).toString('utf8');
-    } catch {
-      return null;
-    } finally {
-      clearTimeout(timer);
+    );
+    if (result.status >= 300 && result.status < 400) {
+      if (!result.location) return null;
+      current = new URL(result.location, current).toString();
+      continue; // re-validate + re-pin the new target
     }
+    return result.body;
   }
   return null; // too many redirects
 }
@@ -175,7 +198,7 @@ async function tweetPreview(url: string): Promise<LinkPreview | null> {
 }
 
 export async function fetchLinkPreview(url: string): Promise<LinkPreview | null> {
-  if (!(await isSafeUrl(url))) return null;
+  if (!(await resolveSafe(url))) return null;
   let host = '';
   try {
     host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
