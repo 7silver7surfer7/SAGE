@@ -95,12 +95,42 @@ collection drop is reasonable; the source is ready whenever you want it live.
 
 ---
 
+## 4. SagePoints governance (ownership → multisig)
+
+Both SagePoints deployments (testnet `0x2CbBc5f9…`, mainnet frozen v3
+`0x78cBa250…`) are owned by the **oracle hot key** `0x8994…` (verified on-chain).
+Its `onlyOwner` functions (`setController` / `setEconomics` / `seedSettled`) sit
+behind that single hot key. Move ownership to the multisig — one `transferOwnership`
+tx by the current owner (not multisig-gated; the oracle key runs it directly):
+
+```bash
+cd Sage-Solidity-main
+# run with the ORACLE key (current owner on both nets)
+npx hardhat run scripts/transfer_sagepoints_ownership.js --network robinhoodTestnet
+npx hardhat run scripts/transfer_sagepoints_ownership.js --network robinhood
+```
+
+Pixels are DB-authoritative and SagePoints is frozen, so this is defense-in-depth
+on a dormant contract — but a hot-key owner is exactly the concentration the audit
+flagged. If you're certain it will never be revived, `renounceOwnership()` is even
+stronger (irreversible); the script transfers to the multisig to keep the option.
+
+**`seedSettled` run-once guard** — a per-user `seeded` mapping now blocks any
+re-seed from overwriting a banked balance. This is **source-only** (SagePoints is
+not upgradeable): it protects any *future* SagePoints deploy; the live frozen
+contracts are unaffected and are protected by the ownership transfer above.
+
+---
+
 ## Suggested order
 
 1. **Testnet H1** (§1) — quick, closes a live testnet hole.
 2. **M1 Auction upgrade** (§2) on testnet → verify → mainnet. Clean UUPS, low risk.
-3. **M2 SageCollection** (§3) — optional / next collection drop.
+3. **SagePoints ownership → multisig** (§4) — one tx per net, low risk, closes the
+   hot-key-owner finding on a live (if dormant) contract.
+4. **M2 SageCollection** (§3) — optional / next collection drop.
 
-Still separate (not in this run book): the remaining **lows** and the
-**SagePoints governance** items (move SagePoints ownership to the multisig, add a
-`seedSettled` run-once guard) — see the audit report.
+Still separate (not in this run book): the remaining **lows** (collection-id
+squat, lottery domain-separation, OE `_amount` bind, graduation front-run, swap
+deadline, recordTip, RecordAirdrop, redeemInvite race, Splitter DoS) — see the
+audit report.

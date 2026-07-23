@@ -40,6 +40,10 @@ contract SagePoints is Ownable {
     // whole SAGE observed at the user's last sync — the ceiling on what the
     // next window can accrue (min'd with the live balance). 0 until first sync.
     mapping(address => uint256) public checkpointSage;
+    // audit: seedSettled is a one-time-per-user migration tool. This guard makes
+    // that explicit on-chain so an accidental re-run can't overwrite a user's
+    // banked balance to an arbitrary value.
+    mapping(address => bool) public seeded;
     uint256 public totalSpent; // lifetime pixels burned (analytics)
 
     struct Economics {
@@ -127,6 +131,10 @@ contract SagePoints is Ownable {
         require(users.length == amounts.length, 'length mismatch');
         for (uint256 i = 0; i < users.length; i++) {
             address u = users[i];
+            // one-time per user: seeding may run in batches, but a given user's
+            // balance can only ever be set once here (audit run-once guard).
+            require(!seeded[u], 'already seeded');
+            seeded[u] = true;
             settled[u] = amounts[i];
             lastSync[u] = block.timestamp;
             checkpointSage[u] = sage.balanceOf(u) / 1 ether;
