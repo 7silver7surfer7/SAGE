@@ -102,7 +102,9 @@ async function fetchWithLimit(url: string, accept: string): Promise<string | nul
               accept,
             },
             timeout: 5000,
-          },
+            // cast: node's http|https .get() union types reject the (valid)
+            // `lookup` option and a string|number port; the shape is correct.
+          } as any,
           (res) => {
             const status = res.statusCode || 0;
             if (status >= 300 && status < 400) {
