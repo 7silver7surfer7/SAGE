@@ -16,7 +16,16 @@ mkdir -p "$HOME_DIR/dumps"
 DBURL=$(grep "^DATABASE_CONNECTION_POOL_URL=" Sage-UI-main/.env.deploy | cut -d= -f2- | sed "s/^['\"]//; s/['\"]$//; s/:6543\//:5432\//; s/?.*$//")
 AK=$(grep "^AWS_ACCESS_KEY_SAGE=" Sage-UI-main/.env | cut -d= -f2-)
 SK=$(grep "^AWS_SECRET_ACCESS_KEY_SAGE=" Sage-UI-main/.env | cut -d= -f2-)
-BUCKET=$(grep "^S3_BUCKET=" Sage-UI-main/.env | cut -d= -f2-)
+# SECURITY (audit pass-3): backups used to go to $S3_BUCKET — the PUBLIC media
+# mirror, which serves NFT art via a public-read policy. That published a full
+# production dump at an anonymously-downloadable URL (verified live: HTTP 200,
+# no credentials). Backups now go to their own PRIVATE bucket with Block Public
+# Access on. This MUST never be pointed back at S3_BUCKET.
+BUCKET=$(grep "^DB_BACKUP_BUCKET=" Sage-UI-main/.env | cut -d= -f2-)
+if [ -z "$BUCKET" ]; then
+  echo "DB_BACKUP_BUCKET is not set in Sage-UI-main/.env — refusing to fall back to the public media bucket." >&2
+  exit 1
+fi
 umask 077
 cat > "$HOME_DIR/env" <<ENV
 SESSION_DB_URL='$DBURL'
@@ -33,15 +42,42 @@ cd "$(dirname "$0")"
 set -a; . ./env; set +a
 STAMP=$(date +%Y-%m-%d-%H%M)
 FILE="dumps/sage-$STAMP.sql.gz"
-/opt/homebrew/opt/libpq/bin/pg_dump "$SESSION_DB_URL" --no-owner --no-privileges | gzip > "$FILE"
+
+# The Supabase pooler intermittently drops a long-running COPY mid-dump
+# ("server closed the connection unexpectedly"). That is transient, not a
+# config fault — the same command succeeds on the next attempt. Left unhandled
+# it silently broke backups for three days: every run aborted under pipefail,
+# leaving a TRUNCATED file on disk and never uploading, while the last good
+# copy quietly aged out. So: retry, and prove completeness before accepting.
+#
+# Completeness is verified by pg_dump's own end-of-dump marker rather than a
+# size threshold — a partial dump can easily clear any byte count (the failed
+# runs produced 46KB/335KB/326KB against a healthy 2.7MB), but it can never
+# contain the trailer.
+attempt=1
+max=3
+while : ; do
+  if /opt/homebrew/opt/libpq/bin/pg_dump "$SESSION_DB_URL" --no-owner --no-privileges 2>/tmp/sage-pgdump.err | gzip > "$FILE"; then
+    if gzip -dc "$FILE" | grep -q "PostgreSQL database dump complete"; then
+      break
+    fi
+    echo "$(date -u +%FT%TZ) attempt $attempt: dump TRUNCATED (no completion marker)" >&2
+  else
+    echo "$(date -u +%FT%TZ) attempt $attempt: pg_dump failed: $(tail -1 /tmp/sage-pgdump.err)" >&2
+  fi
+  rm -f "$FILE"
+  if [ "$attempt" -ge "$max" ]; then
+    echo "$(date -u +%FT%TZ) BACKUP FAILED after $max attempts — previous copies kept" >&2
+    exit 1
+  fi
+  attempt=$((attempt+1))
+  sleep 20
+done
+
 SIZE=$(stat -f%z "$FILE")
-if [ "$SIZE" -lt 100000 ]; then
-  echo "$(date -u +%FT%TZ) BACKUP SUSPICIOUSLY SMALL (${SIZE}B) — keeping old copies" >&2
-  exit 1
-fi
-echo "$(date -u +%FT%TZ) dumped $FILE (${SIZE}B)"
-/opt/homebrew/bin/aws s3 cp "$FILE" "s3://$S3_BUCKET/db-backups/" --only-show-errors
-echo "$(date -u +%FT%TZ) mirrored to s3://$S3_BUCKET/db-backups/"
+echo "$(date -u +%FT%TZ) dumped $FILE (${SIZE}B, verified complete, attempt $attempt)"
+/opt/homebrew/bin/aws s3 cp "$FILE" "s3://$S3_BUCKET/" --only-show-errors
+echo "$(date -u +%FT%TZ) mirrored to s3://$S3_BUCKET/ (private)"
 find dumps -name "sage-*.sql.gz" -mtime +14 -delete
 SCRIPT
 chmod +x "$HOME_DIR/run-backup.sh"
