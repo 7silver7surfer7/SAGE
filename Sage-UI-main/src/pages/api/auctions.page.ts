@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
-import { getRequester } from '@/utilities/apiAuth';
+import { getRequester, isCrossSiteRequest } from '@/utilities/apiAuth';
 import { getUnclaimedAuctionWinner } from '@/utilities/contracts';
 import { isEthCurrency, parameters } from '@/constants/config';
 import AuctionJson from '@/constants/abis/Auction/Auction.sol/Auction.json';
@@ -22,6 +22,14 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
   // don't need a caller (GetAuction etc.) still work when this is undefined.
   const requester = await getRequester(request);
   const walletAddress = requester?.walletAddress;
+  // audit pass-3 HIGH: block cross-site invocation of the state-changing
+  // actions (SameSite=Lax cookies ride along on a top-level GET).
+  if (
+    (action === 'SaveBid' || action === 'UpdateNftClaimedDate') &&
+    isCrossSiteRequest(request, response)
+  ) {
+    return;
+  }
   switch (action) {
     case 'GetAuction':
       await getAuction(Number(request.query.auctionId), response);

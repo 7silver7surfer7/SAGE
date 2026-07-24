@@ -6,7 +6,7 @@ import { isVideoSrc } from '@/utilities/media';
 import { flushDropAllowlist, flushAllPendingAllowlists } from '@/utilities/allowlistFlush';
 import { PresetDrop } from '@/store/dropsReducer';
 import { withArtistDisplayNameOverride } from '@/prisma/functions';
-import { requireRole } from '@/utilities/apiAuth';
+import { requireRole, isCrossSiteRequest } from '@/utilities/apiAuth';
 import { parseAddressList, ALLOWLIST_MAX_ADDRESSES } from '@/utilities/allowlist';
 import {
   deployWhitelistServerSide,
@@ -70,6 +70,26 @@ const ACTION_ROLES: Record<string, Role[]> = {
   GetGameVoucher: [Role.USER, Role.ARTIST, Role.ADMIN],
 };
 
+// State-changing actions, gated by the cross-site check in handler(). Reads
+// (GetApprovedDrops, GetFullDrop, …) stay open so public browsing is unaffected.
+const MUTATING_ACTIONS = new Set([
+  'ClaimMintSpot',
+  'DeleteDrop',
+  'DeleteDrops',
+  'EnableIpGate',
+  'MarkAllowlistSynced',
+  'OptimizeDropImages',
+  'SaveDropAllowlist',
+  'UpdateApprovedDateAndIsLiveFlags',
+  'UpdateAuctionContractAddress',
+  'UpdateCollectionContractAddress',
+  'UpdateCollectionNftContract',
+  'UpdateLotteryContractAddress',
+  'UpdateNftContractAddress',
+  'UpdateOpenEditionContractAddress',
+  'UpdateSplitterAddress',
+]);
+
 async function handler(request: NextApiRequest, response: NextApiResponse) {
   const {
     query: { action, id, address },
@@ -83,6 +103,16 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
   if (action === 'SyncAllowlists') {
     const r = await flushAllPendingAllowlists();
     response.json(r);
+    return;
+  }
+  // SECURITY (audit pass-3 HIGH): these actions mutate state but are dispatched
+  // off req.query.action with no method check, and the session cookie is
+  // SameSite=Lax — so a bare cross-site link opened by a logged-in admin or
+  // artist was enough to repoint a drop's mint contract, flip approval flags,
+  // or delete drops. Reject anything that didn't originate from our own page.
+  // (Deliberately AFTER the SyncAllowlists cron poke above, which is
+  // intentionally credential-less and browser-less.)
+  if (MUTATING_ACTIONS.has(String(action)) && isCrossSiteRequest(request, response)) {
     return;
   }
   const allowedRoles = ACTION_ROLES[String(action)];

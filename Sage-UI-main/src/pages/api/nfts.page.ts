@@ -4,15 +4,30 @@ import { Nft, OfferState, Role, User } from '@prisma/client';
 import { getNFTContract } from '@/utilities/contracts';
 import { ethers } from 'ethers';
 import { cleanPrismaError } from '@/utilities/prismaError';
-import { getRequester } from '@/utilities/apiAuth';
+import { getRequester, isCrossSiteRequest } from '@/utilities/apiAuth';
 import { CollectedListingNft, Nft_include_NftContractAndOffers } from '@/prisma/types';
 import { SearchableNftData } from '@/store/nftsReducer';
 import { sendArweaveTransaction } from '@/utilities/arweave-server';
+import { parameters, currencyAddressFor } from '@/constants/config';
+import { toDecimalString } from '@/utilities/decimalString';
+
+// State-changing actions on this route — gated by the cross-site check below.
+// (Reads stay open so public marketplace browsing is unaffected.)
+const MUTATING_ACTIONS = new Set([
+  'DeployContractMetadata',
+  'CreateOffer',
+  'InvalidateOffer',
+  'DeleteOffer',
+  'UpdateOwner',
+]);
 
 export default async function handler(request: NextApiRequest, response: NextApiResponse) {
   const {
     query: { action },
   } = request;
+  if (MUTATING_ACTIONS.has(String(action)) && isCrossSiteRequest(request, response)) {
+    return;
+  }
   switch (action) {
     case 'DeployContractMetadata':
       await deployContractMetadata(request, response);
@@ -193,16 +208,111 @@ async function createOffer(request: NextApiRequest, response: NextApiResponse) {
     // currency the offer was signed in; buy offers must stay SAGE (the
     // marketplace contract rejects ETH buy offers — no msg.value path)
     const currency = request.body.currency === 'ETH' && isSellOffer ? 'ETH' : 'SAGE';
+
+    // ── SECURITY (audit pass-3 CRITICAL) ────────────────────────────────────
+    // Everything below used to be persisted verbatim from request.body. That
+    // let ANY signed-in wallet publish a "Buy Now" listing on someone else's
+    // NFT pointing at an ATTACKER-CONTROLLED ERC-721: the buyer paid real
+    // SAGE/ETH and nothing transferred. The three checks that close it:
+    //   1. the contract must be the one SAGE recorded for this NFT (never the
+    //      client's claim) — kills the fake-ERC721 substitution outright;
+    //   2. the signature must recover to the caller over the DB's OWN values
+    //      (tokenId/contract/price/expiry/currency) — kills field tampering
+    //      and stops one signature being replayed onto a different token;
+    //   3. a SELL offer requires the caller to actually own the token
+    //      on-chain — kills listing an NFT you don't hold.
+    const numericNftId = Number(nftId);
+    if (!Number.isInteger(numericNftId) || numericNftId <= 0) {
+      response.status(400).json({ error: 'invalid nftId' });
+      return;
+    }
+    const nft = await prisma.nft.findUnique({
+      where: { id: numericNftId },
+      include: { NftContract: true },
+    });
+    if (!nft) {
+      response.status(404).json({ error: 'NFT not found' });
+      return;
+    }
+    // (1) contract identity comes from OUR record, never from the request
+    const trueContract = nft.NftContract?.contractAddress;
+    if (!trueContract) {
+      response.status(400).json({ error: 'this NFT has no registered contract — cannot be traded' });
+      return;
+    }
+    if (String(nftContractAddress || '').toLowerCase() !== trueContract.toLowerCase()) {
+      response.status(400).json({ error: 'nftContractAddress does not match this NFT' });
+      return;
+    }
+    if (nft.tokenId === null || nft.tokenId === undefined) {
+      response.status(400).json({ error: 'this NFT has not been minted yet' });
+      return;
+    }
+    // numeric sanity before the values go anywhere near a signed digest
+    const priceNum = Number(price);
+    const expiresAtNum = Number(expiresAt);
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      response.status(400).json({ error: 'invalid price' });
+      return;
+    }
+    if (!Number.isInteger(expiresAtNum) || expiresAtNum <= Math.floor(Date.now() / 1000)) {
+      response.status(400).json({ error: 'invalid or already-past expiresAt' });
+      return;
+    }
+    // (2) recover the signature over the SAME payload the client signs
+    // (see signOffer in store/nftsReducer.ts) but built from DB truth.
+    const digest = ethers.utils.keccak256(
+      ethers.utils.defaultAbiCoder.encode(
+        ['address', 'address', 'uint256', 'uint256', 'uint256', 'uint256', 'address', 'bool'],
+        [
+          address,
+          trueContract,
+          ethers.utils.parseEther(toDecimalString(priceNum)),
+          nft.tokenId,
+          expiresAtNum,
+          parameters.CHAIN_ID,
+          currencyAddressFor(currency),
+          !!isSellOffer,
+        ]
+      )
+    );
+    let recovered: string;
+    try {
+      recovered = ethers.utils.verifyMessage(ethers.utils.arrayify(digest), String(signedOffer));
+    } catch {
+      response.status(400).json({ error: 'malformed offer signature' });
+      return;
+    }
+    if (recovered.toLowerCase() !== address.toLowerCase()) {
+      response.status(400).json({ error: 'offer signature does not match the signed-in wallet' });
+      return;
+    }
+    // (3) a listing requires real on-chain ownership
+    if (isSellOffer) {
+      try {
+        const contract = await getNFTContract(trueContract);
+        const onChainOwner: string = await contract.ownerOf(nft.tokenId);
+        if (onChainOwner.toLowerCase() !== address.toLowerCase()) {
+          response.status(403).json({ error: 'you do not own this NFT' });
+          return;
+        }
+      } catch (e) {
+        console.log('createOffer ownership check failed', e);
+        response.status(502).json({ error: 'could not verify on-chain ownership' });
+        return;
+      }
+    }
+
     var record = await prisma.offer.create({
       data: {
         signer: address,
-        price,
-        expiresAt,
-        isSellOffer,
+        price: priceNum,
+        expiresAt: expiresAtNum,
+        isSellOffer: !!isSellOffer,
         signedOffer,
-        nftContractAddress,
+        nftContractAddress: trueContract,
         currency,
-        Nft: { connect: { id: +nftId } },
+        Nft: { connect: { id: numericNftId } },
       },
     });
     response.json({ id: record.id });
@@ -285,10 +395,26 @@ async function updateOwner(request: NextApiRequest, id: number, response: NextAp
     if (!offer || offer.state != OfferState.ACTIVE) {
       throw new Error('Offer does not exist or is not active');
     }
-    const nftContract = await getNFTContract(offer.nftContractAddress);
+    // SECURITY (audit pass-3 HIGH): resolve the ERC-721 from OUR OWN record of
+    // the NFT, never from the offer row. This previously read ownerOf() off
+    // offer.nftContractAddress — a client-supplied value — so anyone could
+    // create an offer citing a contract they control, pass the
+    // `caller === offer.signer` check below as its author, and stamp an
+    // arbitrary ownerAddress onto ANY NFT (stealing it as a "verified" pfp, or
+    // un-listing an artist's whole catalogue). The relation was already loaded
+    // here and then ignored.
+    const trueContract = offer.Nft.NftContract?.contractAddress;
+    if (!trueContract) {
+      throw new Error('NFT has no registered contract');
+    }
+    if (offer.nftContractAddress.toLowerCase() !== trueContract.toLowerCase()) {
+      response.status(400).json({ error: 'offer contract does not match this NFT' });
+      return;
+    }
+    const nftContract = await getNFTContract(trueContract);
     const ownerAddress = await nftContract.ownerOf(offer.Nft.tokenId);
     console.log(
-      `updateOwner() :: Owner of token ${offer.Nft.tokenId} on contract ${offer.nftContractAddress} is ${ownerAddress}`
+      `updateOwner() :: Owner of token ${offer.Nft.tokenId} on contract ${trueContract} is ${ownerAddress}`
     );
     if (ownerAddress == ethers.constants.AddressZero) {
       throw new Error('Token has no owner or was not found in contract');

@@ -51,9 +51,14 @@ async function getWinners(lotteryId: number, response: NextApiResponse) {
     response.status(500);
   } else {
     try {
-      const result = await prisma.prizeProof.findMany({ 
+      // SECURITY (audit pass-3 HIGH): this route is unauthenticated, and
+      // `include: { User: true }` served every winner's FULL user row —
+      // email, role, ban reason/notes, invite code, verification tx — to any
+      // anonymous caller. The winners list only renders a username (see
+      // GetTicketModal), so project exactly that.
+      const result = await prisma.prizeProof.findMany({
         where: { lotteryId },
-        include: { User: true },
+        include: { User: { select: { username: true, profilePicture: true } } },
         distinct: ['lotteryId', 'winnerAddress']
       });
       response.json(result);
