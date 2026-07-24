@@ -6,6 +6,7 @@ import { Role } from '@prisma/client';
 import { requireRole } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
 import { uploadJsonToFilebase, uploadBufferToFilebase } from '@/utilities/serverWallet';
+import { COLLECTION_MAX_IMAGE_BYTES } from '@/utilities/collectionBundler';
 
 export const config = { api: { bodyParser: false, responseLimit: false } };
 
@@ -24,6 +25,11 @@ export const config = { api: { bodyParser: false, responseLimit: false } };
  */
 const MAX_ZIP_BYTES = 500 * 1024 * 1024; // 500MB ZIP ceiling
 const MAX_SYNC = 500; // synchronous cap; bigger drops → async bundler
+// Total INFLATED size ceiling (audit pass-3, decompression bomb). MAX_ZIP_BYTES
+// bounds the COMPRESSED upload; nothing bounded what it expands to. Set well
+// above any real collection (500 images × 25MB each is already the per-entry
+// ceiling) so this only ever trips on an absurd compression ratio.
+const COLLECTION_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024;
 const DISPLAY_DIM = 1600;
 const SHARP_MAX_INPUT_PIXELS = 12000 * 12000;
 const IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
@@ -72,6 +78,31 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
         count: entries.length,
         useAsync: true,
       });
+
+    // SECURITY (audit pass-3): decompression bomb. The count cap above bounds
+    // how MANY entries are read, not how BIG they inflate to — a ZIP of a few
+    // tiny files plus one enormous entry passed it, and entries[i].buffer()
+    // below reads each one fully into memory on a RAM-constrained instance.
+    // Both sibling implementations already reject oversized entries up front
+    // (collectionBundler.ts / collectionPinner.ts); this path never got it.
+    // Check per-entry AND the inflated total.
+    let totalUncompressed = 0;
+    for (const f of entries) {
+      const sz = Number((f as any).uncompressedSize || 0);
+      if (sz > COLLECTION_MAX_IMAGE_BYTES) {
+        return res
+          .status(413)
+          .json({ error: `"${f.path}" is over the ${Math.round(COLLECTION_MAX_IMAGE_BYTES / 1e6)}MB per-image limit` });
+      }
+      totalUncompressed += sz;
+    }
+    if (totalUncompressed > COLLECTION_MAX_TOTAL_BYTES) {
+      return res.status(413).json({
+        error: `ZIP inflates to ${Math.round(totalUncompressed / 1e6)}MB — over the ${Math.round(
+          COLLECTION_MAX_TOTAL_BYTES / 1e6
+        )}MB total limit`,
+      });
+    }
 
     const slug = `${requester.walletAddress.slice(2, 10).toLowerCase()}-${Date.now()}`;
     const collectionName = String(name || 'Collection').slice(0, 60);

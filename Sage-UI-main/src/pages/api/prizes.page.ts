@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { Prisma, PrizeProof, User } from '@prisma/client';
+import { Prisma, PrizeProof, Role, User } from '@prisma/client';
 import { getRequester } from '@/utilities/apiAuth';
 import prisma from '@/prisma/client';
 import { GamePrize, PrizeWithNftAndArtist } from '@/prisma/types';
@@ -60,6 +60,15 @@ export default async function (request: NextApiRequest, response: NextApiRespons
       await getPrizesStats(response);
       break;
     case 'GetLotteryPrizes':
+      // SECURITY (audit pass-3): this is the admin dashboard's full prize
+      // table — every winner, ticket number and merkle proof for the lottery.
+      // It was reachable by ANY signed-in wallet (one SIWE signature, no role,
+      // no ticket purchase). Every other action here is already scoped to the
+      // caller's own address; this one is genuinely admin-only.
+      if (requester?.role !== Role.ADMIN) {
+        response.status(403).json({ error: 'Insufficient permissions' });
+        break;
+      }
       await getLotteryPrizes(Number(lotteryId), response);
       break;
   }

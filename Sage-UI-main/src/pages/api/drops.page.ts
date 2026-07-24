@@ -1126,8 +1126,34 @@ async function deleteDrops(response: NextApiResponse) {
   await prisma.drop.deleteMany();
 }
 
+// Hosts optimizeImage is allowed to fetch from. Mirrors ALLOWED_S3_HOSTS in
+// dropUpload.page.ts — the media we optimize only ever lives in our own bucket
+// or on the two content-addressed gateways we publish to.
+const OPTIMIZE_ALLOWED_HOSTS = [
+  `${process.env.S3_BUCKET}.s3.us-east-2.amazonaws.com`,
+  'staging-sage.s3.us-east-2.amazonaws.com',
+  'dev-sage.s3.us-east-2.amazonaws.com',
+  'sage-art.s3.us-east-2.amazonaws.com',
+  'arweave.net',
+  'ipfs.filebase.io',
+];
+
 async function optimizeImage(path: string): Promise<string> {
   console.log(`optimizeImage(${path})`);
+  // SECURITY (audit pass-3): second-order SSRF. `path` comes from Nft.s3Path,
+  // which an artist controls at upload time, and this runs server-side with no
+  // host restriction — so a stored value pointing at 169.254.169.254 (cloud
+  // metadata) or an internal address would be fetched by our own server, and
+  // the result written back into our S3 bucket. Pin it to hosts we publish to.
+  let parsed: URL;
+  try {
+    parsed = new URL(path);
+  } catch {
+    throw new Error('optimizeImage: malformed source path');
+  }
+  if (parsed.protocol !== 'https:' || !OPTIMIZE_ALLOWED_HOSTS.includes(parsed.host)) {
+    throw new Error(`optimizeImage: refusing to fetch from ${parsed.host}`);
+  }
   // retrieve source file from S3
   const fetchResponse = await fetch(path);
   const inputBuffer = new Uint8Array(await fetchResponse.arrayBuffer());

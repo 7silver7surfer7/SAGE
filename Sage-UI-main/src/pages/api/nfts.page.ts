@@ -82,6 +82,22 @@ async function deployContractMetadata(request: NextApiRequest, response: NextApi
     response.status(403).json({ error: 'you can only deploy metadata for your own contract' });
     return;
   }
+  // SECURITY (audit pass-3): the ownership check above proves you are the
+  // artist you claim to be, but ANY signed-in wallet can claim to be itself —
+  // so any user could call this repeatedly and spend the platform's Arweave
+  // balance on demand. Require an actual artist/admin role, and require the
+  // caller to have a registered NFT contract (i.e. they really are a launched
+  // artist, not just a wallet that signed in).
+  if (requester.role !== Role.ADMIN) {
+    const contract = await prisma.nftContract.findUnique({
+      where: { artistAddress: requester.walletAddress },
+      select: { contractAddress: true },
+    });
+    if (!contract?.contractAddress) {
+      response.status(403).json({ error: 'no registered artist contract for this wallet' });
+      return;
+    }
+  }
   const artist = await prisma.user.findUnique({ where: { walletAddress: artistAddress } });
   if (!artist) {
     response.status(500).end();

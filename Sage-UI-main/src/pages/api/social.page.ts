@@ -2174,13 +2174,29 @@ async function redeemInvite(req: NextApiRequest, res: NextApiResponse, r: { wall
     return res.status(400).json({ error: 'you cannot redeem your own code' });
   if (invite.uses >= invite.maxUses)
     return res.status(400).json({ error: 'this invite code is used up' });
-  await prisma.$transaction([
-    prisma.socialInviteCode.update({ where: { code }, data: { uses: { increment: 1 } } }),
-    prisma.user.update({
+  // SECURITY (audit pass-3): the check above and the increment below were not
+  // atomic — N wallets redeeming the last slot simultaneously all read
+  // uses < maxUses, all passed, and all incremented, admitting more accounts
+  // than the code allows. Claim the slot with a CONDITIONAL update instead:
+  // updateMany returns the row count, so a losing racer gets 0 and is rejected.
+  const claimed = await prisma.socialInviteCode.updateMany({
+    where: { code, uses: { lt: invite.maxUses } },
+    data: { uses: { increment: 1 } },
+  });
+  if (claimed.count === 0)
+    return res.status(400).json({ error: 'this invite code is used up' });
+  try {
+    await prisma.user.update({
       where: { walletAddress: r.walletAddress },
       data: { invitedByCode: code },
-    }),
-  ]);
+    });
+  } catch (e) {
+    // hand the slot back rather than burning it on a failed join
+    await prisma.socialInviteCode
+      .updateMany({ where: { code }, data: { uses: { decrement: 1 } } })
+      .catch(() => {});
+    throw e;
+  }
   res.json({ ok: true, joined: true });
 }
 
@@ -3042,6 +3058,9 @@ async function recordTokenLaunch(
   // verify the launch tx really came from this creator to the factory, AND
   // that the TokenLaunched event in that tx emitted exactly this token — a
   // caller must not be able to record someone else's token under their name
+  // hoisted so the verified event values can be persisted below instead of the
+  // client's claim (audit pass-3)
+  let verified: { name?: string; symbol?: string; airdropEnabled?: boolean } = {};
   try {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
@@ -3058,6 +3077,11 @@ async function recordTokenLaunch(
     if (!launched) throw new Error('no TokenLaunched event in tx');
     if (launched.args.token.toLowerCase() !== token.toLowerCase())
       throw new Error('token does not match the launch tx');
+    verified = {
+      name: launched.args.name,
+      symbol: launched.args.symbol,
+      airdropEnabled: launched.args.airdropEnabled,
+    };
   } catch (e: any) {
     return res.status(400).json({ error: `launch not verified: ${e.message}` });
   }
@@ -3066,8 +3090,12 @@ async function recordTokenLaunch(
       data: {
         creatorAddress: r.walletAddress,
         tokenAddress: token,
-        name: String(name).slice(0, 40),
-        symbol: String(symbol).slice(0, 12),
+        // audit pass-3: use the VERIFIED on-chain event values, not the
+        // client's claim. The tx is already decoded above to prove the caller
+        // launched this token — trusting req.body for the name/symbol let a
+        // launcher display something different from what it actually deployed.
+        name: String(verified.name ?? name).slice(0, 40),
+        symbol: String(verified.symbol ?? symbol).slice(0, 12),
         launchTxHash,
         // same own-bucket check as post media — otherwise anyone could brand
         // their token with an arbitrary external URL we then hotlink site-wide
