@@ -20,6 +20,7 @@ import {
   isNativeCurrency,
 } from './chain.js';
 import { siteGet, siteGetRaw, sitePost } from './siwe-session.js';
+import { assertSpend, recordSpend, spendStatus } from './spendGuard.js';
 
 const server = new McpServer({ name: 'sage-marketplace', version: '0.1.0' });
 
@@ -132,6 +133,8 @@ server.tool(
   },
   async ({ ethAmount, slippagePercent }) => {
     try {
+      // audit pass-3: ethAmount is model-supplied and spends real mainnet ETH.
+      assertSpend({ currency: 'ETH', amount: ethAmount, tool: 'sage_buy_sage', to: 'DEX' });
       const wallet = requireWallet(dexProvider);
       const value = parse(ethAmount);
       const sage = new ethers.Contract(config.dex.sageToken, ABIS.erc20, wallet);
@@ -156,6 +159,7 @@ server.tool(
         tx = await router.buy(config.dex.sageToken, minOut, { value });
       }
       await tx.wait(1);
+      recordSpend({ currency: 'ETH', amount: ethAmount, tool: 'sage_buy_sage', to: 'DEX', txHash: tx.hash });
 
       const received = (await sage.balanceOf(wallet.address)).sub(sageBefore);
       return ok({
@@ -362,6 +366,15 @@ server.tool(
       if (now > edition.closeTime) throw new Error('this edition has closed');
 
       const totalCost = edition.costTokens.mul(quantity);
+      // audit pass-3: unit price is on-chain truth but `quantity` is
+      // model-supplied, so the total is unbounded without this.
+      assertSpend({
+        currency: 'SAGE',
+        amount: fmt(totalCost),
+        tool: 'sage_mint_open_edition',
+        to: config.marketplace.openEdition,
+        serverPriced: true,
+      });
       const approveTx = await ensureSageAllowance(wallet, config.marketplace.openEdition, totalCost);
 
       // pixel-priced editions must go through claimPointsAndMint — plain
@@ -382,6 +395,13 @@ server.tool(
         tx = await oe.batchMint(editionId, quantity);
       }
       const receipt = await tx.wait(1);
+      recordSpend({
+        currency: 'SAGE',
+        amount: fmt(totalCost),
+        tool: 'sage_mint_open_edition',
+        to: config.marketplace.openEdition,
+        txHash: tx.hash,
+      });
       return ok({
         status: 'minted',
         editionId,
@@ -428,6 +448,14 @@ server.tool(
 
       const totalCost = c.costTokens.mul(amount);
       const native = isNativeCurrency(c.currency);
+      // audit pass-3: unit price is on-chain, but `amount` is model-supplied.
+      assertSpend({
+        currency: native ? 'ETH' : 'SAGE',
+        amount: fmt(totalCost),
+        tool: 'sage_mint_collection',
+        to: config.marketplace.collection,
+        serverPriced: true,
+      });
       let approveTx = null;
       let tx;
       if (native) {
@@ -437,6 +465,13 @@ server.tool(
         tx = await collection.mint(collectionId, amount);
       }
       const receipt = await tx.wait(1);
+      recordSpend({
+        currency: native ? 'ETH' : 'SAGE',
+        amount: fmt(totalCost),
+        tool: 'sage_mint_collection',
+        to: config.marketplace.collection,
+        txHash: tx.hash,
+      });
       return ok({
         status: 'minted',
         collectionId,
@@ -467,6 +502,14 @@ server.tool(
       const lottery = new ethers.Contract(config.marketplace.lottery, ABIS.lottery, wallet);
       const info = await lottery.getLotteryInfo(lotteryId);
       const totalCost = info.ticketCostTokens.mul(tickets);
+      // audit pass-3: ticket price is on-chain, but `tickets` is model-supplied.
+      assertSpend({
+        currency: 'SAGE',
+        amount: fmt(totalCost),
+        tool: 'sage_buy_lottery_tickets',
+        to: config.marketplace.lottery,
+        serverPriced: true,
+      });
       const approveTx = await ensureSageAllowance(wallet, config.marketplace.lottery, totalCost);
 
       // pixel-priced tickets must go through buyTicketsWithSignedMessage —
@@ -487,6 +530,13 @@ server.tool(
         tx = await lottery.buyTickets(lotteryId, tickets);
       }
       const receipt = await tx.wait(1);
+      recordSpend({
+        currency: 'SAGE',
+        amount: fmt(totalCost),
+        tool: 'sage_buy_lottery_tickets',
+        to: config.marketplace.lottery,
+        txHash: tx.hash,
+      });
       return ok({
         status: 'tickets purchased',
         lotteryId,
@@ -521,9 +571,18 @@ server.tool(
       if (amount.lte(state.highestBid)) {
         throw new Error(`bid must exceed current highest bid of ${fmt(state.highestBid)} SAGE`);
       }
+      // audit pass-3: bidSage is model-supplied and escrows real SAGE.
+      assertSpend({ currency: 'SAGE', amount: bidSage, tool: 'sage_place_auction_bid', to: config.marketplace.auction });
       const approveTx = await ensureSageAllowance(wallet, config.marketplace.auction, amount);
       const tx = await auction.bid(auctionId, amount);
       const receipt = await tx.wait(1);
+      recordSpend({
+        currency: 'SAGE',
+        amount: bidSage,
+        tool: 'sage_place_auction_bid',
+        to: config.marketplace.auction,
+        txHash: tx.hash,
+      });
 
       // The auction's on-screen bidder list is a DB cache the UI writes after a
       // human bid (SaveBid) — it is NOT read from chain. Mirror that here or the
@@ -648,6 +707,10 @@ server.tool(
     try {
       const { post } = await siteGet(`/api/social/?action=GetPost&id=${postId}`);
       if (!post) throw new Error('post not found');
+      const cur = currency === 'ETH' ? 'ETH' : 'SAGE';
+      // audit pass-3 HIGH: amountSage comes straight from the model, which
+      // reads untrusted social content — bound it before signing.
+      assertSpend({ currency: cur, amount: amountSage, tool: 'sage_social_tip', to: post.author.address });
       const wallet = requireWallet(marketplaceProvider);
       let tx;
       if (currency === 'ETH') {
@@ -657,6 +720,7 @@ server.tool(
         tx = await sage.transfer(post.author.address, parse(String(amountSage)));
       }
       await tx.wait(1);
+      recordSpend({ currency: cur, amount: amountSage, tool: 'sage_social_tip', to: post.author.address, txHash: tx.hash });
       const recorded = await sitePost('/api/social/?action=RecordTip', { postId, txHash: tx.hash, currency: currency || 'SAGE' });
       return ok({ tipped: amountSage, currency: currency || 'SAGE', to: post.author.address, txHash: tx.hash, recorded });
     } catch (e) {
@@ -674,10 +738,14 @@ server.tool(
   },
   async ({ postId, amountSage }) => {
     try {
+      // audit pass-3: burning is irreversible and the amount is model-supplied
+      // with no upper bound in the schema — bound it before signing.
+      assertSpend({ currency: 'SAGE', amount: amountSage, tool: 'sage_social_boost', to: 'burn 0x…dEaD' });
       const wallet = requireWallet(marketplaceProvider);
       const sage = new ethers.Contract(config.marketplace.sageToken, ABIS.erc20, wallet);
       const tx = await sage.transfer('0x000000000000000000000000000000000000dEaD', parse(String(amountSage)));
       await tx.wait(1);
+      recordSpend({ currency: 'SAGE', amount: amountSage, tool: 'sage_social_boost', to: 'burn', txHash: tx.hash });
       const boosted = await sitePost('/api/social/?action=BoostPost', { postId, txHash: tx.hash });
       return ok({ burned: amountSage, txHash: tx.hash, ...boosted });
     } catch (e) {
@@ -693,9 +761,19 @@ server.tool(
   async () => {
     try {
       const info = await siteGet('/api/social/?action=GetVerificationInfo');
+      // audit pass-3: the price and the recipient both come from the site
+      // response, so the spend is invisible at the call site. Bound it.
+      assertSpend({
+        currency: 'ETH',
+        amount: info.priceEth,
+        tool: 'sage_social_get_verified',
+        to: info.treasury,
+        serverPriced: true,
+      });
       const wallet = requireWallet(marketplaceProvider);
       const tx = await wallet.sendTransaction({ to: info.treasury, value: parse(String(info.priceEth)) });
       await tx.wait(1);
+      recordSpend({ currency: 'ETH', amount: info.priceEth, tool: 'sage_social_get_verified', to: info.treasury, txHash: tx.hash });
       const recorded = await sitePost('/api/social/?action=PurchaseVerification', {
         txHash: tx.hash,
         currency: 'ETH',
@@ -722,6 +800,18 @@ server.tool(
       }
       let txHash;
       if (post.collectCurrency === 'ETH' && post.collectPrice > 0) {
+        // audit pass-3 HIGH: this tool takes ONLY a postId — the amount
+        // (post.collectPrice) and the recipient (post.author) are both chosen
+        // by whoever authored the post, so an attacker can publish a post
+        // priced at anything and a prompted agent pays it, with the number
+        // never appearing in the tool call. Bound it before signing.
+        assertSpend({
+          currency: 'ETH',
+          amount: post.collectPrice,
+          tool: 'sage_social_collect',
+          to: post.author.address,
+          serverPriced: true,
+        });
         const wallet = requireWallet(marketplaceProvider);
         const tx = await wallet.sendTransaction({
           to: post.author.address,
@@ -729,11 +819,31 @@ server.tool(
         });
         await tx.wait(1);
         txHash = tx.hash;
+        recordSpend({
+          currency: 'ETH',
+          amount: post.collectPrice,
+          tool: 'sage_social_collect',
+          to: post.author.address,
+          txHash,
+        });
       }
       // SAGE/points-priced posts (and free ETH-priced ones) need no payment
       // tx from this wallet at all — the server debits pixels internally.
       const collected = await sitePost('/api/social/?action=CollectPost', { postId, txHash });
       return ok({ price: post.collectPrice, currency: post.collectCurrency || 'POINTS', payTxHash: txHash || null, ...collected });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.tool(
+  'sage_spend_status',
+  'Show this wallet\'s remaining spending headroom: the per-transaction ceiling and how much of the rolling 24h budget is left, per currency. Every value-moving tool is bounded by these — check here first if a spend was refused.',
+  {},
+  async () => {
+    try {
+      return ok(spendStatus());
     } catch (e) {
       return fail(e);
     }

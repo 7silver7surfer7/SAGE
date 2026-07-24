@@ -1,0 +1,3 @@
+# Rolling 24h spend ledger written by spendGuard.js — runtime state (amounts,
+# recipients, tx hashes), not source. Deleting it resets the budget window.
+.spend-state.json
