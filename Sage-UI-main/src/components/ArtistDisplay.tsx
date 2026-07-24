@@ -1,8 +1,9 @@
+import type { PublicArtist } from '@/prisma/types';
 import { User } from '@/prisma/types';
 import { PfpImage } from './Media/BaseMedia';
 
 interface Props {
-  artist: User;
+  artist: PublicArtist;
 }
 
 function ArtistDisplay(props: Props) {

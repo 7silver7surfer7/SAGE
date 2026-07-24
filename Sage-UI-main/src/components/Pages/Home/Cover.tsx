@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import ArtistDisplay from '@/components/ArtistDisplay';
 import { User } from '@/prisma/types';
 import Motto from '@/components/Layout/Motto';
@@ -11,7 +12,7 @@ interface Props {
   removeCover: () => void;
   coverOn: boolean;
   src: string;
-  artist: User;
+  artist: PublicArtist;
 }
 
 function getPositionY(e: React.TouchEvent<HTMLDivElement>) {

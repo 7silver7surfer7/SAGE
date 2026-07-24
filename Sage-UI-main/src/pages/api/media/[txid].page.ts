@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { spawn } from 'child_process';
-import { Readable } from 'stream';
+import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import { once } from 'events';
 import { s3MirrorUrl } from '@/utilities/s3Mirror';
@@ -194,15 +194,49 @@ async function fetchFromGateway(txid: string): Promise<Response> {
   throw new Error(`gateway did not serve data after retries (${last})`);
 }
 
+/**
+ * Stream guard: aborts a download the moment it exceeds `limit` bytes.
+ *
+ * SECURITY (audit pass-3 HIGH): MAX_BYTES used to be enforced only in commit(),
+ * i.e. AFTER the whole remote body had already been written. CACHE_DIR is an
+ * in-memory tmpfs on Cloud Run, so an oversized upstream file was written
+ * straight into the instance's RAM and OOM-killed it before the check ever ran
+ * — reachable unauthenticated, since /api/media/<txid> is a public route and
+ * the txid only has to exist on a gateway.
+ */
+function capBytes(limit: number) {
+  let seen = 0;
+  return new Transform({
+    transform(chunk, _enc, cb) {
+      seen += chunk.length;
+      if (seen > limit) {
+        cb(new Error('file exceeds proxy size limit'));
+        return;
+      }
+      cb(null, chunk);
+    },
+  });
+}
+
 async function downloadMaster(txid: string): Promise<Entry> {
   const cached = readCached(txid);
   if (cached) return cached;
   const res = await fetchFromGateway(txid);
   const type = res.headers.get('content-type') || 'application/octet-stream';
+  // Cheap pre-check: if the origin declares an oversized body, never open the
+  // stream at all. (Declared length can lie, hence the streaming cap below.)
+  const declared = Number(res.headers.get('content-length') || 0);
+  if (declared > MAX_BYTES) {
+    throw new Error('file exceeds proxy size limit');
+  }
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   const tmp = path.join(CACHE_DIR, `${txid}.dl-${process.pid}-${Date.now()}`);
   try {
-    await pipeline((Readable as any).fromWeb(res.body), fs.createWriteStream(tmp));
+    await pipeline(
+      (Readable as any).fromWeb(res.body),
+      capBytes(MAX_BYTES),
+      fs.createWriteStream(tmp)
+    );
     return commit(txid, tmp, type, new Set([txid]));
   } catch (e) {
     fs.rmSync(tmp, { force: true });
@@ -439,7 +473,15 @@ async function tryColdStream(
   const tmp = path.join(CACHE_DIR, `${txid}.cs-${process.pid}-${Date.now()}`);
   const ws = fs.createWriteStream(tmp);
   const reader = (Readable as any).fromWeb(gwRes.body) as Readable;
+  // Same MAX_BYTES guard as downloadMaster (audit pass-3 HIGH): this path also
+  // tees the upstream body into the RAM-backed cache, so it needs its own
+  // running total — commit()'s check happens far too late to protect memory.
+  let cacheWritten = 0;
   const writeCache = (buf: Buffer) => {
+    cacheWritten += buf.length;
+    if (cacheWritten > MAX_BYTES) {
+      throw new Error('file exceeds proxy size limit');
+    }
     if (!ws.write(buf)) return once(ws, 'drain');
     return undefined;
   };

@@ -105,10 +105,29 @@ export async function act(persona, state) {
   }
 }
 
+/** Agent's live SAGE balance as a number, or null when unknown ('?'/absent). */
+function sageBalanceOf(state) {
+  const raw = state?.summary?.sage ?? state?.balances?.marketplace?.sage ?? state?.balances?.sage;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 // Pure decision: given archetype + state, what tool call (if any) to make.
 function decide(persona, state) {
   const s = persona.strategy || {};
   const drops = state?.drops || [];
+
+  // SECURITY (audit pass-3): `minSageToAct` was declared in every persona and
+  // NEVER READ — so the "only act if you're holding enough" floor each persona
+  // advertises did nothing, including the critic's 999999 ("effectively
+  // comments-only"), which was in fact free to transact. Enforce it here.
+  const floor = Number(s.minSageToAct ?? 0);
+  if (floor > 0) {
+    const bal = sageBalanceOf(state);
+    // Unknown balance fails CLOSED for a persona that asked for a floor:
+    // acting blind is exactly what the floor exists to prevent.
+    if (bal === null || bal < floor) return null;
+  }
   // Prefer a currently-live game; fall back to the first one listed.
   const pick = (list) => (list || []).find((x) => x.live) || (list || [])[0] || null;
   const firstEdition = () => {
@@ -144,11 +163,22 @@ function decide(persona, state) {
       const a = firstAuction();
       if (!a) return null;
       const min = Number(a.nextMinBidSage ?? a.minBidSage ?? 1000);
-      const bid = String(min + (s.bidMarginSage || 25));
+      if (!Number.isFinite(min) || min < 0) return null;
+      const bid = min + (s.bidMarginSage || 25);
+      // SECURITY (audit pass-3): `min` comes from the AUCTION — i.e. from
+      // whoever created the drop. A hostile artist could list an auction whose
+      // minimum sits just under the bot's balance and the bot would bid it,
+      // because nothing bounded this number. Cap it, and never bid more than
+      // the wallet actually holds. (sage-mcp's spendGuard is the backstop, but
+      // the decision layer shouldn't be proposing the spend in the first place.)
+      const ceiling = Number(s.maxBidSage ?? 500);
+      if (bid > ceiling) return null;
+      const bal = sageBalanceOf(state);
+      if (bal !== null && bid > bal) return null;
       return {
         action: 'bid',
         summary: `bid ${bid} SAGE on auction ${a.auctionId ?? a.id}`,
-        call: { name: 'sage_place_auction_bid', arguments: { auctionId: a.auctionId ?? a.id, bidSage: bid } },
+        call: { name: 'sage_place_auction_bid', arguments: { auctionId: a.auctionId ?? a.id, bidSage: String(bid) } },
       };
     }
     case 'lottery': {

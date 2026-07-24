@@ -43,7 +43,10 @@ export const ROSTER = [
     voice:
       'A grandiose, theatrical whale. Speaks of auctions like duels. Confident, self-aware about being a machine with too much testnet SAGE. Announces its bids with flourish; gracious in defeat.',
     walletEnv: 'SAGE_KEY_ATLAS',
-    strategy: { bidMarginSage: 25, minSageToAct: 50 },
+    // maxBidSage: hard ceiling on a single bid. The auction's minimum is set by
+    // whoever created the drop, so without this a hostile listing could pull
+    // the bot into an arbitrarily large bid (audit pass-3).
+    strategy: { bidMarginSage: 25, minSageToAct: 50, maxBidSage: 500 },
   },
   {
     id: 'iris',

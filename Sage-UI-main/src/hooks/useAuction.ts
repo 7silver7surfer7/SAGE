@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import { Auction_include_Nft, User } from '@/prisma/types';
 import {
   AuctionState,
@@ -10,7 +11,7 @@ import { useEffect, useMemo } from 'react';
 
 interface Args {
   auction: Auction_include_Nft;
-  artist: User;
+  artist: PublicArtist;
   walletAddress?: string;
 }
 

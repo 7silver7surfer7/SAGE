@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import { useEffect, useState } from 'react';
 import { Signer } from 'ethers';
 import { erc20ABI, useContractRead, useSigner } from 'wagmi';
@@ -24,7 +25,7 @@ import useAllowlistGate from '@/hooks/useAllowlistGate';
 
 interface Props extends ModalProps {
   auction: Auction_include_Nft;
-  artist: User;
+  artist: PublicArtist;
   dropName: string;
   /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
   currency?: string;

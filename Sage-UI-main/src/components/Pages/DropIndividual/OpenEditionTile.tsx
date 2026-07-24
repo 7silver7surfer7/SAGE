@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import React from 'react';
 import useCountdown from '@/hooks/useCountdown';
 import useModal from '@/hooks/useModal';
@@ -8,7 +9,7 @@ import Media from './Media';
 
 interface Props {
   dropName: string;
-  artist: User;
+  artist: PublicArtist;
   openEdition: OpenEdition_include_Nft;
   className: string;
   /** the drop's payment currency: 'SAGE' (default) or 'ETH' */

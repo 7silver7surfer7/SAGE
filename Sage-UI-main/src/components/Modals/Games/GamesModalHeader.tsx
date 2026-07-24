@@ -1,10 +1,11 @@
+import type { PublicArtist } from '@/prisma/types';
 import React from 'react';
 import { User } from '@/prisma/types';
 import { PfpImage, BaseMedia } from '@/components/Media/BaseMedia';
 interface Props {
   src: string;
   isVideo: boolean;
-  artist: User;
+  artist: PublicArtist;
   nftEditions: number;
   nftName: string;
 }

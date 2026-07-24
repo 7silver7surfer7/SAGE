@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import { Nft_include_NftContractAndOffers, User } from '@/prisma/types';
 import { BaseMedia } from '@/components/Media/BaseMedia';
 import shortenAddress from '@/utilities/shortenAddress';
@@ -8,7 +9,7 @@ import BuyNowModal from '@/components/Modals/Games/BuyNowModal';
 
 interface Props {
   nft: Nft_include_NftContractAndOffers;
-  artist: User;
+  artist: PublicArtist;
 }
 
 function findActiveSellOffer(offers: Offer[]): Offer | null {

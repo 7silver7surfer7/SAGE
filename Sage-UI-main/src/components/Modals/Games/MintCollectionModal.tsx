@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 import { toast } from 'react-toastify';
@@ -25,7 +26,7 @@ import { toDecimalString } from '@/utilities/decimalString';
 
 interface Props extends ModalProps {
   collection: CollectionMint;
-  artist: User;
+  artist: PublicArtist;
   dropName: string;
   /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
   currency?: string;

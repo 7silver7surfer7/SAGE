@@ -41,10 +41,16 @@ export default async function handler(req: RequestWithFile, res: NextApiResponse
   if (!requester) return;
   const u = await prisma.user.findUnique({
     where: { walletAddress: requester.walletAddress },
-    select: { verifiedAt: true, role: true },
+    // audit pass-3: bannedAt was not selected, so this route checked
+    // verification but never the ban — a wallet an admin had already banned
+    // could still run the whole collection pipeline (Filebase pins, ZIP
+    // inflation, on-chain launch). requireVerified() elsewhere checks both.
+    select: { verifiedAt: true, role: true, bannedAt: true },
   });
   if (!u || (!u.verifiedAt && u.role !== Role.ADMIN))
     return res.status(403).json({ error: 'get verified to launch a collection' });
+  if (u.bannedAt && u.role !== Role.ADMIN)
+    return res.status(403).json({ error: 'this account is banned' });
   if (!process.env.FILEBASE_BUCKET)
     return res.status(400).json({ error: 'Filebase is not configured on this deployment' });
 

@@ -158,6 +158,14 @@ async function getSearchableNftData(response: NextApiResponse) {
 
 async function getListingNftsByArtist(artistAddress: string, response: NextApiResponse) {
   console.log(`getListingNftsByArtist(${artistAddress})`);
+  // SECURITY (audit pass-3): with `address` omitted this arrived as undefined,
+  // and Prisma treats `where: { artistAddress: undefined }` as NO FILTER — so
+  // an anonymous GET dumped the ENTIRE Nft table plus every Offer on it in one
+  // unbounded query. Require a well-formed address and bound the result.
+  if (!/^0x[a-fA-F0-9]{40}$/.test(String(artistAddress || ''))) {
+    response.status(400).json({ error: 'a valid artist address is required' });
+    return;
+  }
   try {
     const result = await prisma.nft.findMany({
       where: { artistAddress, isHidden: false },
@@ -165,6 +173,8 @@ async function getListingNftsByArtist(artistAddress: string, response: NextApiRe
         NftContract: true,
         Offers: true,
       },
+      take: 500,
+      orderBy: { id: 'desc' },
     });
     response.json(result as Nft_include_NftContractAndOffers[]);
   } catch (e) {

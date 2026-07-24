@@ -22,10 +22,32 @@ const NFT_DISPLAY_SELECT = {
   artistDisplayName: true,
 } as const;
 
+// Public projection of the artist. Same rationale as NFT_DISPLAY_SELECT above,
+// but this one is a PRIVACY fix (audit pass-3): `Artist: true` pulled the whole
+// User row — email, role, bannedAt/ban notes, invitedByCode, verification tx,
+// notification prefs — and getStaticProps serializes it verbatim into
+// __NEXT_DATA__ on the homepage, the drops listing and every drop-detail page.
+// Anyone could read another user's email by viewing source on a public page.
+// Only these fields are actually rendered by the tiles//creators pages.
+const ARTIST_DISPLAY_SELECT = {
+  walletAddress: true,
+  username: true,
+  profilePicture: true,
+  bio: true,
+  bannerImageS3Path: true,
+  webpage: true,
+  twitterUsername: true,
+  instagramUsername: true,
+  mediumUsername: true,
+  // artist location, rendered on drop pages (useDrop)
+  country: true,
+  state: true,
+} as const;
+
 // Shared by getHomePageData / getDropsPageData / getIndividualDropsPageData —
 // same tile components render all three, so they need the same shape.
 const DROP_INCLUDES = {
-  NftContract: { include: { Artist: true } },
+  NftContract: { include: { Artist: { select: ARTIST_DISPLAY_SELECT } } },
   Lotteries: { include: { Nfts: { select: NFT_DISPLAY_SELECT } } },
   Auctions: { include: { Nft: { select: NFT_DISPLAY_SELECT } } },
   OpenEditions: { include: { Nft: { select: NFT_DISPLAY_SELECT } } },
@@ -152,8 +174,14 @@ export async function getHomePageData(prisma: PrismaClient) {
   });
   if (config?.FeaturedDrop) withArtistDisplayNameOverride(config.FeaturedDrop);
   await syncCollectionMintCounts(prisma, [...drops, config?.FeaturedDrop as any]);
+  // PRIVACY (audit pass-3): this was a bare findMany with no `select`, so the
+  // 10 most recent artists' FULL user rows — email, bannedAt, invitedByCode,
+  // isAgent, notification prefs — were returned to getStaticProps and
+  // serialized into __NEXT_DATA__ on the public homepage. View Source was
+  // enough to harvest artist emails.
   const latestArtists = await prisma.user.findMany({
     where: { role: Role.ARTIST },
+    select: ARTIST_DISPLAY_SELECT,
     orderBy: { createdAt: 'desc' },
     take: 10,
   });

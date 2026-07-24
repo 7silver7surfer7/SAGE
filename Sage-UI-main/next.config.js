@@ -6,15 +6,33 @@ const nextConfig = {
   pageExtensions: ['page.tsx', 'page.ts', 'api.ts'],
   images: {
     // Media is content-addressed (Arweave tx id / immutable S3 key), so an
-    // optimized image for a given URL can never change. Cache each optimized
-    // variant for a year instead of the 60s default, so repeat views (and any
-    // CDN in front) serve it instantly instead of re-fetching from Arweave and
-    // re-running sharp every minute.
-    minimumCacheTTL: 31536000,
+    // optimized image for a given URL can never change.
+    //
+    // SECURITY (audit pass-3 HIGH): this was 31536000 (1 year). /_next/image
+    // keys its on-disk cache by the FULL source URL, and an attacker picks
+    // that URL — `?x=1`, `?x=2`, … all resolve to the same upstream bytes but
+    // each writes a NEW cache entry. Content-addressing does not help when the
+    // attacker controls the key. With a 1-year TTL on a RAM-backed Cloud Run
+    // filesystem and no cache size cap, an anonymous loop fills the instance's
+    // memory. A bounded TTL lets entries age out; real repeat views are still
+    // served from cache (and Cloudflare fronts this anyway).
+    minimumCacheTTL: 86400,
     domains: [
-      // Arweave is the sole media host; the legacy S3/CloudFront hosts remain
-      // allowed so any pre-migration images already in the DB still render.
+      // SECURITY NOTE (audit pass-3): every host here is a source /_next/image
+      // will fetch and decode through sharp on demand for anyone who can craft
+      // a URL. The two PERMISSIONLESS hosts below (arweave.net,
+      // ipfs.filebase.io) let anyone upload arbitrary bytes and then have our
+      // server fetch them — a DoS amplifier and the reachability path for the
+      // sharp/libvips CVEs (mitigated for now by the sharp 0.35 upgrade).
+      // They are deliberately still listed: Nft rows store Filebase gateway
+      // URLs directly (see collectionPinner.ts / dropUpload.ts) and
+      // /api/media only accepts 43-char Arweave tx ids, so it cannot serve an
+      // IPFS CID. Dropping these makes next/image THROW during SSR and 500s
+      // /drops/[id]. To close this properly, teach /api/media to proxy IPFS
+      // CIDs (with the same size cap + content-type pinning it already applies
+      // to Arweave), rewrite stored gateway URLs through it, THEN remove them.
       'arweave.net',
+      'ipfs.filebase.io',
       'localhost',
       'dev-sage.s3.us-east-2.amazonaws.com',
       'staging-sage.s3.us-east-2.amazonaws.com',
@@ -26,11 +44,6 @@ const nextConfig = {
       // this entry next/image REFUSES the host and avatars render blank
       // (in dev it even crashes the tree)
       'sageart-media-mirror.s3.us-east-2.amazonaws.com',
-      // Social NFT drops pin artwork/metadata to Filebase (IPFS) — the Nft
-      // rows store gateway URLs, and the drops page SSR-renders them through
-      // next/image. An unlisted host makes next/image THROW during the server
-      // render, 500ing the whole /drops/[id] page (the "Place bid" crash).
-      'ipfs.filebase.io'
     ],
   },
   webpack: (config) => {

@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import Countdown from '@/components/Countdown';
 import PlaceBidModal from '@/components/Modals/Games/PlaceBidModal';
 import useAuction from '@/hooks/useAuction';
@@ -10,7 +11,7 @@ import TileHeader from './TileHeader';
 
 interface Props {
   dropName: string;
-  artist: User;
+  artist: PublicArtist;
   auction: Auction_include_Nft;
   className: string;
   /** the drop's payment currency: 'SAGE' (default) or 'ETH' */

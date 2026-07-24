@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 import { toast } from 'react-toastify';
@@ -29,7 +30,7 @@ import useAllowlistGate from '@/hooks/useAllowlistGate';
 
 interface Props extends ModalProps {
   openEdition: OpenEdition_include_Nft;
-  artist: User;
+  artist: PublicArtist;
   dropName: string;
   /** the drop's payment currency: 'SAGE' (default) or 'ETH' */
   currency?: string;

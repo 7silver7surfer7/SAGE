@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import { useSigner } from 'wagmi';
 import { toast } from 'react-toastify';
 import { Nft_include_NftContractAndOffers } from '@/prisma/types';
@@ -11,7 +12,7 @@ import LoaderSpinner from '@/components/LoaderSpinner';
 import { useSession } from 'next-auth/react';
 
 interface Props extends ModalProps {
-  artist: User;
+  artist: PublicArtist;
   nft: Nft_include_NftContractAndOffers;
   offer: Offer;
 }

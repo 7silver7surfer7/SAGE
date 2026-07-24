@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import { useEffect, useState } from 'react';
 import { ethers, Signer } from 'ethers';
 import { useBalance, useSigner } from 'wagmi';
@@ -22,7 +23,7 @@ import { formatTimestampYYMMddHHmm } from '@/utilities/strings';
 import { toDecimalString } from '@/utilities/decimalString';
 
 interface Props extends ModalProps {
-  artist: User;
+  artist: PublicArtist;
   nft: Nft_include_NftContractAndOffers;
   buyOffers: Offer[];
 }

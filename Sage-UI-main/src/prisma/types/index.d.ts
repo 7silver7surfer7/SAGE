@@ -44,6 +44,34 @@ type NftDisplaySelect = {
   artistDisplayName: true;
 };
 
+// Matches ARTIST_DISPLAY_SELECT in prisma/functions.ts — keep them in sync.
+// PRIVACY (audit pass-3): `Artist: true` pulled the entire User row (email,
+// role, bannedAt, invitedByCode, verification tx, notification prefs) into
+// getStaticProps, which serializes it into __NEXT_DATA__ on public pages —
+// readable by anyone with View Source. These are the only fields the tiles
+// and creator pages render. Same rule as above: add a field here if a new
+// consumer needs one; tsc flags the missing field at the call site.
+type ArtistDisplaySelect = {
+  walletAddress: true;
+  username: true;
+  profilePicture: true;
+  bio: true;
+  bannerImageS3Path: true;
+  webpage: true;
+  twitterUsername: true;
+  instagramUsername: true;
+  mediumUsername: true;
+  country: true;
+  state: true;
+};
+
+/**
+ * The artist as public pages are allowed to see them. Components that render an
+ * artist should take THIS, not the full `User` — taking `User` is what let the
+ * whole row (email, ban state, invite code) flow into __NEXT_DATA__.
+ */
+export type PublicArtist = Prisma.UserGetPayload<{ select: ArtistDisplaySelect }>;
+
 export type Auction_include_Nft = Prisma.AuctionGetPayload<{
   include: { Nft: { select: NftDisplaySelect } };
 }>;
@@ -63,7 +91,7 @@ export type Drop_include_GamesAndArtist = Prisma.DropGetPayload<{
     Auctions: { include: { Nft: { select: NftDisplaySelect } } };
     OpenEditions: { include: { Nft: { select: NftDisplaySelect } } };
     CollectionMints: true;
-    NftContract: { include: { Artist: true } };
+    NftContract: { include: { Artist: { select: ArtistDisplaySelect } } };
   };
 }>;
 

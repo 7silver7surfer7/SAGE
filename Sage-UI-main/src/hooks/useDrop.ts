@@ -1,3 +1,4 @@
+import type { PublicArtist } from '@/prisma/types';
 import { Drop, User } from '@prisma/client';
 import { formatDateYYMMddHHmm, transformTitle } from '@/utilities/strings';
 import shortenAddress from '@/utilities/shortenAddress';
@@ -8,7 +9,7 @@ import { computeDropSystems } from '@/components/Icons/System';
 
 interface Args {
   drop: Drop;
-  artist: User;
+  artist: PublicArtist;
   Lotteries: Lottery_include_Nft[];
   Auctions: Auction_include_Nft[];
   OpenEditions?: OpenEdition_include_Nft[];
