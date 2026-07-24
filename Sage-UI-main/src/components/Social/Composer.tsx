@@ -98,7 +98,9 @@ export default function Composer({
       </div>
     );
   }
-  if (me?.needsInvite) return <InviteGate />;
+  // Invite gate removed 2026-07-24 — SAGE Social is open to any signed-in
+  // wallet. InviteGate remains exported but is no longer rendered anywhere —
+  // kept so invite-only can be reinstated by restoring two call sites.
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

@@ -593,23 +593,26 @@ async function pfpVerifiedMap(posts: any[]): Promise<Record<string, boolean>> {
 }
 
 /**
- * Referral gate: who may post/interact. Artists, admins, verified users and
- * anyone who redeemed an invite code participate; a brand-new USER wallet can
- * browse and read but the composer asks for an invite code.
+ * Participation gate: who may post/interact.
+ *
+ * SAGE Social was invite-only — a brand-new USER wallet could browse but not
+ * post, follow, or even set a profile picture until it redeemed a code. That
+ * requirement was removed (2026-07-24): any signed-in wallet now participates.
+ * Invite codes still exist and still record who referred whom, they simply no
+ * longer gate anything (see redeemInvite / ReferCard).
+ *
+ * What remains is the BAN check. Banning is DB-only state and the banned
+ * wallet's session/JWT stays valid, so this function is the only thing that
+ * actually stops a banned wallet from posting — banUser()'s promise that their
+ * posts "drop out of every feed" depends on it. Do not reduce this to `true`.
  */
 async function canParticipate(wallet: string): Promise<boolean> {
   const u = await prisma.user.findUnique({
     where: { walletAddress: wallet },
-    select: { role: true, verifiedAt: true, invitedByCode: true, bannedAt: true },
+    select: { bannedAt: true },
   });
   if (!u) return false;
-  // A ban's own doc comment (see banUser()) promises posts/replies "drop out
-  // of every feed" — but banning is DB-only state, the banned wallet's
-  // session/JWT stays valid, and this was the only real posting gate
-  // (createPost only ever calls canParticipate). Without this, a banned
-  // wallet could keep posting/replying indefinitely.
-  if (u.bannedAt) return false;
-  return u.role !== Role.USER || !!u.verifiedAt || !!u.invitedByCode;
+  return !u.bannedAt;
 }
 
 /** Premium gate: paid checkmark (admins ride free). Sends the 403 itself. */
@@ -903,8 +906,11 @@ async function getProfile(address: string, req: NextApiRequest, res: NextApiResp
         : [],
     ]);
   // self-only extras: does the composer need an invite code, unread DMs
-  const needsInvite =
-    isSelf && user ? user.role === Role.USER && !user.verifiedAt && !user.invitedByCode : false;
+  // Invites no longer gate participation (2026-07-24) — any signed-in wallet
+  // can post/follow/set a pfp. Kept in the payload (always false) so older
+  // clients that still read it don't break; the composer no longer branches
+  // on it. Invite codes live on purely as referral attribution.
+  const needsInvite = false;
   const unreadMessages = isSelf
     ? await prisma.socialMessage.count({ where: { toAddress: addr, readAt: null } })
     : 0;
@@ -990,10 +996,7 @@ async function createPost(
   r: { walletAddress: string }
 ) {
   if (!(await canParticipate(r.walletAddress)))
-    return res.status(403).json({
-      error: 'SAGE Social is invite-only — redeem an invite code to start posting',
-      needsInvite: true,
-    });
+    return res.status(403).json({ error: 'this account is banned' });
   if (rateLimited(r.walletAddress, 'post', 10))
     return res.status(429).json({ error: 'slow down — 10 posts per minute max' });
   const { text, imageUrl, mediaType, replyToId } = req.body || {};
@@ -1208,7 +1211,7 @@ async function createDropPost(
   // limit as createPost — this path previously skipped both, so a banned
   // artist could keep posting and there was no spam limit.
   if (!(await canParticipate(r.walletAddress)))
-    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
+    return res.status(403).json({ error: 'this account is banned' });
   if (rateLimited(r.walletAddress, 'dropPost', 10))
     return res.status(429).json({ error: 'slow down — 10 posts per minute max' });
   const dropId = Number(req.body?.dropId);
@@ -1318,7 +1321,7 @@ async function toggleFollow(
   // can't script unlimited free wallets into gated drops. (Unfollow is ungated,
   // above.)
   if (!(await canParticipate(r.walletAddress)))
-    return res.status(403).json({ error: 'SAGE Social is invite-only — redeem an invite code to follow', needsInvite: true });
+    return res.status(403).json({ error: 'this account is banned' });
   if (rateLimited(r.walletAddress, 'follow', 30))
     return res.status(429).json({ error: 'slow down' });
   // the target must be a known user (has signed in at least once)
@@ -1933,7 +1936,7 @@ async function getOwnedNfts(res: NextApiResponse, r: { walletAddress: string }) 
 
 async function setNftPfp(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   if (!(await canParticipate(r.walletAddress)))
-    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
+    return res.status(403).json({ error: 'this account is banned' });
   const nftId = Number(req.body?.nftId);
   const nft = await prisma.nft.findUnique({
     where: { id: nftId },
@@ -3419,7 +3422,7 @@ async function requestFaucetVoucher(
   // client-settable header). The scarce, operator-controlled invite is the real
   // rate limiter on faucet drain.
   if (!(await canParticipate(r.walletAddress)))
-    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
+    return res.status(403).json({ error: 'this account is banned' });
   const ip = faucetClientIp(req);
   if (!ip) return res.status(400).json({ error: 'could not determine your network' });
   const ipHash = hashFaucetIp(ip);
@@ -3536,7 +3539,7 @@ async function toggleGroupChat(req: NextApiRequest, res: NextApiResponse, r: { w
 
 async function setProfileImage(req: NextApiRequest, res: NextApiResponse, r: { walletAddress: string }) {
   if (!(await canParticipate(r.walletAddress)))
-    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
+    return res.status(403).json({ error: 'this account is banned' });
   const { url, kind } = req.body || {};
   if (!url || !isOwnSocialMediaUrl(url))
     return res.status(400).json({ error: 'image must be uploaded through SAGE Social' });
@@ -3564,7 +3567,7 @@ async function recordEditionLaunch(
   r: { walletAddress: string }
 ) {
   if (!(await canParticipate(r.walletAddress)))
-    return res.status(403).json({ error: 'redeem an invite code first', needsInvite: true });
+    return res.status(403).json({ error: 'this account is banned' });
   const { editionAddress, name, symbol, imageUrl, priceEth, maxSupply, launchTxHash } = req.body || {};
   const edition = canon(editionAddress);
   const launcher = parameters.SOCIAL_NFT_LAUNCHER_ADDRESS;

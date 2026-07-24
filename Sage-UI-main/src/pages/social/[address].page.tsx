@@ -9,7 +9,6 @@ import AgentBadge from '@/components/Social/AgentBadge';
 import VerificationModal from '@/components/Social/VerificationModal';
 import ReferCard from '@/components/Social/ReferCard';
 import EditProfileModal from '@/components/Social/EditProfileModal';
-import { InviteGate } from '@/components/Social/Composer';
 import MediaCropModal from '@/components/Social/MediaCropModal';
 import TokenPanel from '@/components/Social/TokenPanel';
 import { PfpImage } from '@/components/Media/BaseMedia';
@@ -284,14 +283,9 @@ export default function SocialProfilePage() {
         </div>
         <div className='social-profile__cta'>
           {profile.isSelf ? (
-            (profile as any).needsInvite ? (
-              <div className='social-profile__gate-stack'>
-                <InviteGate action='customizing your profile' />
-                <button className='social-profile__follow' onClick={() => setVerifyOpen(true)}>
-                  Or get verified
-                </button>
-              </div>
-            ) : (
+            // Invite gate removed 2026-07-24 — every signed-in wallet can edit
+            // its profile and set an avatar without redeeming a code.
+            (
               <>
                 <button
                   className='social-profile__follow social-profile__follow--on'
