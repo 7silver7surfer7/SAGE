@@ -18,6 +18,7 @@ import {
   creditsForImage,
 } from '@/constants/modelPricing';
 import { getCreditBalance, debitCredits } from './credits.page';
+import { resolveSubject, subjectImage, CRITIQUE_RULES } from '@/utilities/critique';
 
 /**
  * SAGE Agent — server-side model call.
@@ -81,6 +82,8 @@ ART: you can make images with generate_image and mint them with prepare_mint.
 - Show the image, then ask whether they want it minted; never mint unprompted.
 - prepare_mint pins the art to IPFS and builds an unsigned edition the user signs. Deploying costs gas even for a free mint, so say so.
 - Default to a 1/1 unless they ask for a run. Suggest a name and ticker rather than demanding one.
+
+CRITICISM: critique_subject writes about a SAGE drop — you look at the actual artwork, not its title. Reach for it whenever someone asks what you think of a work, for a reading, an analysis or a critique. If it cannot find the drop, ask which one they mean; never critique from memory.
 
 NEWCOMERS: explain wallets, minting, gas and Pixels plainly, without condescension.`;
 
@@ -193,6 +196,22 @@ const TOOLS = [
         price_eth: { type: 'number', description: 'Price per edition in ETH. 0 for a free mint. Defaults to 0.' },
       },
       required: ['name', 'symbol'],
+    },
+  },
+  {
+    name: 'critique_subject',
+    description:
+      'Write art criticism of a SAGE drop — analysis, interpretation, evaluation and a final judgement. Use this whenever the user asks what you think of a work, for a critique, a reading, or an analysis. Name the drop in words; the server finds it and supplies the artwork.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        subject: {
+          type: 'string',
+          description:
+            'The drop to critique, in the user\u2019s words (a title, an artist, or both). Never a URL.',
+        },
+      },
+      required: ['subject'],
     },
   },
   {
@@ -537,6 +556,8 @@ async function runTool(
     imageModelId: string;
     /** URLs of images already generated in this thread, newest first */
     recentImages: string[];
+    /** set when a critique tool ran, so the image reaches the model */
+    critique?: { subject: any; base64: string; mime: string };
   }
 ): Promise<string> {
   if (name === 'list_drops') {
@@ -1013,6 +1034,41 @@ async function runTool(
     });
   }
 
+  if (name === 'critique_subject') {
+    ctx.steps.push('READING THE WORK');
+    const subject = await resolveSubject(String(input?.subject || ''));
+    if (!subject) {
+      return 'ERROR: no SAGE drop matches that. Ask which work they mean, or use list_drops. Do NOT critique from memory — without the image there is nothing to look at.';
+    }
+    const img = await subjectImage(subject);
+    if (!img) {
+      return `ERROR: the artwork for "${subject.title}" could not be loaded, so there is nothing to look at. Say so; do not critique it from its title.`;
+    }
+    // Flagging that this turn carries a critique switches on the extra system
+    // block and the image content. See the handler below.
+    ctx.critique = {
+      subject,
+      base64: img.bytes.toString('base64'),
+      mime: img.mime,
+    };
+    ctx.cards.push({
+      kind: 'image',
+      status: 'UNDER REVIEW',
+      byline: `${subject.artist.toUpperCase()} · SAGE DROP`,
+      title: subject.title,
+      images: [subject.imageUrl],
+      rows: Object.entries(subject.facts)
+        .filter(([k]) => k !== 'artistStatement')
+        .map(([k, v]) => ({ k: k.toUpperCase(), v })),
+    });
+    return JSON.stringify({
+      subject: subject.title,
+      artist: subject.artist,
+      facts: subject.facts,
+      note: 'The artwork is attached to this turn. Write the four movements as prose. Every platform fact you state must come from `facts` above.',
+    });
+  }
+
   if (name === 'list_tokens') {
     ctx.steps.push('READING TOKEN REGISTRY');
     const launches = await prisma.socialTokenLaunch.findMany({
@@ -1070,6 +1126,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     recentImages: (Array.isArray(body.recentImages) ? body.recentImages : [])
       .filter((u: any) => typeof u === 'string' && /^https:\/\//.test(u))
       .slice(0, 6),
+    // set by critique_subject when a work is loaded for this turn
+    critique: undefined as { subject: any; base64: string; mime: string } | undefined,
   };
 
   const history = Array.isArray(body.history)
@@ -1124,6 +1182,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // charged for it.
           system: [
             { type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } },
+            // Interpretation is forbidden by the cached prefix; this narrow
+            // amendment permits it for criticism only, and only on the turn
+            // that carries a work to look at.
+            ...(ctx.critique ? [{ type: 'text', text: CRITIQUE_RULES }] : []),
             ...(ctx.recentImages.length
               ? [
                   {
@@ -1186,7 +1248,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           console.error('agent tool error', t.name, e?.message);
           out = 'ERROR: tool failed';
         }
-        results.push({ type: 'tool_result', tool_use_id: t.id, content: out });
+        // A critique result carries the artwork itself. Image BEFORE text is
+        // what Anthropic's vision guidance recommends, and without this the
+        // model would be critiquing a title rather than a picture.
+        if (t.name === 'critique_subject' && ctx.critique) {
+          results.push({
+            type: 'tool_result',
+            tool_use_id: t.id,
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: ctx.critique.mime,
+                  data: ctx.critique.base64,
+                },
+              },
+              { type: 'text', text: out },
+            ],
+          });
+        } else {
+          results.push({ type: 'tool_result', tool_use_id: t.id, content: out });
+        }
       }
       messages.push({ role: 'user', content: results });
     }

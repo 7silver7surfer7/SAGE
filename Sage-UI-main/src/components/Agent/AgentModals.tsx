@@ -379,9 +379,9 @@ export interface BotModalProps {
   links: BotLink[];
   onCycleScopes: (handle: string) => void;
   onRevoke: (handle: string) => void;
-  linkDraft: string;
-  onLinkDraftChange: (value: string) => void;
-  onLinkAccount: () => void;
+  onConnectX: () => void;
+  onUnlinkX: () => void;
+  xLink: { linked: boolean; handle: string | null; dailyCap: number; servedToday: number } | null;
   mentionDraft: string;
   onMentionDraftChange: (value: string) => void;
   onRunMention: () => void;
@@ -396,9 +396,9 @@ export function BotModal({
   links,
   onCycleScopes,
   onRevoke,
-  linkDraft,
-  onLinkDraftChange,
-  onLinkAccount,
+  onConnectX,
+  onUnlinkX,
+  xLink,
   mentionDraft,
   onMentionDraftChange,
   onRunMention,
@@ -509,26 +509,45 @@ export function BotModal({
           ))}
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
-          <input
-            value={linkDraft}
-            onChange={(e) => onLinkDraftChange(e.target.value)}
-            placeholder="@handle to link to this wallet"
-            style={{ ...inputStyle, minWidth: '220px', ...mono(12, C.ink) }}
-          />
-          <HoverButton
-            onClick={onLinkAccount}
-            style={{
-              ...btnGhost,
-              color: C.ink,
-              border: `1px solid ${C.ink}`,
-              padding: '12px 20px',
-              fontWeight: 700,
-            }}
-            hover={{ background: C.ink, color: C.panel }}
-          >
-            link account
-          </HoverButton>
+        {/* Ownership is proved by the OAuth round trip, never by typing a
+            handle. The free-text box this replaces wrote to React state and
+            granted nothing, while the copy above promised the handle could
+            spend from this wallet. */}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {xLink?.linked ? (
+            <>
+              <span style={mono(12.5, C.ink)}>@{xLink.handle}</span>
+              <span style={label(9, C.ink3, '0.18em')}>
+                VERIFIED VIA X · {xLink.servedToday}/{xLink.dailyCap} SERVED TODAY
+              </span>
+              <HoverButton
+                onClick={onUnlinkX}
+                style={{ ...btnGhost, padding: '10px 16px' }}
+                hover={{ color: C.errorInk, border: `1px solid ${C.errorInk}` }}
+              >
+                unlink
+              </HoverButton>
+            </>
+          ) : (
+            <>
+              <HoverButton
+                onClick={onConnectX}
+                style={{
+                  ...btnGhost,
+                  color: C.ink,
+                  border: `1px solid ${C.ink}`,
+                  padding: '12px 20px',
+                  fontWeight: 700,
+                }}
+                hover={{ background: C.ink, color: C.panel }}
+              >
+                connect X account
+              </HoverButton>
+              <span style={label(9, C.ink3, '0.18em')}>
+                THE BOT ANSWERS LINKED, CREDITED ACCOUNTS ONLY
+              </span>
+            </>
+          )}
         </div>
       </div>
 

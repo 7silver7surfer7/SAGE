@@ -178,6 +178,14 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
   // fabricated row sitting next to a confirmed on-chain one reads as history.
   const [txs, setTxs] = useState<TxRecord[]>([]);
   const [owned, setOwned] = useState<Holding[]>([]);
+  /** Real X link, from the server. Null until loaded. */
+  const [xLink, setXLink] = useState<{
+    linked: boolean;
+    handle: string | null;
+    dailyCap: number;
+    servedToday: number;
+  } | null>(null);
+
   const [links, setLinks] = useState<BotLink[]>([
     { handle: '@collector_eth', wallet: '0x7F3a…9C21', perTweet: 0.5, daily: 2.0, spent: 0.35, scopes: 'BUY · MINT · SWAP' },
     { handle: '@nulldelta', wallet: '0x2Ba1…8fD0', perTweet: 0.1, daily: 0.4, spent: 0.0, scopes: 'BUY ONLY' },
@@ -277,6 +285,19 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
 
   /** Mirrors sessionId so a same-tick second write sees the id just created. */
   const sessionIdRef = useRef('');
+
+  const loadXLink = useCallback(async () => {
+    if (!wallet.connected) return setXLink(null);
+    try {
+      const r = await fetch('/api/x-link/');
+      setXLink(r.ok ? await r.json() : null);
+    } catch {
+      setXLink(null);
+    }
+  }, [wallet.connected]);
+  useEffect(() => {
+    loadXLink();
+  }, [loadXLink, wallet.address]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // late-bound: respond() closes over these before confirmIntent is declared
@@ -922,18 +943,28 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     );
   }, []);
 
-  const linkAccount = useCallback((raw: string) => {
-    const h = raw.trim();
-    if (!h) return;
-    const handle = h.startsWith('@') ? h : '@' + h;
-    setLinks((prev) =>
-      prev.concat([
-        // New links start at the tightest caps — a freshly authorised X
-        // account should not inherit a large spend allowance by default.
-        { handle, wallet: wallet.address, perTweet: 0.25, daily: 1.0, spent: 0, scopes: 'BUY ONLY' },
-      ])
-    );
-  }, []);
+  /**
+   * Start the real link. Ownership is proved by the OAuth round trip, not by
+   * typing a handle — the previous version appended a row to React state and
+   * granted nothing, while the panel claimed the handle could spend from this
+   * wallet.
+   */
+  const connectX = useCallback(() => {
+    if (!wallet.connected) {
+      setError('CONNECT A WALLET FIRST — THE X ACCOUNT LINKS TO IT');
+      return;
+    }
+    window.location.href = '/api/twitter/authorize';
+  }, [wallet.connected]);
+
+  const unlinkX = useCallback(async () => {
+    try {
+      await fetch('/api/x-link/', { method: 'DELETE' });
+      loadXLink();
+    } catch {
+      setError('COULD NOT UNLINK — TRY AGAIN');
+    }
+  }, [loadXLink]);
 
   const runMention = useCallback(
     (text: string) => {
@@ -1080,8 +1111,9 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     botEnabled,
     toggleBot: () => setBotEnabled((v) => !v),
     cycleScopes,
-    linkAccount,
-    revoke,
+    connectX,
+    unlinkX,
+    xLink,
     runMention,
     linkDraft,
     setLinkDraft,

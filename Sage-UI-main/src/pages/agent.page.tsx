@@ -174,13 +174,10 @@ export default function AgentPage({ drops }: Props) {
             onToggleEnabled={a.toggleBot}
             links={a.links}
             onCycleScopes={a.cycleScopes}
-            onRevoke={a.revoke}
-            linkDraft={a.linkDraft}
-            onLinkDraftChange={a.setLinkDraft}
-            onLinkAccount={() => {
-              a.linkAccount(a.linkDraft);
-              a.setLinkDraft('');
-            }}
+            onRevoke={a.unlinkX}
+            onConnectX={a.connectX}
+            onUnlinkX={a.unlinkX}
+            xLink={a.xLink}
             mentionDraft={a.mentionDraft}
             onMentionDraftChange={a.setMentionDraft}
             onRunMention={() => a.runMention(a.mentionDraft || a.sampleMentions[0])}
