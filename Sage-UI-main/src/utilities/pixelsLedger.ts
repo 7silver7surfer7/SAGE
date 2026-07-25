@@ -362,6 +362,25 @@ export async function dbLeaderboardRows(): Promise<
  * covers 200 wallets, so the full book cycles in ~40 minutes and active
  * wallets (recent traders) are caught on every single call.
  */
+/**
+ * Re-checkpoint ONE wallet immediately, from its current effective balance.
+ *
+ * Linking a wallet changes what liveSageWhole returns, but nothing re-reads it
+ * until a sweep happens to pick that account — and the sweep takes the STALEST
+ * accounts first, so a wallet synced recently is at the back of a 482-account
+ * queue and may wait days. The first real link on production hit exactly that:
+ * the row was correct, the balance was there, and the account still earned
+ * nothing because its checkpoint stayed at 0.
+ *
+ * Cheap (one balance read per linked wallet, one write), so the link path can
+ * simply call it and the user sees their rate move immediately.
+ */
+export async function dbResync(address: string): Promise<bigint> {
+  const live = await liveSageWhole(address);
+  await dbBank(address, live);
+  return live;
+}
+
 export async function dbBankSweep(batch = 200): Promise<{ checked: number; banked: number }> {
   const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000);
   const [stale, recent] = await Promise.all([
@@ -391,10 +410,17 @@ export async function dbBankSweep(batch = 200): Promise<{ checked: number; banke
       if (live === null) continue; // RPC hiccup — next sweep catches it
       const known = cpByLc.get(chunk[j].toLowerCase());
       if (known && known.checkpointSage === live) {
-        // healthy — still touch updatedAt so the stale-first rotation advances
+        // Healthy — but updatedAt MUST still move, because the batch above is
+        // "the 200 stalest by updatedAt". This used to pass `data: {}`, and
+        // Prisma does not apply @updatedAt to an empty update: the timestamp
+        // never moved, so every call re-picked the same 200 accounts and the
+        // book never rotated. Four consecutive sweeps returning an identical
+        // {checked:201, banked:49} on production is what that looks like —
+        // wallets outside the first batch were never swept at all, some for
+        // six days. Set it explicitly rather than relying on the attribute.
         await prisma.pixelAccount.update({
           where: { walletAddress: known.walletAddress },
-          data: {},
+          data: { updatedAt: new Date() },
         });
         continue;
       }

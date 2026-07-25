@@ -4,6 +4,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import prisma from '@/prisma/client';
 import { getRequester, isCrossSiteRequest } from '@/utilities/apiAuth';
 import { PIXELS_TOKEN_ADDRESS, TRADE_CHAIN_ID, TRADE_RPC_URL } from '@/constants/config';
+import { CAP_SAGE, RATE_SCALED, RATE_DIVISOR } from '@/constants/pixels';
+import { dbResync } from '@/utilities/pixelsLedger';
 
 /**
  * Link an external wallet so its SAGE balance accrues Pixels to this account.
@@ -232,7 +234,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       prisma.pixelLinkChallenge.delete({ where: { walletAddress: address } }),
     ]);
 
-    return res.json({ linked: true, address: match.from, proof: 'transfer' });
+    // Re-checkpoint NOW. Without this the link is correct but inert: the sweep
+    // takes the stalest accounts first, so a just-linked wallet sits at the
+    // back of the queue and earns nothing until it happens to come round.
+    // Best-effort — the link itself already succeeded and must not be undone
+    // by a balance read failing.
+    let rate: string | null = null;
+    try {
+      const live = await dbResync(address);
+      const cap = BigInt(CAP_SAGE);
+      const capped = live > cap ? cap : live;
+      rate = ((capped * BigInt(RATE_SCALED)) / BigInt(RATE_DIVISOR)).toString();
+    } catch (e: any) {
+      console.error('pixels-link: linked but could not re-checkpoint', e?.message || e);
+    }
+
+    return res.json({ linked: true, address: match.from, proof: 'transfer', pixelsPerDay: rate });
   }
 
   return res.status(400).json({ error: 'unknown action' });
