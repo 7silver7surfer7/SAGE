@@ -35,6 +35,7 @@ import { PrismaClient } from '@prisma/client';
 const TOKEN = '0xE21a2b120FAcF995bC8bF6b1843f409E568beBA3';
 const RPC = 'https://rpc.mainnet.chain.robinhood.com';
 const CHAIN_ID = 4663;
+const EXPLORER = 'https://robinhoodchain.blockscout.com';
 
 // must match constants/pixels.ts
 const RATE_SCALED = 25n;
@@ -53,22 +54,44 @@ const prisma = new PrismaClient();
 
 const addrOf = (topic) => ethers.utils.getAddress('0x' + topic.slice(26));
 
-async function creationBlock(provider, address, head) {
-  let lo = 0;
-  let hi = head;
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi) / 2);
-    const code = await provider.getCode(address, mid).catch(() => '0x');
-    if (code === '0x') lo = mid + 1;
-    else hi = mid;
+/**
+ * The block the token was deployed in — from its CREATION TRANSACTION, not a
+ * getCode binary search.
+ *
+ * This chain's public RPC is not a full archive node: getCode(addr, oldBlock)
+ * answers inconsistently, so a binary search converges on a different wrong
+ * block every run. Observed on this exact token — true 18,694,863 against
+ * searches returning 18,990,267, 18,696,323 and 18,697,647 on three
+ * consecutive attempts. A start block that is too late silently truncates the
+ * transfer history and under-credits every holder whose buy predates it; one
+ * run of this script began 293,652 blocks late and found 1 wallet instead of 6.
+ *
+ * Refuses to guess. A seed that quietly pays the wrong people is worse than
+ * one that does not run.
+ */
+async function creationBlock(provider, address) {
+  const res = await fetch(`${EXPLORER}/api/v2/addresses/${address}`).catch(() => null);
+  const meta = res && res.ok ? await res.json().catch(() => null) : null;
+  const hash = meta?.creation_transaction_hash || meta?.creation_tx_hash;
+  if (!hash) {
+    throw new Error(
+      'could not read the deploy block from the explorer, and this RPC cannot be ' +
+        'binary-searched reliably. Pass --from-block <n> with the creation block.'
+    );
   }
-  return lo;
+  const receipt = await provider.getTransactionReceipt(hash);
+  if (!receipt?.blockNumber) throw new Error(`creation tx ${hash} has no receipt`);
+  return receipt.blockNumber;
 }
 
 async function main() {
   const provider = new ethers.providers.StaticJsonRpcProvider(RPC, CHAIN_ID);
   const head = await provider.getBlockNumber();
-  const start = await creationBlock(provider, TOKEN, head);
+  // an explicit override wins, for reruns that must not depend on the explorer
+  const fromArg = process.argv.indexOf('--from-block');
+  const start =
+    fromArg > -1 ? Number(process.argv[fromArg + 1]) : await creationBlock(provider, TOKEN);
+  if (!Number.isFinite(start) || start <= 0) throw new Error('bad start block');
   console.log(`token deployed at block ${start.toLocaleString()}, head ${head.toLocaleString()}`);
 
   // ── collect every transfer ────────────────────────────────────────────────
@@ -100,7 +123,12 @@ async function main() {
   const firstSeen = new Map();
 
   const accrue = (who, until) => {
-    const held = bal.get(who) ?? 0n;
+    // balances are tracked in WEI and truncated to whole tokens only here.
+    // Truncating each transfer instead loses the fraction every time and the
+    // error compounds with the wrong sign: two receives of 1.5 count as 1+1=2
+    // while one send of 3.0 counts as 3, so a wallet that never went short
+    // ends the replay at -1 tokens. Observed on 0x505729ec… before this fix.
+    const held = (bal.get(who) ?? 0n) / WEI;
     const from = since.get(who);
     if (from === undefined || until <= from) return;
     if (held > 0n) {
@@ -116,7 +144,7 @@ async function main() {
     const ts = timeOf.get(log.blockNumber);
     const from = addrOf(log.topics[1]);
     const to = addrOf(log.topics[2]);
-    const whole = BigInt(log.data) / WEI; // whole tokens, as the ledger counts
+    const amount = BigInt(log.data); // wei — never truncate here, see accrue()
 
     for (const side of [from, to]) {
       if (side === ethers.constants.AddressZero) continue;
@@ -125,10 +153,10 @@ async function main() {
       if (!firstSeen.has(side)) firstSeen.set(side, ts);
     }
     if (from !== ethers.constants.AddressZero) {
-      bal.set(from, (bal.get(from) ?? 0n) - whole);
+      bal.set(from, (bal.get(from) ?? 0n) - amount);
     }
     if (to !== ethers.constants.AddressZero) {
-      bal.set(to, (bal.get(to) ?? 0n) + whole);
+      bal.set(to, (bal.get(to) ?? 0n) + amount);
     }
   }
   for (const who of bal.keys()) accrue(who, now);
@@ -144,12 +172,21 @@ async function main() {
     rows.push({
       address: who,
       pixels,
-      balance: bal.get(who) ?? 0n,
+      balance: (bal.get(who) ?? 0n) / WEI,
       heldSince: new Date(Number(firstSeen.get(who)) * 1000),
       delegated: isDelegated,
     });
   }
   rows.sort((a, b) => (b.pixels > a.pixels ? 1 : -1));
+
+  // A negative balance is impossible on chain: it means the replay missed
+  // transfers, so the whole run is untrustworthy. Refuse rather than seed.
+  const impossible = rows.filter((r) => r.balance < 0n);
+  if (impossible.length) {
+    console.error(`\n${impossible.length} wallet(s) ended with a NEGATIVE balance:`);
+    impossible.forEach((r) => console.error('  ' + r.address, r.balance.toString()));
+    throw new Error('transfer history is incomplete — refusing to seed from it');
+  }
 
   console.log(`\n${rows.length} wallets earned pixels before accrual moved:\n`);
   console.log('  wallet                                        held since    balance      pixels');
