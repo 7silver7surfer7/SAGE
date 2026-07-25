@@ -97,3 +97,68 @@ export function creditsForUsage(modelId: string, inputTokens: number, outputToke
   const weighted = (inputTokens + outputTokens * 5) / 1000;
   return Math.max(1, Math.ceil(weighted * rateFor(price)));
 }
+
+// ── image generation ────────────────────────────────────────────────────────
+/**
+ * Krea 2 tiers, priced per image in USD from Krea's published rates.
+ *
+ * Metered on the SAME unit as text: 1 credit = $0.002 of real spend. That is
+ * what lets one balance cover both — a Large render costs 30 credits because
+ * it costs us $0.06, exactly as 30 credits of Sonnet would.
+ *
+ * `path` is verified against the live API, not inferred: the fast tier is
+ * `medium-turbo`, and `/krea-2/turbo` 404s.
+ */
+export interface ImageModelPrice {
+  id: string;
+  label: string;
+  path: string;
+  usdPerImage: number;
+  note: string;
+  /** rough wall-clock, for the picker */
+  seconds: number;
+}
+
+export const IMAGE_MODELS: ImageModelPrice[] = [
+  {
+    id: 'krea-2-large',
+    label: 'KREA 2 LARGE',
+    path: '/generate/image/krea/krea-2/large',
+    usdPerImage: 0.06,
+    note: 'PHOTOREALISM · 2K',
+    seconds: 25,
+  },
+  {
+    id: 'krea-2-medium',
+    label: 'KREA 2 MEDIUM',
+    path: '/generate/image/krea/krea-2/medium',
+    usdPerImage: 0.03,
+    note: 'EXPRESSIVE · 1.5K',
+    seconds: 10,
+  },
+  {
+    id: 'krea-2-turbo',
+    label: 'KREA 2 TURBO',
+    path: '/generate/image/krea/krea-2/medium-turbo',
+    usdPerImage: 0.015,
+    note: 'FAST ITERATION · 1.5K',
+    seconds: 3,
+  },
+];
+
+export const DEFAULT_IMAGE_MODEL_ID = 'krea-2-medium';
+
+/** USD per credit — the unit the whole meter is built on. */
+export const USD_PER_CREDIT = 0.002;
+
+export function imagePriceFor(id: string): ImageModelPrice {
+  return (
+    IMAGE_MODELS.find((m) => m.id === id) ||
+    IMAGE_MODELS.find((m) => m.id === DEFAULT_IMAGE_MODEL_ID)!
+  );
+}
+
+/** Credits for one image, on the same $0.002/credit basis as text. */
+export function creditsForImage(id: string): number {
+  return Math.max(1, Math.ceil(imagePriceFor(id).usdPerImage / USD_PER_CREDIT));
+}

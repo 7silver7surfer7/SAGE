@@ -10,13 +10,12 @@
  * polling rather than a single request.
  */
 
+import { imagePriceFor, DEFAULT_IMAGE_MODEL_ID } from '@/constants/modelPricing';
+
 const KREA_API = 'https://api.krea.ai';
 
-/** Model paths Krea exposes. Allowlisted: the caller never picks a raw path. */
-const MODELS: Record<string, string> = {
-  'krea-2': '/generate/image/krea/krea-2/medium',
-};
-export const DEFAULT_KREA_MODEL = 'krea-2';
+// Paths come from the shared price table so the tier billed is the tier
+// called — the same rule the text models follow.
 
 /** Aspect ratios the API accepts, and the only ones we offer. */
 export const ASPECT_RATIOS = ['1:1', '4:5', '3:2', '2:3', '16:9', '9:16'] as const;
@@ -54,6 +53,21 @@ async function call(path: string, init: RequestInit): Promise<any> {
     // Never surface the upstream body wholesale — it can echo the request,
     // headers included. Log server-side, return a short reason.
     console.error('krea error', r.status, text.slice(0, 400));
+    // The two failures an operator can actually act on are worth naming.
+    // Krea meters the API separately from a workspace subscription, so a
+    // funded account still returns 402 until the API balance itself is
+    // topped up — "generation failed (402)" sends someone hunting the wrong bug.
+    if (r.status === 402) {
+      throw new Error(
+        'the image generator is out of credit — top up the API balance at krea.ai (it is billed separately from a Krea subscription)'
+      );
+    }
+    if (r.status === 401 || r.status === 403) {
+      throw new Error('the image generator rejected our credentials');
+    }
+    if (r.status === 429) {
+      throw new Error('the image generator is rate limiting us — try again shortly');
+    }
     throw new Error(`image generation failed (${r.status})`);
   }
   try {
@@ -104,8 +118,8 @@ export async function generateImage(opts: GenerateOptions): Promise<KreaJob> {
   const prompt = String(opts.prompt || '').trim().slice(0, 1000);
   if (!prompt) throw new Error('a prompt is required');
 
-  const path = MODELS[opts.model || DEFAULT_KREA_MODEL];
-  if (!path) throw new Error(`unknown image model "${opts.model}"`);
+  const price = imagePriceFor(opts.model || DEFAULT_IMAGE_MODEL_ID);
+  const path = price.path;
 
   const started = await call(path, {
     method: 'POST',

@@ -14,6 +14,12 @@ import { matchDrop, type AgentDrop } from './dropIndex';
 import type { AgentWallet } from './useAgentWallet';
 import { SAGE_PRICE_TOKEN_ADDRESS } from '@/constants/config';
 import { CREDIT_TIERS } from '@/constants/credits';
+import {
+  IMAGE_MODELS,
+  DEFAULT_IMAGE_MODEL_ID,
+  creditsForImage,
+  imagePriceFor,
+} from '@/constants/modelPricing';
 
 /**
  * Fallback only. Orders now carry their own token address, resolved and priced
@@ -123,6 +129,8 @@ interface AgentTurn {
     inputTokens: number;
     outputTokens: number;
     cost: number;
+    /** portion of `cost` that was image rendering */
+    imageCredits?: number;
     credits: number;
     model: string;
   };
@@ -143,6 +151,8 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
   const [tierEth, setTierEth] = useState<Record<string, number>>({});
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
   const [modelOpen, setModelOpen] = useState(false);
+  const [imageModelId, setImageModelId] = useState(DEFAULT_IMAGE_MODEL_ID);
+  const [imageModelOpen, setImageModelOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
 
   const [buyOpen, setBuyOpen] = useState(false);
@@ -248,7 +258,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
         const r = await fetch('/api/agent/', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text, model: modelId, history }),
+          body: JSON.stringify({ text, model: modelId, imageModel: imageModelId, history }),
         });
         if (r.ok) {
           const d = await r.json();
@@ -298,7 +308,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
       }
       return localRespond(text);
     },
-    [msgs, modelId, wallet, drops]
+    [msgs, modelId, imageModelId, wallet, drops]
   );
 
   /** Deterministic offline answer — used only when /api/agent is unreachable. */
@@ -449,8 +459,9 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
             m.cards = cards;
             m.costLabel =
               (usage.model || model.label) +
-              ' · ' + fmt(usage.inputTokens) + ' TOK IN · ' + fmt(usage.outputTokens) +
-              ' OUT · −' + fmt(usage.cost) + ' CR';
+              ' · ' + fmt(usage.inputTokens) + ' TOK IN · ' + fmt(usage.outputTokens) + ' OUT' +
+              (usage.imageCredits ? ' · ' + fmt(usage.imageCredits) + ' CR IMAGE' : '') +
+              ' · −' + fmt(usage.cost) + ' CR';
             m.balanceLabel = 'BALANCE ' + fmt(usage.credits) + ' CR';
           });
         } else {
@@ -786,6 +797,26 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     selectModel: (id: string) => {
       setModelId(id);
       setModelOpen(false);
+    },
+
+    // image model — priced per render on the same credit unit as text, so the
+    // picker shows what each tier actually costs rather than a vague quality
+    // word. See modelPricing.IMAGE_MODELS.
+    imageModels: IMAGE_MODELS.map((m) => ({
+      id: m.id,
+      label: m.label,
+      note: m.note,
+      rate: creditsForImage(m.id),
+      seconds: m.seconds,
+    })),
+    imageModelId,
+    imageModelLabel: imagePriceFor(imageModelId).label,
+    imageModelCost: creditsForImage(imageModelId),
+    imageModelOpen,
+    toggleImageModel: () => setImageModelOpen((v) => !v),
+    selectImageModel: (id: string) => {
+      setImageModelId(id);
+      setImageModelOpen(false);
     },
 
     // wallet

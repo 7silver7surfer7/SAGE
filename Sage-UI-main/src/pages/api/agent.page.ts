@@ -7,7 +7,16 @@ import { TRADE_CHAIN_NAME, TRADE_CHAIN_ID, parameters } from '@/constants/config
 import { resolveBuyVenue, resolveSellVenue, sizeSellForEth } from '@/utilities/socialToken';
 import { tradeProvider, TRADE_VENUE, BUILTIN_TOKENS } from '@/components/Agent/trade';
 import { ethers } from 'ethers';
-import { MODEL_PRICES, DEFAULT_MODEL_ID, priceFor, creditsForUsage } from '@/constants/modelPricing';
+import {
+  MODEL_PRICES,
+  DEFAULT_MODEL_ID,
+  priceFor,
+  creditsForUsage,
+  IMAGE_MODELS,
+  DEFAULT_IMAGE_MODEL_ID,
+  imagePriceFor,
+  creditsForImage,
+} from '@/constants/modelPricing';
 import { getCreditBalance, debitCredits } from './credits.page';
 
 /**
@@ -154,6 +163,12 @@ const TOOLS = [
           type: 'string',
           enum: ['1:1', '4:5', '3:2', '2:3', '16:9', '9:16'],
           description: 'Defaults to 1:1.',
+        },
+        model: {
+          type: 'string',
+          enum: IMAGE_MODELS.map((m) => m.id),
+          description:
+            'Quality tier. krea-2-turbo is fast and cheapest (8 credits), krea-2-medium is balanced (15), krea-2-large is photoreal 2K (30). Honour the user\u2019s stated preference; otherwise leave unset and the selected default is used.',
         },
       },
       required: ['prompt'],
@@ -433,7 +448,9 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
  * the model, which reads untrusted text, so an open fetcher would let a
  * prompt injection make this server read its own metadata endpoints.
  */
-const IMAGE_SOURCE_HOSTS = new Set(['api.krea.ai', 's.krea.ai', 'krea.ai', 'cdn.krea.ai']);
+// gen.krea.ai is where finished images actually land — confirmed against a
+// real completed job. Guessing this list would have failed every pin.
+const IMAGE_SOURCE_HOSTS = new Set(['gen.krea.ai', 'api.krea.ai', 's.krea.ai', 'cdn.krea.ai']);
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
 async function pinImageAndMetadata(
@@ -485,7 +502,14 @@ const fmtTokens = (wei: ethers.BigNumber) =>
 async function runTool(
   name: string,
   input: any,
-  ctx: { address: string | null; cards: Card[]; steps: string[] }
+  ctx: {
+    address: string | null;
+    cards: Card[];
+    steps: string[];
+    imageCredits: number;
+    /** the tier the user picked in the UI; the model may still override */
+    imageModelId: string;
+  }
 ): Promise<string> {
   if (name === 'list_drops') {
     ctx.steps.push('READING DROP INDEX');
@@ -835,28 +859,40 @@ async function runTool(
   if (name === 'generate_image') {
     const prompt = String(input?.prompt || '').trim();
     if (!prompt) return 'ERROR: a prompt is required.';
-    ctx.steps.push('GENERATING · KREA');
+    const imageModel = imagePriceFor(String(input?.model || ctx.imageModelId || DEFAULT_IMAGE_MODEL_ID));
+    ctx.steps.push(`GENERATING · ${imageModel.label}`);
     try {
       const { generateImage } = await import('@/utilities/krea');
       const job = await generateImage({
         prompt,
         aspectRatio: input?.aspect_ratio,
+        model: imageModel.id,
+        timeoutMs: Math.max(60_000, imageModel.seconds * 6000),
       });
       if (job.status !== 'completed' || !job.urls.length) {
         return `ERROR: ${job.error || `image generation ${job.status}`}. Tell the user plainly.`;
       }
+      // Billed only on success — a failed render is not the user's cost.
+      const cost = creditsForImage(imageModel.id) * Math.max(1, job.urls.length);
+      ctx.imageCredits += cost;
       ctx.cards.push({
         kind: 'image',
         status: 'GENERATED',
-        byline: 'KREA · NOT YET MINTED',
+        byline: 'NOT YET MINTED',
         title: prompt.slice(0, 120),
         images: job.urls,
-        rows: [{ k: 'RATIO', v: String(input?.aspect_ratio || '1:1') }],
+        rows: [
+          { k: 'MODEL', v: imageModel.label },
+          { k: 'RATIO', v: String(input?.aspect_ratio || '1:1') },
+          { k: 'COST', v: `${cost} CR` },
+        ],
       });
       return JSON.stringify({
         generated: true,
         image_url: job.urls[0],
         image_urls: job.urls,
+        model: imageModel.label,
+        credits_charged: cost,
         note: 'Shown to the user. It is NOT minted and NOT stored permanently. If they want it minted, call prepare_mint with this image_url.',
       });
     } catch (e: any) {
@@ -973,7 +1009,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const model = MODELS[chosen];
 
   // Only the connected address the SESSION proves — never one the client claims.
-  const ctx = { address: requester.walletAddress || null, cards: [] as Card[], steps: [] as string[] };
+  const ctx = {
+    address: requester.walletAddress || null,
+    cards: [] as Card[],
+    steps: [] as string[],
+    // images are billed per render, on the same $0.002/credit unit as tokens
+    imageCredits: 0,
+    imageModelId: IMAGE_MODELS.some((m) => m.id === body.imageModel)
+      ? String(body.imageModel)
+      : DEFAULT_IMAGE_MODEL_ID,
+  };
 
   const history = Array.isArray(body.history)
     ? body.history
@@ -1079,14 +1124,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // the answer is still delivered — we already paid upstream for it — and
     // the account simply floors at whatever it had; the gate above stops the
     // NEXT turn. Charging for work we then withhold would be worse.
-    const cost = creditsForUsage(chosen, inputTokens, outputTokens);
+    // One balance covers text and images because both are metered at
+    // $0.002/credit — see modelPricing.
+    const cost = creditsForUsage(chosen, inputTokens, outputTokens) + ctx.imageCredits;
     const remaining = await debitCredits(payer, cost);
 
     return res.status(200).json({
       text: finalText,
       steps: ctx.steps,
       cards: ctx.cards,
-      usage: { inputTokens, outputTokens, cost, credits: remaining, model: priceFor(chosen).label },
+      usage: {
+        inputTokens,
+        outputTokens,
+        cost,
+        imageCredits: ctx.imageCredits,
+        credits: remaining,
+        model: priceFor(chosen).label,
+      },
     });
   } catch (e: any) {
     console.error('agent route error', e?.message);

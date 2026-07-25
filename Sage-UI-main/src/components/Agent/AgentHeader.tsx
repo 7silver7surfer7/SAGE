@@ -19,6 +19,13 @@ export interface Props {
   botStatus: string;
   onOpenBot: () => void;
   models: ModelOption[];
+  imageModels: { id: string; label: string; note: string; rate: number; seconds: number }[];
+  imageModelId: string;
+  imageModelLabel: string;
+  imageModelCost: number;
+  imageModelOpen: boolean;
+  onToggleImageModel: () => void;
+  onSelectImageModel: (id: string) => void;
   modelId: string;
   modelOpen: boolean;
   onToggleModel: () => void;
@@ -45,6 +52,13 @@ export default function AgentHeader({
   botStatus,
   onOpenBot,
   models,
+  imageModels,
+  imageModelId,
+  imageModelLabel,
+  imageModelCost,
+  imageModelOpen,
+  onToggleImageModel,
+  onSelectImageModel,
   modelId,
   modelOpen,
   onToggleModel,
@@ -266,6 +280,89 @@ export default function AgentHeader({
                       <span style={label(9, C.accent, '0.12em')}>{m.rate}×</span>
                     </span>
                     <span style={label(8.5, C.ink3, '0.18em')}>{m.note}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Image tier. Shown in CREDITS rather than a multiplier, because a
+            render is billed per image at a flat price — unlike a text turn,
+            whose cost depends on how long it runs. */}
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={onToggleImageModel}
+            onMouseEnter={() => setHover('image')}
+            onMouseLeave={() => setHover(null)}
+            style={{
+              ...pill,
+              gap: '10px',
+              border: `1px solid ${hover === 'image' ? C.accent : C.line}`,
+            }}
+          >
+            <span style={label(8.5, C.ink3)}>IMAGE</span>
+            <span style={{ fontWeight: 700 }}>{imageModelLabel.replace('KREA 2 ', '')}</span>
+            <span style={{ fontSize: '8.5px', color: C.accent }}>{imageModelCost} CR</span>
+            <span style={{ fontSize: '8px', color: C.ink2 }}>▼</span>
+          </button>
+
+          {imageModelOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                right: 0,
+                zIndex: 30,
+                width: '262px',
+                background: C.panel,
+                border: `1px solid ${C.lineStrong}`,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '1px',
+              }}
+            >
+              {imageModels.map((m) => {
+                const selected = m.id === imageModelId;
+                const hovered = hover === `i:${m.id}`;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => onSelectImageModel(m.id)}
+                    onMouseEnter={() => setHover(`i:${m.id}`)}
+                    onMouseLeave={() => setHover(null)}
+                    style={{
+                      textAlign: 'left',
+                      background: hovered || selected ? C.raisedHover : 'transparent',
+                      color: selected ? C.ink : C.ink2,
+                      border: 'none',
+                      borderBottom: `1px solid ${C.line}`,
+                      padding: '13px 15px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '6px',
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        width: '100%',
+                      }}
+                    >
+                      <span style={{ ...mono(11.5, 'inherit'), letterSpacing: '0.14em', fontWeight: 700 }}>
+                        {m.label}
+                      </span>
+                      <span style={label(9, C.accent, '0.12em')}>{m.rate} CR</span>
+                    </span>
+                    <span style={label(8.5, C.ink3, '0.18em')}>
+                      {m.note} · ~{m.seconds}S
+                    </span>
                   </button>
                 );
               })}

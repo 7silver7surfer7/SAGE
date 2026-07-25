@@ -1,9 +1,22 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
-import { parameters, DEX_ENABLED } from '@/constants/config';
+import {
+  parameters,
+  DEX_ENABLED,
+  TRADE_CHAIN_ID,
+  TRADE_RPC_URL,
+  TRADE_WETH_ADDRESS,
+  TRADE_DEX_FACTORY_ADDRESS,
+} from '@/constants/config';
 import { getEthUsd } from '@/utilities/sagePrice';
-import { sweepChainDex, syncPairSwaps, refreshPairStats } from '@/utilities/dexIndexer';
+import {
+  sweepChainDex,
+  syncPairSwaps,
+  refreshPairStats,
+  defaultDexChain,
+  type DexChain,
+} from '@/utilities/dexIndexer';
 
 /**
  * Chain-wide DEX indexer API — a thin shell over utilities/dexIndexer.ts.
@@ -43,9 +56,26 @@ let lastGoodEthUsd = 0;
 // pace) before paying an inline sync; below that the cron's tape is fresh enough
 const DETAIL_LAG_BLOCKS = 50;
 
-async function sweep(res: NextApiResponse) {
-  const counts = await deduped('dex-sweep', 60_000, () => sweepChainDex());
-  res.json(counts);
+/**
+ * Sweep a chain's pairs.
+ *
+ * `?chain=trade` targets Robinhood MAINNET regardless of what this build was
+ * made for. Without it a staging or localhost deploy could only ever index its
+ * own testnet — while the agent trades mainnet from every build, so the one
+ * index it needs was the one it could never populate.
+ */
+async function sweep(req: NextApiRequest, res: NextApiResponse) {
+  const wantsTrade = String(req.query.chain || '') === 'trade';
+  const chain: DexChain = wantsTrade
+    ? {
+        chainId: TRADE_CHAIN_ID,
+        rpcUrl: TRADE_RPC_URL,
+        factory: TRADE_DEX_FACTORY_ADDRESS,
+        weth: TRADE_WETH_ADDRESS,
+      }
+    : defaultDexChain();
+  const counts = await deduped(`dex-sweep:${chain.chainId}`, 60_000, () => sweepChainDex(chain));
+  res.json({ ...counts, chainId: chain.chainId });
 }
 
 async function pairDetail(req: NextApiRequest, res: NextApiResponse) {
@@ -55,7 +85,12 @@ async function pairDetail(req: NextApiRequest, res: NextApiResponse) {
   } catch {
     return res.status(400).json({ error: 'bad address' });
   }
-  let pair = await prisma.dexPair.findUnique({ where: { pairAddress: address } });
+  // Pairs are keyed per chain now, so a lookup must name one. The detail view
+  // serves whatever chain this build targets.
+  const chainId = Number(parameters.CHAIN_ID);
+  let pair = await prisma.dexPair.findUnique({
+    where: { chainId_pairAddress: { chainId, pairAddress: address } },
+  });
   if (!pair) return res.status(404).json({ error: 'unknown pair' });
 
   // catch this one pair up BEFORE reading when its cursor lags — a single
@@ -75,7 +110,10 @@ async function pairDetail(req: NextApiRequest, res: NextApiResponse) {
       await refreshPairStats([address]).catch((e) => console.error('detail stats refresh failed', e));
       return true;
     });
-    pair = (await prisma.dexPair.findUnique({ where: { pairAddress: address } })) || pair;
+    pair =
+      (await prisma.dexPair.findUnique({
+        where: { chainId_pairAddress: { chainId, pairAddress: address } },
+      })) || pair;
   }
 
   const [swaps, ethUsd] = await Promise.all([
@@ -100,7 +138,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     switch (action) {
       case 'Sweep':
-        return await sweep(res);
+        return await sweep(req, res);
       case 'PairDetail':
         return await pairDetail(req, res);
       default:

@@ -116,6 +116,13 @@ export default function AgentPage({ drops }: Props) {
             modelOpen={a.modelOpen}
             onToggleModel={a.toggleModel}
             onSelectModel={a.selectModel}
+            imageModels={a.imageModels}
+            imageModelId={a.imageModelId}
+            imageModelLabel={a.imageModelLabel}
+            imageModelCost={a.imageModelCost}
+            imageModelOpen={a.imageModelOpen}
+            onToggleImageModel={a.toggleImageModel}
+            onSelectImageModel={a.selectImageModel}
             creditsLabel={a.creditsLabel}
             onOpenBuy={a.openBuy}
             connected={a.connected}

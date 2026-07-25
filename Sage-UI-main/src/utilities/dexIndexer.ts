@@ -31,10 +31,38 @@ const ERC20_ABI = [
   'function decimals() view returns (uint8)',
 ];
 
+/**
+ * Which chain a sweep runs against.
+ *
+ * The indexer used to bind implicitly to `parameters`, i.e. whatever chain the
+ * BUILD targeted. That made mainnet unindexable from a staging or localhost
+ * build — and the agent trades mainnet from every build, so the one index it
+ * needed was the one it could never populate. Passing the target explicitly
+ * also means the rows can be tagged with the chain they came from.
+ */
+export interface DexChain {
+  chainId: number;
+  rpcUrl: string;
+  factory: string;
+  weth: string;
+}
+
+export function defaultDexChain(): DexChain {
+  return {
+    chainId: Number(parameters.CHAIN_ID),
+    rpcUrl: parameters.RPC_URL,
+    factory: parameters.UNISWAP_FACTORY_ADDRESS,
+    weth: parameters.WETH_ADDRESS,
+  };
+}
+
 // never a bare url string — the object form is what carries the timeout, and
 // a timeout-less provider is exactly how a dead RPC hangs a sweep
-function rpc(): ethers.providers.StaticJsonRpcProvider {
-  return new ethers.providers.StaticJsonRpcProvider({ url: parameters.RPC_URL, timeout: 30000 });
+function rpc(chain: DexChain = defaultDexChain()): ethers.providers.StaticJsonRpcProvider {
+  return new ethers.providers.StaticJsonRpcProvider(
+    { url: chain.rpcUrl, timeout: 30000 },
+    chain.chainId
+  );
 }
 
 // On-chain names/symbols are attacker-controlled bytes: some carry lone
@@ -113,19 +141,23 @@ async function blockTimestamps(
  * consecutive cron pokes rather than stalling any single one.
  */
 export async function syncPairDiscovery(
-  maxChunks = 8
+  maxChunks = 8,
+  chain: DexChain = defaultDexChain()
 ): Promise<{ newPairs: number; cursor: number; done: boolean }> {
-  const provider = rpc();
+  const provider = rpc(chain);
   const head = await withRetry(() => provider.getBlockNumber());
-  const state = await prisma.dexIndexState.findUnique({ where: { key: 'pair-discovery' } });
+  // Per-chain cursor: one shared key would make a mainnet sweep resume from a
+  // testnet block height and silently skip everything before it.
+  const cursorKey = `pair-discovery:${chain.chainId}`;
+  const state = await prisma.dexIndexState.findUnique({ where: { key: cursorKey } });
   const from =
     state && state.cursor > 0
       ? state.cursor + 1
-      : await creationBlock(provider, parameters.UNISWAP_FACTORY_ADDRESS, head);
+      : await creationBlock(provider, chain.factory, head);
   if (from > head) return { newPairs: 0, cursor: state?.cursor ?? head, done: true };
 
-  const factory = new ethers.Contract(parameters.UNISWAP_FACTORY_ADDRESS, FACTORY_ABI, provider);
-  const weth = parameters.WETH_ADDRESS.toLowerCase();
+  const factory = new ethers.Contract(chain.factory, FACTORY_ABI, provider);
+  const weth = chain.weth.toLowerCase();
 
   let scannedTo = from - 1;
   let logs: ethers.Event[] = [];
@@ -183,6 +215,7 @@ export async function syncPairDiscovery(
     });
     const result = await prisma.dexPair.createMany({
       data: found.map((f, i) => ({
+        chainId: chain.chainId,
         pairAddress: f.pairAddress,
         baseToken: f.baseToken,
         quoteToken: f.quoteToken,
@@ -202,7 +235,7 @@ export async function syncPairDiscovery(
   // concurrently, and a slow sweep finishing last must not drag the cursor
   // backward (same failure mode observed live on poolSyncedBlock)
   await prisma.$executeRaw`
-    INSERT INTO "DexIndexState" ("key", "cursor") VALUES ('pair-discovery', ${scannedTo})
+    INSERT INTO "DexIndexState" ("key", "cursor") VALUES (${cursorKey}, ${scannedTo})
     ON CONFLICT ("key") DO UPDATE
     SET "cursor" = GREATEST("DexIndexState"."cursor", EXCLUDED."cursor")
   `;
@@ -214,7 +247,10 @@ export async function syncPairDiscovery(
  * app-wide convention) and liquidityEth (the WETH-side reserve) straight off
  * getReserves. Per-pair failures are skipped, never fatal.
  */
-export async function refreshPairStats(pairAddresses: string[]): Promise<number> {
+export async function refreshPairStats(
+  pairAddresses: string[],
+  chain: DexChain = defaultDexChain()
+): Promise<number> {
   if (!pairAddresses.length) return 0;
   const pairs = await prisma.dexPair.findMany({
     where: { pairAddress: { in: pairAddresses } },
@@ -245,7 +281,7 @@ export async function refreshPairStats(pairAddresses: string[]): Promise<number>
     // sort orders and sparklines downstream
     const priceEth = baseReserve > 0 ? (wethReserve / baseReserve) * 1_000_000 : 0;
     await prisma.dexPair.update({
-      where: { pairAddress: p.pairAddress },
+      where: { chainId_pairAddress: { chainId: chain.chainId, pairAddress: p.pairAddress } },
       data: { priceEth, liquidityEth: baseReserve > 0 ? wethReserve : 0 },
     });
     updated++;
@@ -261,11 +297,14 @@ export async function refreshPairStats(pairAddresses: string[]): Promise<number>
  */
 export async function syncPairSwaps(
   pairAddress: string,
-  maxChunks = 4
+  maxChunks = 4,
+  chain: DexChain = defaultDexChain()
 ): Promise<{ swaps: number }> {
-  const pair = await prisma.dexPair.findUnique({ where: { pairAddress } });
+  const pair = await prisma.dexPair.findUnique({
+    where: { chainId_pairAddress: { chainId: chain.chainId, pairAddress } },
+  });
   if (!pair) return { swaps: 0 };
-  const provider = rpc();
+  const provider = rpc(chain);
   const head = await withRetry(() => provider.getBlockNumber());
   const from = (pair.swapSyncedBlock ?? pair.createdAtBlock - 1) + 1;
   if (from > head) return { swaps: 0 };
@@ -337,7 +376,7 @@ export async function syncPairSwaps(
     await prisma.dexSwap.createMany({ data: rows, skipDuplicates: true });
     // newest decoded swap is a fresher price than the last reserve read
     await prisma.dexPair.update({
-      where: { pairAddress: pair.pairAddress },
+      where: { chainId_pairAddress: { chainId: chain.chainId, pairAddress: pair.pairAddress } },
       data: { priceEth: rows[rows.length - 1].priceEth },
     });
   }
@@ -357,14 +396,16 @@ export async function syncPairSwaps(
  * head. Each step try/catch-isolated — a flaky RPC degrades one step's count
  * to zero instead of killing the whole sweep.
  */
-export async function sweepChainDex(): Promise<{
+export async function sweepChainDex(
+  chain: DexChain = defaultDexChain()
+): Promise<{
   discovered: number;
   statsRefreshed: number;
   swapsSynced: number;
 }> {
   let discovered = 0;
   try {
-    discovered = (await syncPairDiscovery(4)).newPairs;
+    discovered = (await syncPairDiscovery(4, chain)).newPairs;
   } catch (e) {
     console.error('dex sweep: discovery failed', e);
   }
@@ -375,18 +416,20 @@ export async function sweepChainDex(): Promise<{
     // (the pairs anyone actually looks at stay near-live)
     const [stale, deep] = await Promise.all([
       prisma.dexPair.findMany({
+        where: { chainId: chain.chainId },
         orderBy: { updatedAt: 'asc' },
         take: 40,
         select: { pairAddress: true },
       }),
       prisma.dexPair.findMany({
+        where: { chainId: chain.chainId },
         orderBy: { liquidityEth: 'desc' },
         take: 40,
         select: { pairAddress: true },
       }),
     ]);
     const addrs = Array.from(new Set([...stale, ...deep].map((p) => p.pairAddress)));
-    statsRefreshed = await refreshPairStats(addrs);
+    statsRefreshed = await refreshPairStats(addrs, chain);
   } catch (e) {
     console.error('dex sweep: stats refresh failed', e);
   }
@@ -394,6 +437,7 @@ export async function sweepChainDex(): Promise<{
   let swapsSynced = 0;
   try {
     const top = await prisma.dexPair.findMany({
+      where: { chainId: chain.chainId },
       orderBy: { liquidityEth: 'desc' },
       take: 15,
       select: { pairAddress: true, swapSyncedBlock: true },
@@ -404,7 +448,7 @@ export async function sweepChainDex(): Promise<{
       // re-check inside syncPairSwaps would burn an RPC round for a no-op
       if (head !== null && p.swapSyncedBlock !== null && p.swapSyncedBlock >= head) continue;
       try {
-        swapsSynced += (await syncPairSwaps(p.pairAddress, 2)).swaps;
+        swapsSynced += (await syncPairSwaps(p.pairAddress, 2, chain)).swaps;
       } catch (e) {
         console.error(`dex sweep: swap sync failed for ${p.pairAddress}`, e);
       }

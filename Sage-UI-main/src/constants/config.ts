@@ -49,6 +49,9 @@ export const TRADE_ROUTER_ADDRESS = SAGE_PRICE_ROUTER_ADDRESS;
 // UNISWAP_FACTORY_ADDRESS below.
 export const TRADE_DEX_ROUTER_ADDRESS = '0x89e5DB8B5aA49aA85AC63f691524311AEB649eba';
 export const TRADE_WETH_ADDRESS = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
+// The chain-wide pair factory behind that router — what the indexer sweeps
+// when asked for the trading chain rather than the build's own.
+export const TRADE_DEX_FACTORY_ADDRESS = '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f';
 // Candidate factories, newest first. A token's curve state lives in the
 // storage of whichever factory launched it and can never be migrated, so
 // resolution WALKS this list instead of assuming the current one — that is

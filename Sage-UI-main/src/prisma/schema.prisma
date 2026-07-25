@@ -981,7 +981,13 @@ model PixelJournal {
 
 model DexPair {
   id              Int      @id @default(autoincrement())
-  pairAddress     String   @unique @db.Char(42)
+  // Which chain this pair is on. The indexer used to bind implicitly to
+  // whatever `parameters` the build targeted, so a staging sweep and a mainnet
+  // sweep wrote indistinguishable rows into one table — and the agent, which
+  // always trades mainnet, could then be handed a testnet token. pairAddress
+  // alone is no longer unique: the same address can exist on both chains.
+  chainId         Int      @default(4663)
+  pairAddress     String   @db.Char(42)
   baseToken       String   @db.Char(42) // the non-WETH side
   quoteToken      String   @db.Char(42) // WETH
   baseIsToken0    Boolean
@@ -997,8 +1003,9 @@ model DexPair {
   liquidityEth    Float    @default(0) // WETH reserve (x1 side)
   updatedAt       DateTime @updatedAt
 
-  @@index([baseToken])
-  @@index([updatedAt])
+  @@unique([chainId, pairAddress])
+  @@index([chainId, baseToken])
+  @@index([chainId, updatedAt])
 }
 
 model DexSwap {
@@ -1017,6 +1024,8 @@ model DexSwap {
 }
 
 // tiny cursor store for the indexer's global scans (key: 'pair-discovery')
+// Cursor store for the indexer's scans. Keyed per chain — one shared cursor
+// would make a mainnet sweep resume from a testnet block height.
 model DexIndexState {
   key    String @id @db.VarChar(40)
   cursor Int    @default(0)
