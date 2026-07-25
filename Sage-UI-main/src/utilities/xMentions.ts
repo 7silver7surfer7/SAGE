@@ -194,8 +194,24 @@ const GENERATE_VERBS =
  * and "regenerate this in my style" is a commission, not a request for an
  * opinion.
  */
-const RESTYLE_VERBS =
-  /\b(regenerate|re-?generate|redo|remake|restyle|re-?imagine|redraw|repaint|reinterpret|another version|new version|version of this|in (my|your|another|a different) style|in the style of)\b/i;
+const RESTYLE_VERBS = new RegExp(
+  [
+    // transformation verbs — "rework" was missing and is the most natural one
+    '\\bre-?(work|generate|make|do|draw|paint|render|imagine|interpret|style|mix|cast)\\b',
+    '\\b(rework|remake|restyle|reimagine|reinterpret)\\b',
+    // "turn this into", "make it a", "do this as"
+    '\\b(turn|convert|change|make|do)\\s+(this|it|that)\\s+(in)?to\\b',
+    '\\b(turn|convert|change)\\s+(this|it|that)\\b',
+    // "as a painting", "as an oil sketch" — a medium change IS a restyle
+    '\\bas an?\\s+\\w*\\s*(painting|sketch|watercolou?r|drawing|photo(graph)?|render|sculpture|print|etching|collage|illustration|portrait|mural|fresco|woodcut|engraving|anime|cartoon|pixel art)\\b',
+    // bare "version" is safe here: restyle only fires when an image is
+    // present, and "a pixel art version" of a picture is a restyle
+    '\\bversion\\b',
+    '\\bin (my|your|his|her|their|another|a different) style\\b',
+    '\\bin the style of\\b',
+  ].join('|'),
+  'i'
+);
 
 const CRITIQUE_VERBS =
   /\b(critique|criticism|critic|review|analy[sz]e|interpret|evaluate|thoughts on|what do you think)\b/i;
