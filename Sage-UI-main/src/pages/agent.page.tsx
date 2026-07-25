@@ -110,8 +110,6 @@ export default function AgentPage({ drops }: Props) {
           <AgentHeader
             railCollapsed={!showRail}
             onToggleRail={a.toggleRail}
-            showBadge={!narrow}
-            toolCount={14}
             botStatus={a.botStatus}
             onOpenBot={a.openBot}
             models={a.models}

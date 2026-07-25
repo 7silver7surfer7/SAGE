@@ -273,10 +273,20 @@ export default function AgentCard({ card, onConnect }: Props) {
         >
           {images.map((src) => (
             <a key={src} href={src} target='_blank' rel='noreferrer'>
+              {/* Fit the viewport: a 2K render at width:100% ran off the
+                  bottom of the page and had to be scrolled past. contain keeps
+                  the whole work visible, which is the point of looking at it. */}
               <img
                 src={src}
                 alt={card.title || 'generated image'}
-                style={{ width: '100%', display: 'block', border: `1px solid ${C.line}` }}
+                style={{
+                  width: '100%',
+                  maxHeight: '62vh',
+                  objectFit: 'contain',
+                  display: 'block',
+                  border: `1px solid ${C.line}`,
+                  background: C.bg,
+                }}
               />
             </a>
           ))}
@@ -306,8 +316,11 @@ export default function AgentCard({ card, onConnect }: Props) {
             style={{
               width: '100%',
               maxWidth: '320px',
+              maxHeight: '38vh',
+              objectFit: 'contain',
               display: 'block',
               border: `1px solid ${C.line}`,
+              background: C.bg,
               marginBottom: '16px',
             }}
           />

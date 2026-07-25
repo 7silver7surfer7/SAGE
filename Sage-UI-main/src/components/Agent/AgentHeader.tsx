@@ -14,8 +14,6 @@ import type { ModelOption } from './types';
 export interface Props {
   railCollapsed: boolean;
   onToggleRail: () => void;
-  showBadge: boolean;
-  toolCount: number;
   botStatus: string;
   onOpenBot: () => void;
   models: ModelOption[];
@@ -47,8 +45,6 @@ type HoverKey = string | null;
 export default function AgentHeader({
   railCollapsed,
   onToggleRail,
-  showBadge,
-  toolCount,
   botStatus,
   onOpenBot,
   models,
@@ -171,22 +167,6 @@ export default function AgentHeader({
           SAGE AGENT
         </div>
 
-        {showBadge && (
-          <div
-            style={{
-              ...label(9.5, C.ink3, '0.18em'),
-              border: `1px solid ${C.line}`,
-              padding: '4px 8px',
-              whiteSpace: 'nowrap',
-              flex: '0 1 auto',
-              minWidth: 0,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            MCP · {toolCount} TOOLS · SAGE + ALL OF OPENSEA
-          </div>
-        )}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

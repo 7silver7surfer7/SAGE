@@ -1117,7 +1117,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // definition. It is identical on every request and re-sent on each
           // round of the tool loop, so a five-round turn was paying full input
           // price for it five times. Cached reads bill at a tenth.
-          system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
+          // The cached prefix stays byte-identical; the thread-specific note
+          // is a SECOND block so it cannot break the cache. Without it the
+          // model cannot see that an image exists — card data never reaches
+          // it, only text — so "make it an NFT" rendered a fresh one and
+          // charged for it.
+          system: [
+            { type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } },
+            ...(ctx.recentImages.length
+              ? [
+                  {
+                    type: 'text',
+                    text:
+                      `CONTEXT: you have already generated ${ctx.recentImages.length} image(s) in this conversation. ` +
+                      'To mint the most recent one, call prepare_mint WITHOUT image_url. ' +
+                      'Do NOT call generate_image again unless the user asks for something different — ' +
+                      'rendering costs them credits, and "make it an NFT", "mint it" or "go ahead" mean the image already on screen.',
+                  },
+                ]
+              : []),
+          ],
           tools: TOOLS.map((t, i) =>
             i === TOOLS.length - 1 ? { ...t, cache_control: { type: 'ephemeral' } } : t
           ),

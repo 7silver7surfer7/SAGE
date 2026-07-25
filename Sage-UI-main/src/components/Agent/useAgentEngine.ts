@@ -245,7 +245,11 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     async (role: 'user' | 'assistant', text: string, payload?: any) => {
       if (!wallet.connected) return;
       try {
-        let id = sessionId;
+        // The REF, not the state. Both messages of a turn are persisted back
+        // to back, and setSessionId does not update this closure before the
+        // second call runs — so the assistant reply created a SECOND session
+        // and the titled one was left holding nothing.
+        let id = sessionIdRef.current || sessionId;
         if (!id) {
           const r = await fetch('/api/agent-sessions/', {
             method: 'POST',
@@ -255,6 +259,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
           if (!r.ok) return;
           id = (await r.json())?.id || '';
           if (!id) return;
+          sessionIdRef.current = id;
           setSessionId(id);
         }
         await fetch('/api/agent-sessions/', {
@@ -269,6 +274,9 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     },
     [wallet.connected, sessionId, loadSessions]
   );
+
+  /** Mirrors sessionId so a same-tick second write sees the id just created. */
+  const sessionIdRef = useRef('');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // late-bound: respond() closes over these before confirmIntent is declared
@@ -517,7 +525,10 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
         ])
       );
       scrollToEnd();
-      persist('user', text);
+      // Awaited: this call is what CREATES the session, and the assistant
+      // write that follows needs its id. Fire-and-forget raced the reply and
+      // left the titled session empty while the answer landed in a second one.
+      await persist('user', text);
 
       try {
         const { steps, cards, prose, usage } = await respond(text);
@@ -639,12 +650,37 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
             signer,
             TRADE_NFT_LAUNCHER_ADDRESS
           );
+          // Record it. The launcher deploys the contract, but the site reads
+          // editions from the database — without this the NFT exists on chain
+          // and appears nowhere. The server re-verifies the tx and its
+          // EditionCreated event before writing, so this cannot invent one.
+          let listed = false;
+          try {
+            const rec = await fetch('/api/social/?action=RecordEditionLaunch', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                editionAddress: edition,
+                name: intent.name,
+                symbol: intent.symbol,
+                imageUrl: intent.imageUrl,
+                priceEth: Number(intent.priceEth) || 0,
+                maxSupply: Number(intent.maxSupply) || 1,
+                launchTxHash: txHash,
+              }),
+            });
+            listed = rec.ok;
+          } catch {
+            /* on-chain is the source of truth; a failed listing is cosmetic */
+          }
+
           settle({
             status: 'MINTED',
             byline: 'SIGNED BY YOU',
             rows: [
               { k: 'EDITION', v: edition },
               { k: 'TX', v: txHash },
+              { k: 'LISTED', v: listed ? 'ON YOUR PROFILE' : 'ON CHAIN ONLY — RETRY FROM PROFILE' },
             ],
           });
           setTxs((prev) =>
@@ -722,6 +758,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
         return;
       }
       const d = await r.json();
+      sessionIdRef.current = d.id;
       setSessionId(d.id);
       setError('');
       seq.current = 0;
