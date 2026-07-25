@@ -49,34 +49,6 @@ export interface IncomingMention {
   selfHandle?: string;
 }
 
-/**
- * Was the bot ACTUALLY spoken to, or just carried along?
- *
- * X auto-prepends every participant's handle to a thread reply and hides them
- * in the display, so a reply aimed at someone else still arrives as a mention.
- * The bot answered a contract address posted to another user, in a thread it
- * merely happened to be in, and looked like it was butting in — because it was.
- *
- * Addressed means one of: the handle appears in the BODY rather than only in
- * the auto-prepended block; the bot is the first handle in that block (a
- * deliberate "@sage ..."); or the reply is aimed at the bot itself.
- */
-export function isAddressed(m: IncomingMention): boolean {
-  const handle = (m.selfHandle || 'sageartxyz').toLowerCase();
-  const text = m.text || '';
-
-  // a reply aimed straight at us is always addressed
-  if (m.selfUserId && m.inReplyToUserId && m.inReplyToUserId === m.selfUserId) return true;
-
-  const lead = (text.match(/^(?:\s*@\w+)+/) || [''])[0];
-  const body = text.slice(lead.length);
-  if (new RegExp(`@${handle}\\b`, 'i').test(body)) return true;
-
-  const firstHandle = (lead.match(/@(\w+)/) || [])[1];
-  if (firstHandle && firstHandle.toLowerCase() === handle) return true;
-
-  return false;
-}
 
 export interface GateResult {
   allow: boolean;
@@ -309,4 +281,39 @@ export function routeMention(m: IncomingMention): MentionIntent {
   // @handle, or only a link) still get nothing — there is no question there.
   const remainder = said.replace(/https?:\/\/\S+/g, ' ').trim();
   return remainder.length >= 4 ? 'chat' : null;
+}
+
+/**
+ * Was the bot ACTUALLY spoken to, or just carried along?
+ *
+ * X auto-prepends every participant's handle to a thread reply and hides them
+ * in the display, so a reply aimed at someone else still arrives as a mention.
+ * The bot answered a contract address posted to another user, in a thread it
+ * merely happened to be in, and looked like it was butting in — because it was.
+ *
+ * Addressed means one of: the handle appears in the BODY rather than only in
+ * the auto-prepended block; the bot is the first handle in that block (a
+ * deliberate "@sage ..."); or the reply is aimed at the bot itself.
+ */
+export function isAddressed(m: IncomingMention): boolean {
+  const handle = (m.selfHandle || 'sageartxyz').toLowerCase();
+  const text = m.text || '';
+
+  // a reply aimed straight at us is always addressed
+  if (m.selfUserId && m.inReplyToUserId && m.inReplyToUserId === m.selfUserId) return true;
+
+  const lead = (text.match(/^(?:\s*@\w+)+/) || [''])[0];
+  const body = text.slice(lead.length);
+  if (new RegExp(`@${handle}\\b`, 'i').test(body)) return true;
+
+  const firstHandle = (lead.match(/@(\w+)/) || [])[1];
+  if (firstHandle && firstHandle.toLowerCase() === handle) return true;
+
+  // Mentioned mid-thread, so the handle alone proves nothing. Let the BODY
+  // decide: replying to an artwork and tagging us is the natural way to ask
+  // for a restyle or a critique, and refusing those was the first version of
+  // this check being too blunt. A concrete commission counts as addressed;
+  // small talk and a pasted contract address do not.
+  const asked = routeMention({ ...m, text: body });
+  return asked === 'generate' || asked === 'restyle' || asked === 'critique';
 }
