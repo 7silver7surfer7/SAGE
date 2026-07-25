@@ -202,14 +202,21 @@ const GENERATE_VERBS =
  */
 const RESTYLE_VERBS = new RegExp(
   [
-    // transformation verbs — "rework" was missing and is the most natural one
-    '\\bre-?(work|generate|make|do|draw|paint|render|imagine|interpret|style|mix|cast)\\b',
+    // Transformation verbs. "rework" was missing once; "create" was missing
+    // too, and "recreate this artwork as pixel art" is about the most natural
+    // phrasing there is — it fell through to GENERATE on the word "mint" later
+    // in the sentence and invented an unrelated picture instead of reworking
+    // the image being replied to.
+    '\\bre-?(work|create|generate|make|do|draw|paint|render|imagine|interpret|style|mix|cast)\\b',
     '\\b(rework|remake|restyle|reimagine|reinterpret)\\b',
     // "turn this into", "make it a", "do this as"
     '\\b(turn|convert|change|make|do)\\s+(this|it|that)\\s+(in)?to\\b',
     '\\b(turn|convert|change)\\s+(this|it|that)\\b',
-    // "as a painting", "as an oil sketch" — a medium change IS a restyle
-    '\\bas an?\\s+\\w*\\s*(painting|sketch|watercolou?r|drawing|photo(graph)?|render|sculpture|print|etching|collage|illustration|portrait|mural|fresco|woodcut|engraving|anime|cartoon|pixel art)\\b',
+    // "as a painting", "as an oil sketch" — a medium change IS a restyle.
+    // The article is OPTIONAL: "as pixel art" and "as anime" are mass nouns
+    // and take none, which is exactly how people write them. Requiring "as a"
+    // missed "recreate this artwork as pixel art" entirely.
+    '\\bas\\s+(an?\\s+)?\\w*\\s*(painting|sketch|watercolou?r|drawing|photo(graph)?|render|sculpture|print|etching|collage|illustration|portrait|mural|fresco|woodcut|engraving|anime|cartoon|pixel art)\\b',
     // bare "version" is safe here: restyle only fires when an image is
     // present, and "a pixel art version" of a picture is a restyle
     '\\bversion\\b',

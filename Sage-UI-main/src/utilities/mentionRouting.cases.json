@@ -563,5 +563,40 @@
   "so @sageartxyz what are you working on",
   "chat",
   0
+ ],
+ [
+  "@sageartxyz recreate this artwork as pixel art and mint it as an NFT open edition for 24 hours.",
+  "restyle",
+  0
+ ],
+ [
+  "@sageartxyz recreate this as anime",
+  "restyle",
+  0
+ ],
+ [
+  "@sageartxyz redo this as pixel art",
+  "restyle",
+  0
+ ],
+ [
+  "@sageartxyz can you recreate this in watercolour",
+  "restyle",
+  0
+ ],
+ [
+  "@sageartxyz make this as a woodcut print",
+  "restyle",
+  0
+ ],
+ [
+  "@sageartxyz create a cyberpunk skyline at dusk",
+  "generate",
+  0
+ ],
+ [
+  "@sageartxyz create me a monet",
+  "generate",
+  0
  ]
 ]
