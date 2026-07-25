@@ -255,10 +255,19 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
           .filter((m) => m.text)
           .slice(-12)
           .map((m) => ({ role: m.isUser ? 'user' : 'assistant', content: m.text }));
+        // Images the agent has already made, newest first. History carries only
+        // TEXT, so without this the model cannot see that an image exists and
+        // regenerates one to mint — a second charge for a picture the user is
+        // already looking at.
+        const recentImages = msgs
+          .flatMap((m) => (m.cards || []).flatMap((c: any) => (c.kind === 'image' ? c.images || [] : [])))
+          .filter((u: any): u is string => typeof u === 'string')
+          .reverse()
+          .slice(0, 6);
         const r = await fetch('/api/agent/', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text, model: modelId, imageModel: imageModelId, history }),
+          body: JSON.stringify({ text, model: modelId, imageModel: imageModelId, history, recentImages }),
         });
         if (r.ok) {
           const d = await r.json();
@@ -547,13 +556,17 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
           // The art is already pinned server-side, so this only deploys the
           // edition. createEdition returns its address from the receipt.
           const { createEdition } = await import('@/utilities/socialToken');
+          const { TRADE_NFT_LAUNCHER_ADDRESS } = await import('@/constants/config');
+          // Explicitly the MAINNET launcher: `parameters` would resolve the
+          // testnet one on a localhost build, and the wallet is on mainnet.
           const { edition, txHash } = await createEdition(
             intent.name,
             intent.symbol,
             intent.tokenUri,
             Number(intent.maxSupply) || 1,
             Number(intent.priceEth) || 0,
-            signer
+            signer,
+            TRADE_NFT_LAUNCHER_ADDRESS
           );
           settle({
             status: 'MINTED',

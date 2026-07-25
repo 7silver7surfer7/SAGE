@@ -52,6 +52,12 @@ export const TRADE_WETH_ADDRESS = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
 // The chain-wide pair factory behind that router — what the indexer sweeps
 // when asked for the trading chain rather than the build's own.
 export const TRADE_DEX_FACTORY_ADDRESS = '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f';
+// The MAINNET NFT launcher. The agent mints on the same chain it trades on, so
+// this cannot come from `parameters`: a localhost build resolved the testnet
+// launcher (0x72D0945…) and sent a mint to it on mainnet, where it has no
+// code. Calling a codeless address does not revert — it silently succeeds — so
+// the edition never deployed and the receipt carried no event.
+export const TRADE_NFT_LAUNCHER_ADDRESS = '0xFb409D31eaEB48e47F57134CC0e83b871eb7819e';
 // Candidate factories, newest first. A token's curve state lives in the
 // storage of whichever factory launched it and can never be migrated, so
 // resolution WALKS this list instead of assuming the current one — that is

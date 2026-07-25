@@ -696,9 +696,34 @@ export async function redeemCollectVoucher(
 
 // ───────────── NFT edition launcher (pump.fun-shaped mint fees) ─────────────
 
-export function launcherContract(signerOrProvider: Signer | ethers.providers.Provider) {
+/**
+ * Refuse to transact with an address that holds no code.
+ *
+ * The EVM treats a call to an empty address as a successful no-op, so a
+ * wrong-chain contract address produces a MINED transaction that did nothing —
+ * gas spent, no event, and an error message about a missing receipt event that
+ * points at the wrong problem entirely. Checking first turns that into a
+ * sentence naming the real fault.
+ */
+export async function assertContractExists(
+  address: string,
+  provider: ethers.providers.Provider,
+  label: string
+): Promise<void> {
+  if ((await provider.getCode(address)) === '0x') {
+    const net = await provider.getNetwork();
+    throw new Error(
+      `${label} is not deployed at ${address} on chain ${net.chainId} — wrong network for this action`
+    );
+  }
+}
+
+export function launcherContract(
+  signerOrProvider: Signer | ethers.providers.Provider,
+  launcherAddress?: string
+) {
   return new ethers.Contract(
-    parameters.SOCIAL_NFT_LAUNCHER_ADDRESS,
+    launcherAddress || parameters.SOCIAL_NFT_LAUNCHER_ADDRESS,
     launcherJson.abi,
     signerOrProvider
   );
@@ -711,9 +736,13 @@ export async function createEdition(
   uri: string,
   maxSupply: number,
   priceEth: number,
-  signer: Signer
+  signer: Signer,
+  launcherAddress?: string
 ): Promise<{ edition: string; txHash: string }> {
-  const launcher = launcherContract(signer);
+  const target = launcherAddress || parameters.SOCIAL_NFT_LAUNCHER_ADDRESS;
+  // Preflight: a codeless target mines a no-op instead of reverting.
+  if (signer.provider) await assertContractExists(target, signer.provider, 'the NFT launcher');
+  const launcher = launcherContract(signer, target);
   const tx = await launcher.createEdition(
     name,
     symbol,
@@ -745,9 +774,13 @@ export async function createCollection(
   baseUri: string,
   maxSupply: number,
   priceEth: number,
-  signer: Signer
+  signer: Signer,
+  launcherAddress?: string
 ): Promise<{ edition: string; txHash: string }> {
-  const launcher = launcherContract(signer);
+  const target = launcherAddress || parameters.SOCIAL_NFT_LAUNCHER_ADDRESS;
+  // Preflight: a codeless target mines a no-op instead of reverting.
+  if (signer.provider) await assertContractExists(target, signer.provider, 'the NFT launcher');
+  const launcher = launcherContract(signer, target);
   const tx = await launcher.createCollection(
     name,
     symbol,

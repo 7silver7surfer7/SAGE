@@ -14,6 +14,7 @@ import {
   sweepChainDex,
   syncPairSwaps,
   refreshPairStats,
+  backfillPairsByEnumeration,
   defaultDexChain,
   type DexChain,
 } from '@/utilities/dexIndexer';
@@ -137,6 +138,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const action = String(req.query.action || '');
   try {
     switch (action) {
+      case 'Backfill': {
+        const chain: DexChain =
+          String(req.query.chain || '') === 'trade'
+            ? {
+                chainId: TRADE_CHAIN_ID,
+                rpcUrl: TRADE_RPC_URL,
+                factory: TRADE_DEX_FACTORY_ADDRESS,
+                weth: TRADE_WETH_ADDRESS,
+              }
+            : defaultDexChain();
+        const counts = await deduped(`dex-backfill:${chain.chainId}`, 300_000, () =>
+          backfillPairsByEnumeration(chain)
+        );
+        return res.json({ ...counts, chainId: chain.chainId });
+      }
       case 'Sweep':
         return await sweep(req, res);
       case 'PairDetail':

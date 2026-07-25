@@ -1069,3 +1069,37 @@ model AgentCreditPurchase {
 
   @@index([address, id])
 }
+
+// ── SAGE Agent sessions ────────────────────────────────────────────────────
+// The rail's session list shipped as three hardcoded strings. These make it
+// real: one row per conversation, owned by the wallet that created it, with
+// its messages kept so a thread can be reopened rather than merely listed.
+model AgentSession {
+  id        String   @id @default(uuid())
+  address   String   @db.Char(42) // owner, from the SIWE session
+  title     String   @db.VarChar(80)
+  // archived threads stay readable but drop out of the rail
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AgentMessage[]
+
+  @@index([address, archived, updatedAt])
+}
+
+model AgentMessage {
+  id        Int      @id @default(autoincrement())
+  sessionId String
+  role      String   @db.VarChar(12) // "user" | "assistant"
+  text      String   @db.Text
+  // steps + cards, so a reopened thread renders exactly as it did live.
+  // Card handlers (confirm/cancel) are rebound client-side on load; a stored
+  // one would be a dead closure pointing at a signer that no longer exists.
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, id])
+}

@@ -77,7 +77,8 @@ TRANSACTIONS: you cannot execute anything. prepare_buy builds an UNSIGNED order 
 
 ART: you can make images with generate_image and mint them with prepare_mint.
 - Write the prompt yourself. Expand the user's words into a full visual description — subject, composition, medium, light. Do not simply echo what they typed.
-- Generating is free and mints nothing. Show the image, then ask whether they want it minted; never mint unprompted.
+- Generating is NOT free — each render is charged. Never generate a second image when the user is approving the one on screen. "Go ahead", "yes", "mint it" mean prepare_mint with NO image_url, which mints the image you just made. Only generate again when they ask for something different.
+- Show the image, then ask whether they want it minted; never mint unprompted.
 - prepare_mint pins the art to IPFS and builds an unsigned edition the user signs. Deploying costs gas even for a free mint, so say so.
 - Default to a 1/1 unless they ask for a run. Suggest a name and ticker rather than demanding one.
 
@@ -181,13 +182,17 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        image_url: { type: 'string', description: 'https URL of the image to mint' },
+        image_url: {
+          type: 'string',
+          description:
+            'https URL of the image to mint. OMIT this to mint the most recent image you generated in this conversation — that is almost always what the user means, and regenerating costs them again.',
+        },
         name: { type: 'string', description: 'Name of the edition, e.g. "Glass Lamp"' },
         symbol: { type: 'string', description: 'Short ticker, 2-8 characters, e.g. "LAMP"' },
         max_supply: { type: 'number', description: 'Editions available. 1 for a one-of-one. Defaults to 1.' },
         price_eth: { type: 'number', description: 'Price per edition in ETH. 0 for a free mint. Defaults to 0.' },
       },
-      required: ['image_url', 'name', 'symbol'],
+      required: ['name', 'symbol'],
     },
   },
   {
@@ -509,6 +514,8 @@ async function runTool(
     imageCredits: number;
     /** the tier the user picked in the UI; the model may still override */
     imageModelId: string;
+    /** URLs of images already generated in this thread, newest first */
+    recentImages: string[];
   }
 ): Promise<string> {
   if (name === 'list_drops') {
@@ -912,8 +919,13 @@ async function runTool(
       });
       return 'ERROR: no wallet connected. Tell the user to connect using the card shown.';
     }
-    const imageUrl = String(input?.image_url || '');
-    if (!/^https:\/\//.test(imageUrl)) return 'ERROR: image_url must be an https URL.';
+    // Default to the image already on screen. The model cannot see card data
+    // in history, so left to itself it regenerates — charging the user twice
+    // for the picture they just approved.
+    const imageUrl = String(input?.image_url || ctx.recentImages[0] || '');
+    if (!/^https:\/\//.test(imageUrl)) {
+      return 'ERROR: no image to mint. Generate one first, or pass an https image_url.';
+    }
 
     const editionName = String(input?.name || '').trim().slice(0, 40);
     const symbol = String(input?.symbol || '').trim().toUpperCase().slice(0, 8);
@@ -1018,6 +1030,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     imageModelId: IMAGE_MODELS.some((m) => m.id === body.imageModel)
       ? String(body.imageModel)
       : DEFAULT_IMAGE_MODEL_ID,
+    // Images already generated in this thread, newest first. prepare_mint
+    // defaults to the newest so "go ahead" mints what is on screen instead of
+    // paying to render a fresh one.
+    recentImages: (Array.isArray(body.recentImages) ? body.recentImages : [])
+      .filter((u: any) => typeof u === 'string' && /^https:\/\//.test(u))
+      .slice(0, 6),
   };
 
   const history = Array.isArray(body.history)

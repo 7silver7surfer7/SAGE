@@ -574,3 +574,132 @@ export async function chainTokenRows(): Promise<ChainTokenRow[]> {
     };
   });
 }
+
+// ── enumeration backfill ────────────────────────────────────────────────────
+/**
+ * Populate every existing pair by ENUMERATING the factory, rather than
+ * replaying PairCreated logs from genesis.
+ *
+ * Log discovery is the right tool for staying current, and the wrong one for a
+ * cold start here: Robinhood's mainnet RPC caps eth_getLogs at ~2,000 blocks,
+ * so a scan from genesis is ~9,300 requests and every one of them was failing
+ * silently against the 15,000-block CHUNK. The factory already exposes its
+ * pairs as an array, so ask it directly — 21.7k pairs is ~110 batched calls
+ * through Multicall3.
+ *
+ * createdAtBlock is set to the current head, not the pair's real creation
+ * block, which enumeration cannot know. That is deliberate: it makes swap sync
+ * start from now rather than replaying years of history through a 2,000-block
+ * window. Discovery (which pairs exist, and their names) is what this is for.
+ */
+const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
+const MC3_ABI = [
+  'function aggregate3((address target,bool allowFailure,bytes callData)[] calls) payable returns ((bool success,bytes returnData)[])',
+];
+const PAIR_ENUM_ABI = new ethers.utils.Interface([
+  'function allPairs(uint256) view returns (address)',
+  'function allPairsLength() view returns (uint256)',
+  'function token0() view returns (address)',
+  'function token1() view returns (address)',
+  'function name() view returns (string)',
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+]);
+
+async function multicall(
+  provider: ethers.providers.Provider,
+  calls: { target: string; callData: string }[],
+  batch = 200
+): Promise<(string | null)[]> {
+  const mc = new ethers.Contract(MULTICALL3, MC3_ABI, provider);
+  const out: (string | null)[] = [];
+  for (let i = 0; i < calls.length; i += batch) {
+    const slice = calls.slice(i, i + batch).map((c) => ({ ...c, allowFailure: true }));
+    const res = await withRetry(() => mc.callStatic.aggregate3(slice));
+    for (const r of res) out.push(r.success ? r.returnData : null);
+  }
+  return out;
+}
+
+export async function backfillPairsByEnumeration(
+  chain: DexChain = defaultDexChain(),
+  limit = 25_000
+): Promise<{ scanned: number; wethPairs: number; inserted: number }> {
+  const provider = rpc(chain);
+  const head = await withRetry(() => provider.getBlockNumber());
+  // FACTORY_ABI only carries PairCreated; enumeration needs the array getters.
+  const factory = new ethers.Contract(
+    chain.factory,
+    ['function allPairsLength() view returns (uint256)'],
+    provider
+  );
+  const total = Math.min(Number(await factory.allPairsLength()), limit);
+  const weth = chain.weth.toLowerCase();
+
+  const addrCalls = Array.from({ length: total }, (_, i) => ({
+    target: chain.factory,
+    callData: PAIR_ENUM_ABI.encodeFunctionData('allPairs', [i]),
+  }));
+  const pairAddrs = (await multicall(provider, addrCalls))
+    .map((d) => (d ? (PAIR_ENUM_ABI.decodeFunctionResult('allPairs', d)[0] as string) : null))
+    .filter((a): a is string => !!a && a !== ethers.constants.AddressZero);
+
+  // token0/token1 for every pair, to find the ones quoted in WETH
+  const sideCalls = pairAddrs.flatMap((p) => [
+    { target: p, callData: PAIR_ENUM_ABI.encodeFunctionData('token0', []) },
+    { target: p, callData: PAIR_ENUM_ABI.encodeFunctionData('token1', []) },
+  ]);
+  const sides = await multicall(provider, sideCalls);
+
+  const wethPairs: { pairAddress: string; baseToken: string; baseIsToken0: boolean }[] = [];
+  for (let i = 0; i < pairAddrs.length; i++) {
+    const t0 = sides[i * 2];
+    const t1 = sides[i * 2 + 1];
+    if (!t0 || !t1) continue;
+    const a = (PAIR_ENUM_ABI.decodeFunctionResult('token0', t0)[0] as string).toLowerCase();
+    const b = (PAIR_ENUM_ABI.decodeFunctionResult('token1', t1)[0] as string).toLowerCase();
+    if (a === weth) wethPairs.push({ pairAddress: pairAddrs[i], baseToken: b, baseIsToken0: false });
+    else if (b === weth) wethPairs.push({ pairAddress: pairAddrs[i], baseToken: a, baseIsToken0: true });
+  }
+
+  // metadata, individually failure-tolerant: plenty of tokens revert on
+  // name()/symbol(), and a '?' row still resolves and prices fine
+  const metaCalls = wethPairs.flatMap((p) => [
+    { target: p.baseToken, callData: PAIR_ENUM_ABI.encodeFunctionData('name', []) },
+    { target: p.baseToken, callData: PAIR_ENUM_ABI.encodeFunctionData('symbol', []) },
+    { target: p.baseToken, callData: PAIR_ENUM_ABI.encodeFunctionData('decimals', []) },
+  ]);
+  const metas = await multicall(provider, metaCalls);
+  const decode = (d: string | null, fn: string, fallback: any) => {
+    if (!d) return fallback;
+    try {
+      return PAIR_ENUM_ABI.decodeFunctionResult(fn, d)[0];
+    } catch {
+      return fallback;
+    }
+  };
+
+  let inserted = 0;
+  const rows = wethPairs.map((p, i) => ({
+    chainId: chain.chainId,
+    pairAddress: ethers.utils.getAddress(p.pairAddress),
+    baseToken: ethers.utils.getAddress(p.baseToken),
+    quoteToken: ethers.utils.getAddress(chain.weth),
+    baseIsToken0: p.baseIsToken0,
+    baseName: cleanLabel(String(decode(metas[i * 3], 'name', '?')), 80),
+    baseSymbol: cleanLabel(String(decode(metas[i * 3 + 1], 'symbol', '?')), 40),
+    baseDecimals: Number(decode(metas[i * 3 + 2], 'decimals', 18)) || 18,
+    createdAtBlock: head,
+    createdAt: new Date(),
+  }));
+
+  for (let i = 0; i < rows.length; i += 500) {
+    const res = await prisma.dexPair.createMany({
+      data: rows.slice(i, i + 500),
+      skipDuplicates: true,
+    });
+    inserted += res.count;
+  }
+
+  return { scanned: pairAddrs.length, wethPairs: wethPairs.length, inserted };
+}
