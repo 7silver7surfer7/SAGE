@@ -50,10 +50,26 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
     const client = new Client(authClient);
     const user = await client.users.findMyUser();
 
-    await prisma.user.update({
-      where: { walletAddress },
-      data: { twitterUsername: user.data.username },
-    });
+    // Store the NUMERIC id, not just the handle. The handle is renameable and
+    // the freed name is immediately re-registerable, so it cannot be an
+    // authorization key — the @SAGEARTXYZ mention gate looks up
+    // User.twitterUserId and would otherwise serve whoever bought the name.
+    //
+    // twitterUserId is UNIQUE: one X account maps to one wallet. Re-linking an
+    // X account already bound elsewhere is refused rather than silently moving
+    // it, since that would let someone point a funded wallet's credits at an
+    // account they do not control.
+    try {
+      await prisma.user.update({
+        where: { walletAddress },
+        data: { twitterUsername: user.data.username, twitterUserId: user.data.id },
+      });
+    } catch (e: any) {
+      if (e?.code === 'P2002') {
+        return res.redirect('/profile?twitter=already-linked');
+      }
+      throw e;
+    }
 
     res.redirect('/profile');
   } catch (error) {

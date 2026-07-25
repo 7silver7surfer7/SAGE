@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
+import { getCreditBalance } from '@/utilities/credits';
 import { getRequester, isCrossSiteRequest } from '@/utilities/apiAuth';
 import { tradeProvider } from '@/components/Agent/trade';
 import { TRADE_CHAIN_NAME } from '@/constants/config';
@@ -37,45 +38,7 @@ import { getEthUsd } from '@/utilities/sagePrice';
  * 4. Debits happen in the agent route, server-side, from real token usage.
  */
 
-/** Read a wallet's balance, creating the zero row on first sight. */
-export async function getCreditBalance(address: string): Promise<number> {
-  const account = await prisma.agentCreditAccount.findUnique({
-    where: { address },
-    select: { credits: true },
-  });
-  return account?.credits ?? 0;
-}
-
-/**
- * Spend credits, returning the remaining balance.
- *
- * The conditional update is the concurrency guard: `credits: { gte: cost }`
- * makes the check and the decrement a single statement, so two simultaneous
- * turns cannot both pass a balance check and drive the account negative.
- *
- * A turn that costs more than the wallet had floors the account at zero rather
- * than failing. The work was already done and paid for upstream, so refusing
- * to record the spend would just give it away; the pre-flight check in the
- * agent route is what stops the next turn.
- */
-export async function debitCredits(address: string, cost: number): Promise<number> {
-  if (cost <= 0) return getCreditBalance(address);
-
-  const exact = await prisma.agentCreditAccount.updateMany({
-    where: { address, credits: { gte: cost } },
-    data: { credits: { decrement: cost }, spent: { increment: cost } },
-  });
-  if (exact.count > 0) return getCreditBalance(address);
-
-  const remaining = await getCreditBalance(address);
-  if (remaining > 0) {
-    await prisma.agentCreditAccount.updateMany({
-      where: { address, credits: { gte: remaining } },
-      data: { credits: { decrement: remaining }, spent: { increment: remaining } },
-    });
-  }
-  return getCreditBalance(address);
-}
+export { getCreditBalance, debitCredits } from '@/utilities/credits';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (isCrossSiteRequest(req, res)) return;

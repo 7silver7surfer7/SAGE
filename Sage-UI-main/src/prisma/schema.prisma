@@ -406,6 +406,12 @@ model User {
   walletAddress            String              @id @db.Char(42)
   email                    String?             @db.VarChar(40)
   twitterUsername          String?             @db.VarChar(40)
+  // The NUMERIC X user id, which is what authorization keys on. Handles are
+  // renameable and the freed handle can be re-registered by anyone, so
+  // twitterUsername above is display only — never an identity. Unique: one X
+  // account links to exactly one wallet, or the credit gate is bypassable by
+  // linking the same account to several funded wallets.
+  twitterUserId            String?             @unique @db.VarChar(24)
   instagramUsername        String?             @db.VarChar(40)
   webpage                  String?             @db.VarChar(50)
   mediumUsername           String?             @db.VarChar(40)
@@ -1102,4 +1108,36 @@ model AgentMessage {
   session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, id])
+}
+
+// ── @SAGEARTXYZ mentions ───────────────────────────────────────────────────
+// One row per mention SEEN, including the ones deliberately ignored. The
+// bot answers only linked, credited accounts — recording the refusals is what
+// makes "why did it not reply to me" answerable, and what proves the cost
+// gate is holding.
+model XMention {
+  // the tweet id. UNIQUE is the idempotency guard: a poller that overlaps
+  // itself, or replays a window, cannot answer the same mention twice.
+  tweetId       String   @id @db.VarChar(24)
+  authorXUserId String   @db.VarChar(24)
+  authorHandle  String   @db.VarChar(40)
+  // wallet resolved from the link, when there was one
+  walletAddress String?  @db.Char(42)
+  // seen | ignored_unlinked | ignored_no_credits | ignored_capped |
+  // answered | failed
+  outcome       String   @db.VarChar(24)
+  intent        String?  @db.VarChar(16) // critique | generate
+  creditsSpent  Int      @default(0)
+  replyTweetId  String?  @db.VarChar(24)
+  createdAt     DateTime @default(now())
+
+  @@index([authorXUserId, createdAt])
+  @@index([outcome, createdAt])
+}
+
+// Poller cursor + daily spend counters, one row per key.
+model XBotState {
+  key       String   @id @db.VarChar(40)
+  value     String   @db.VarChar(120)
+  updatedAt DateTime @updatedAt
 }
