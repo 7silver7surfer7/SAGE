@@ -887,7 +887,20 @@ async function runTool(
   if (name === 'generate_image') {
     const prompt = String(input?.prompt || '').trim();
     if (!prompt) return 'ERROR: a prompt is required.';
-    const imageModel = imagePriceFor(String(input?.model || ctx.imageModelId || DEFAULT_IMAGE_MODEL_ID));
+    // The USER'S selection is the ceiling. The model may pick a cheaper tier
+    // (asking for "turbo" should work) but never a dearer one: `input.model`
+    // is attacker-reachable through anything the loop reads, and letting it
+    // win meant a prompt could bill 30 credits against a wallet whose owner
+    // had chosen the 8-credit tier in the header.
+    const picked = imagePriceFor(String(ctx.imageModelId || DEFAULT_IMAGE_MODEL_ID));
+    const asked = input?.model ? imagePriceFor(String(input.model)) : picked;
+    const imageModel = asked.usdPerImage <= picked.usdPerImage ? asked : picked;
+
+    // One render per turn. The tool loop runs up to MAX_TOOL_ROUNDS, so
+    // without this a single message could bill five renders.
+    if (ctx.imageCredits > 0) {
+      return 'ERROR: one image per message. Ask the user to send another message to generate again.';
+    }
     ctx.steps.push(`GENERATING · ${imageModel.label}`);
     try {
       const { generateImage } = await import('@/utilities/krea');
