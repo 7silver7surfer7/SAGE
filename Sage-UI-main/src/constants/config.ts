@@ -63,7 +63,10 @@ export const TRADE_NFT_LAUNCHER_ADDRESS = '0xFb409D31eaEB48e47F57134CC0e83b871eb
 // on a localhost build that is http://localhost:3005/, and a reply carrying it
 // would be a dead link for everyone who reads it. Same reasoning as the trade
 // constants above — the audience is the public internet, not this build.
-export const PUBLIC_SITE_URL = 'https://sageart.xyz/';
+// testnet.sageart.xyz, not sageart.xyz: the agent has never been deployed to
+// production and /agent 404s there. A public reply carrying a dead claim link
+// is worse than no reply. Point this at the apex the day /agent ships there.
+export const PUBLIC_SITE_URL = 'https://testnet.sageart.xyz/';
 
 // -- Uniswap v4 on Robinhood mainnet ---------------------------------------
 // Every venue above speaks v2 (getPair/getReserves). v4 has neither: pools are
