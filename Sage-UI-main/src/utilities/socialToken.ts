@@ -118,8 +118,10 @@ function applySlippage(quoted: ethers.BigNumber, slippageBps: number): ethers.Bi
 // That is exactly what mainnet SAGE does today, and it is why this resolves
 // the venue from `curves().complete` and then insists on a non-zero quote.
 
+export type Venue = 'curve' | 'pool' | 'dex';
+
 export interface BuyVenue {
-  venue: 'curve' | 'pool';
+  venue: Venue;
   /** address actually called to execute the buy */
   target: string;
   /** tokens out at the current block, before slippage */
@@ -133,7 +135,17 @@ export interface VenueOptions {
   /** factories to search, newest first. Defaults to the configured one. */
   factories?: string[];
   router?: string;
+  /** chain-wide Uniswap v2 router, for tokens SAGE did not launch */
+  dexRouter?: string;
+  weth?: string;
 }
+
+/** Minimal Uniswap v2 router surface — quote, buy, sell. */
+const DEX_ROUTER_ABI = [
+  'function getAmountsOut(uint256,address[]) view returns (uint256[])',
+  'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256,address[],address,uint256) payable',
+  'function swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)',
+];
 
 /**
  * Work out where `tokenAddress` trades and what it currently quotes.
@@ -220,10 +232,27 @@ export async function resolveBuyVenue(
     return { venue: 'pool', target: router.address, quoted, graduated: true, launchedHere };
   }
 
+  // Not one of ours: SageSwapRouter only resolves pairs through its own curve
+  // factory, so it answers "not graduated" for every token minted elsewhere on
+  // the chain. Fall back to the chain-wide v2 router, which prices any WETH
+  // pair — this is what makes a token like Cash Cat reachable at all.
+  if (opts.dexRouter && opts.weth) {
+    try {
+      const dex = new ethers.Contract(opts.dexRouter, DEX_ROUTER_ABI, provider);
+      const amounts = await dex.getAmountsOut(value, [opts.weth, tokenAddress]);
+      const out = amounts[amounts.length - 1];
+      if (out.gt(0)) {
+        return { venue: 'dex', target: opts.dexRouter, quoted: out, graduated: false, launchedHere };
+      }
+    } catch {
+      /* no pair on the chain-wide DEX either — reported below */
+    }
+  }
+
   throw new Error(
     launchedHere
       ? 'this token has no liquidity to buy from right now'
-      : `no market for ${tokenAddress} on this chain — it has no bonding curve and no pool`
+      : `no market for ${tokenAddress} on this chain — no bonding curve, no SAGE pool, and no DEX pair`
   );
 }
 
@@ -238,13 +267,30 @@ export async function buyAnyToken(
   signer: Signer,
   slippageBps: number = DEFAULT_SLIPPAGE_BPS,
   opts: VenueOptions = {}
-): Promise<{ hash: string; venue: 'curve' | 'pool'; quoted: ethers.BigNumber }> {
+): Promise<{ hash: string; venue: Venue; quoted: ethers.BigNumber }> {
   const provider = signer.provider;
   if (!provider) throw new Error('wallet has no provider — reconnect and try again');
 
   const resolved = await resolveBuyVenue(tokenAddress, ethAmount, provider, opts);
   const value = ethers.utils.parseEther(toDecimalString(ethAmount));
   const minOut = applySlippage(resolved.quoted, slippageBps);
+
+  if (resolved.venue === 'dex') {
+    // SupportingFeeOnTransfer: tokens SAGE did not launch may tax transfers,
+    // and the plain variant reverts on those rather than filling.
+    const dex = new ethers.Contract(resolved.target, DEX_ROUTER_ABI, signer);
+    const to = await signer.getAddress();
+    const deadline = Math.floor(Date.now() / 1000) + 900;
+    const tx = await dex.swapExactETHForTokensSupportingFeeOnTransferTokens(
+      minOut,
+      [opts.weth, tokenAddress],
+      to,
+      deadline,
+      { value }
+    );
+    await tx.wait(1);
+    return { hash: tx.hash, venue: resolved.venue, quoted: resolved.quoted };
+  }
 
   const abi = resolved.venue === 'curve' ? factoryJson.abi : routerJson.abi;
   const contract = new ethers.Contract(resolved.target, abi, signer);
@@ -315,7 +361,7 @@ async function impliedFeeBps(
 }
 
 export interface SellVenue {
-  venue: 'curve' | 'pool';
+  venue: Venue;
   /** address to call sell() on */
   target: string;
   /** ETH out at the current block, before slippage */
@@ -396,6 +442,18 @@ export async function resolveSellVenue(
     /* handled by the pair check below */
   }
   if (!pair || pair === ethers.constants.AddressZero) {
+    // Same fallback as the buy side: not a SAGE launch, so price it against
+    // the chain-wide DEX instead of refusing.
+    if (opts.dexRouter && opts.weth) {
+      try {
+        const dex = new ethers.Contract(opts.dexRouter, DEX_ROUTER_ABI, provider);
+        const amounts = await dex.getAmountsOut(amountIn, [tokenAddress, opts.weth]);
+        const out = amounts[amounts.length - 1];
+        if (out.gt(0)) return { venue: 'dex', target: opts.dexRouter, quoted: out, feeBps: 0 };
+      } catch {
+        /* reported below */
+      }
+    }
     throw new Error(`no pool to sell ${tokenAddress} into on this chain`);
   }
 
@@ -494,7 +552,7 @@ export async function sellAnyToken(
   signer: Signer,
   slippageBps: number = DEFAULT_SLIPPAGE_BPS,
   opts: VenueOptions = {}
-): Promise<{ hash: string; venue: 'curve' | 'pool'; quoted: ethers.BigNumber }> {
+): Promise<{ hash: string; venue: Venue; quoted: ethers.BigNumber }> {
   const provider = signer.provider;
   if (!provider) throw new Error('wallet has no provider — reconnect and try again');
 
@@ -515,6 +573,20 @@ export async function sellAnyToken(
   if (allowance.lt(amount)) {
     const approve = await token.approve(resolved.target, amount);
     await approve.wait(1);
+  }
+
+  if (resolved.venue === 'dex') {
+    const dex = new ethers.Contract(resolved.target, DEX_ROUTER_ABI, signer);
+    const deadline = Math.floor(Date.now() / 1000) + 900;
+    const tx = await dex.swapExactTokensForETHSupportingFeeOnTransferTokens(
+      amount,
+      minEthOut,
+      [tokenAddress, opts.weth],
+      owner,
+      deadline
+    );
+    await tx.wait(1);
+    return { hash: tx.hash, venue: resolved.venue, quoted: resolved.quoted };
   }
 
   const abi = resolved.venue === 'curve' ? factoryJson.abi : routerJson.abi;

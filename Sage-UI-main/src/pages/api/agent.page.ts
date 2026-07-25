@@ -274,14 +274,41 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
   }
 
   if (!isAddress) {
-    // No exact hit. Find the nearest listed token rather than refusing: people
-    // half-remember names ("cash cat" for Pixel Cat), and making them retype it
-    // is worse UX for no safety gain — the order card names the token it
-    // resolved to and the user still signs it, which is the real gate.
+    // No exact hit in SAGE's own registry. Before guessing at a similar name,
+    // search the CHAIN-WIDE pair index — SAGE launched a few dozen tokens, the
+    // chain carries ~21.7k pairs, and the thing the user means is far more
+    // likely to be one of those than a near-spelling of one of ours.
+    const onChain = await prisma.dexPair.findMany({
+      where: {
+        OR: [
+          { baseSymbol: { equals: q, mode: 'insensitive' } },
+          { baseName: { equals: q, mode: 'insensitive' } },
+          { baseSymbol: { equals: normalize(q), mode: 'insensitive' } },
+        ],
+      },
+      select: { baseToken: true, baseSymbol: true, baseName: true, liquidityEth: true },
+      orderBy: { liquidityEth: 'desc' },
+      take: 2,
+    });
+    if (onChain.length) {
+      const hit = onChain[0];
+      return {
+        address: ethers.utils.getAddress(hit.baseToken),
+        symbol: hit.baseSymbol,
+        name: hit.baseName,
+        // listed on the chain, NOT launched through SAGE — the card says so
+        verified: false,
+      };
+    }
+
+    // Only now consider a near-spelling of a SAGE-listed token, and only when
+    // it is unmistakably the same name.
     //
-    // Matching stays INSIDE the registry. It never invents an address, and a
-    // genuinely ambiguous result asks rather than guesses, so this cannot
-    // quietly substitute one token for another.
+    // The bar used to be 0.45, which resolved "cashcat" to Pixel Cat on the
+    // strength of a shared "cat" — and Cash Cat is a real, different token
+    // that simply was not in our registry. A confident wrong answer on a spend
+    // path is worse than asking, so this now only auto-resolves an obvious
+    // typo and otherwise lists candidates.
     const listed = await prisma.socialTokenLaunch.findMany({
       select: { tokenAddress: true, symbol: true, name: true },
       orderBy: { id: 'desc' },
@@ -297,23 +324,25 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
 
     const best = scored[0];
     const runnerUp = scored[1];
-    // Too weak to be a match, or two candidates are effectively tied — ask.
-    if (!best || best.score < 0.45 || (runnerUp && best.score - runnerUp.score < 0.06)) {
-      const names = scored
-        .slice(0, 6)
-        .map((s) => `${s.t.symbol} (${s.t.name})`)
-        .join(', ');
-      throw new Error(
-        `nothing on SAGE clearly matches "${q}". The closest are: ${names}. Ask the user which they mean.`
-      );
+    if (best && best.score >= 0.8 && (!runnerUp || best.score - runnerUp.score >= 0.1)) {
+      return {
+        address: best.t.tokenAddress,
+        symbol: best.t.symbol,
+        name: best.t.name,
+        verified: true,
+        matchedFrom: q,
+      };
     }
-    return {
-      address: best.t.tokenAddress,
-      symbol: best.t.symbol,
-      name: best.t.name,
-      verified: true,
-      matchedFrom: q,
-    };
+
+    const names = scored
+      .slice(0, 6)
+      .map((x) => `${x.t.symbol} (${x.t.name})`)
+      .join(', ');
+    throw new Error(
+      `no token called "${q}" is listed on SAGE or indexed on Robinhood Chain. ` +
+        `Closest SAGE listings: ${names}. Do NOT buy any of these unless the user confirms — ` +
+        `if they have the contract address, ask for it and pass that instead.`
+    );
   }
 
   // Unlisted address: read its own metadata so the card names what it is

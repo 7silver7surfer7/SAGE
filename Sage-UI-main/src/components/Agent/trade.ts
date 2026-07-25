@@ -5,6 +5,8 @@ import {
   TRADE_CHAIN_NAME,
   TRADE_RPC_URL,
   TRADE_ROUTER_ADDRESS,
+  TRADE_DEX_ROUTER_ADDRESS,
+  TRADE_WETH_ADDRESS,
   TRADE_FACTORY_ADDRESSES,
   SAGE_PRICE_TOKEN_ADDRESS,
   parameters,
@@ -24,6 +26,9 @@ import type { VenueOptions } from '@/utilities/socialToken';
 export const TRADE_VENUE: VenueOptions = {
   factories: TRADE_FACTORY_ADDRESSES,
   router: TRADE_ROUTER_ADDRESS,
+  // Reaches the ~21.7k pairs on the chain that SAGE did not launch.
+  dexRouter: TRADE_DEX_ROUTER_ADDRESS,
+  weth: TRADE_WETH_ADDRESS,
 };
 
 /**

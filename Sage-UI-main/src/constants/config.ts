@@ -41,6 +41,14 @@ export const TRADE_CHAIN_ID = SAGE_PRICE_CHAIN_ID;
 export const TRADE_CHAIN_NAME = 'Robinhood Chain';
 export const TRADE_RPC_URL = SAGE_PRICE_RPC_URL;
 export const TRADE_ROUTER_ADDRESS = SAGE_PRICE_ROUTER_ADDRESS;
+// The CHAIN-WIDE Uniswap v2 router, for tokens SAGE did not launch.
+// SageSwapRouter only resolves pairs through its own curve factory, so it
+// answers "not graduated" for every token minted elsewhere on Robinhood —
+// Cash Cat (0x020bfc65…) is real, has a live WETH pair, and was unreachable.
+// Discovered from the Swap senders on that pair; its factory() matches
+// UNISWAP_FACTORY_ADDRESS below.
+export const TRADE_DEX_ROUTER_ADDRESS = '0x89e5DB8B5aA49aA85AC63f691524311AEB649eba';
+export const TRADE_WETH_ADDRESS = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
 // Candidate factories, newest first. A token's curve state lives in the
 // storage of whichever factory launched it and can never be migrated, so
 // resolution WALKS this list instead of assuming the current one — that is
