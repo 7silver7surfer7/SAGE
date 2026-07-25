@@ -960,6 +960,9 @@ model PixelAccount {
   walletAddress  String   @id @db.Char(42)
   settled        BigInt   @default(0) // banked whole pixels
   checkpointSage BigInt   @default(0) // whole SAGE sustained since lastSync
+  // carried numerator remainder, so an interval whose stream truncates to
+  // zero is deferred rather than destroyed by lastSync advancing anyway
+  streamDust     BigInt   @default(0)
   lastSync       DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

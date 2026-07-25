@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
-import { parameters } from '@/constants/config';
+import { parameters, PIXELS_TOKEN_ADDRESS } from '@/constants/config';
 
 /**
  * Off-chain pixels ledger — the zero-gas successor to on-chain SagePoints.
@@ -19,12 +19,20 @@ import { parameters } from '@/constants/config';
  * Server-only (imports prisma) — never import from client code.
  */
 
-// SagePoints v3 economics, verified against economics() at snapshot time.
-// If setEconomics is ever called pre-cutover, re-snapshot and update these.
-export const RATE_SCALED = BigInt(25); // 0.25%/day
-export const CAP_SAGE = BigInt(100000);
+// Pixel economics for the CURRENT accrual token.
+//
+//   2,000,000 whole tokens -> 25,000 pixels/day  (the cap)
+//   rate = 25 / 2000 = 0.0125 pixels per whole token per day
+//
+// The old token ran 25/100 with a 100,000 cap, which is the same 25,000/day
+// ceiling reached with 20x fewer tokens. Reaching the cap now costs about
+// $0.47 against $1.07 before, so a sybil is ~2.3x cheaper to run — the cap is
+// what bounds one, and this is a deliberate product choice, not an accident of
+// the supply change. Supply parity would have been a 10,000,000 cap.
+export const RATE_SCALED = BigInt(25);
+export const RATE_DIVISOR = BigInt(2000);
+export const CAP_SAGE = BigInt(2000000);
 const DAY = BigInt(86400);
-const HUNDRED = BigInt(100);
 
 export function pixelsSource(): 'chain' | 'db' {
   return process.env.PIXELS_SOURCE === 'db' ? 'db' : 'chain';
@@ -37,7 +45,7 @@ function ledgerProvider() {
 /** Live whole-SAGE balance — a free view call; the only RPC the db mode makes. */
 async function liveSageWhole(address: string): Promise<bigint> {
   const c = new ethers.Contract(
-    parameters.ASHTOKEN_ADDRESS,
+    PIXELS_TOKEN_ADDRESS,
     ['function balanceOf(address) view returns (uint256)'],
     ledgerProvider()
   );
@@ -52,18 +60,47 @@ async function liveSageWhole(address: string): Promise<bigint> {
  * touches them (the contract's flash-farm protection; verified live when the
  * checkpoint-only version over-counted four sold-out wallets by 3k–16k).
  */
-function streamOf(liveWhole: bigint, checkpointSage: bigint, lastSync: Date, nowMs: number): bigint {
+const STREAM_UNIT = RATE_DIVISOR * DAY;
+
+/**
+ * Pixels earned since lastSync, plus the remainder to carry.
+ *
+ * The division truncates, and `dbBank` advances lastSync unconditionally — so
+ * any interval whose stream floors to zero is DESTROYED, not deferred. The
+ * threshold is held >= RATE_DIVISOR * 86400 / (RATE_SCALED * elapsed): at a
+ * 10-minute keeper cadence that is 11,520 whole tokens, and a holder below it
+ * would earn nothing, forever, while the ledger looked healthy.
+ *
+ * Carrying the remainder makes accrual exact at every balance instead: the
+ * numerator is preserved across banks and only the whole pixels are paid out.
+ */
+function streamWithDust(
+  liveWhole: bigint,
+  checkpointSage: bigint,
+  lastSync: Date,
+  nowMs: number,
+  dust: bigint
+): { stream: bigint; dust: bigint } {
   const elapsed = BigInt(Math.max(0, Math.floor(nowMs / 1000) - Math.floor(lastSync.getTime() / 1000)));
   let held = liveWhole < checkpointSage ? liveWhole : checkpointSage;
   if (held > CAP_SAGE) held = CAP_SAGE;
-  return (held * RATE_SCALED * elapsed) / (HUNDRED * DAY);
+  const numerator = held * RATE_SCALED * elapsed + dust;
+  return { stream: numerator / STREAM_UNIT, dust: numerator % STREAM_UNIT };
+}
+
+/** Read-only view of the same stream. */
+function streamOf(liveWhole: bigint, checkpointSage: bigint, lastSync: Date, nowMs: number, dust: bigint = BigInt(0)): bigint {
+  return streamWithDust(liveWhole, checkpointSage, lastSync, nowMs, dust).stream;
 }
 
 export async function dbPointsOf(address: string): Promise<bigint> {
   const acct = await prisma.pixelAccount.findUnique({ where: { walletAddress: address } });
   if (!acct) return BigInt(0);
   const live = await liveSageWhole(address).catch(() => acct.checkpointSage);
-  return acct.settled + streamOf(live, acct.checkpointSage, acct.lastSync, Date.now());
+  return (
+    acct.settled +
+    streamOf(live, acct.checkpointSage, acct.lastSync, Date.now(), acct.streamDust ?? BigInt(0))
+  );
 }
 
 export async function dbDailyRate(address: string): Promise<bigint> {
@@ -76,7 +113,7 @@ export async function dbDailyRate(address: string): Promise<bigint> {
   const cp = acct?.checkpointSage ?? BigInt(0);
   let held = cp === BigInt(0) ? live : live < cp ? live : cp;
   if (held > CAP_SAGE) held = CAP_SAGE;
-  return (held * RATE_SCALED) / HUNDRED;
+  return (held * RATE_SCALED) / RATE_DIVISOR;
 }
 
 /**
@@ -87,11 +124,20 @@ export async function dbBank(address: string, liveWhole: bigint): Promise<void> 
   const now = new Date();
   await prisma.$transaction(async (tx) => {
     const acct = await tx.pixelAccount.findUnique({ where: { walletAddress: address } });
-    const stream = acct ? streamOf(liveWhole, acct.checkpointSage, acct.lastSync, now.getTime()) : BigInt(0);
+    const carried = acct
+      ? streamWithDust(liveWhole, acct.checkpointSage, acct.lastSync, now.getTime(), acct.streamDust ?? BigInt(0))
+      : { stream: BigInt(0), dust: BigInt(0) };
+    const stream = carried.stream;
     await tx.pixelAccount.upsert({
       where: { walletAddress: address },
       create: { walletAddress: address, settled: BigInt(0), checkpointSage: liveWhole, lastSync: now },
-      update: { settled: (acct?.settled ?? BigInt(0)) + stream, checkpointSage: liveWhole, lastSync: now },
+      update: {
+        settled: (acct?.settled ?? BigInt(0)) + stream,
+        checkpointSage: liveWhole,
+        lastSync: now,
+        // preserved, so a sub-threshold interval is deferred rather than lost
+        streamDust: carried.dust,
+      },
     });
     if (stream > BigInt(0)) {
       await tx.pixelJournal.create({
@@ -201,8 +247,10 @@ export async function dbLeaderboardRows(): Promise<
     let held = a.checkpointSage > CAP_SAGE ? CAP_SAGE : a.checkpointSage;
     return {
       address: a.walletAddress,
-      net: a.settled + streamOf(a.checkpointSage, a.checkpointSage, a.lastSync, now),
-      rate: (held * RATE_SCALED) / HUNDRED,
+      net:
+        a.settled +
+        streamOf(a.checkpointSage, a.checkpointSage, a.lastSync, now, a.streamDust ?? BigInt(0)),
+      rate: (held * RATE_SCALED) / RATE_DIVISOR,
     };
   });
   rows.sort((a, b) => (b.net > a.net ? 1 : b.net < a.net ? -1 : 0));

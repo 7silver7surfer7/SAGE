@@ -76,6 +76,12 @@ export const V4_UNIVERSAL_ROUTER = '0x8876789976dEcBfCbBbe364623C63652db8C0904';
 // repointing those before holders migrate would strand the 284 holders of the
 // original token. Listed here so the site can price and link it meanwhile.
 export const SAGE_V2_TOKEN_ADDRESS = '0xE21a2b120FAcF995bC8bF6b1843f409E568beBA3';
+
+// The token Pixels accrue from. Pinned, NOT read from `parameters`: that
+// resolves the TESTNET address on a localhost or staging build, and an accrual
+// job pointed at a token with no holders pays nobody while appearing to work —
+// the same class of bug that sent a mint to a codeless address.
+export const PIXELS_TOKEN_ADDRESS = SAGE_V2_TOKEN_ADDRESS;
 // Candidate factories, newest first. A token's curve state lives in the
 // storage of whichever factory launched it and can never be migrated, so
 // resolution WALKS this list instead of assuming the current one — that is
