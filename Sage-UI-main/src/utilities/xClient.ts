@@ -135,6 +135,8 @@ export interface XMentionRaw {
   photos: string[];
   /** the post this one replies to or quotes — where the artwork usually is */
   referencedTweetId?: string;
+  /** who the reply is aimed at; absent on a top-level post */
+  inReplyToUserId?: string;
 }
 
 /** The bot's own numeric id, needed for the mentions endpoint. */
@@ -162,7 +164,8 @@ export async function fetchMentions(
     // referenced_tweets is a FIELD, not an expansion, so it costs nothing
     // extra — it just tells us which post to fetch later, and only for the
     // mentions that survive the gate.
-    'tweet.fields': 'author_id,conversation_id,attachments,referenced_tweets',
+    'tweet.fields':
+      'author_id,conversation_id,attachments,referenced_tweets,in_reply_to_user_id',
     expansions: 'author_id,attachments.media_keys',
     'user.fields': 'username',
     'media.fields': 'url,type',
@@ -187,6 +190,7 @@ export async function fetchMentions(
       .map((k: string) => media.get(String(k)))
       .filter((m: any) => m && m.type === 'photo' && m.url)
       .map((m: any) => String(m.url)),
+    inReplyToUserId: t.in_reply_to_user_id ? String(t.in_reply_to_user_id) : undefined,
     referencedTweetId: (t.referenced_tweets || [])
       .filter((r: any) => r?.type === 'replied_to' || r?.type === 'quoted')
       .map((r: any) => String(r.id))[0],

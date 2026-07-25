@@ -5,6 +5,7 @@ import {
   claimMention,
   recordOutcome,
   routeMention,
+  isAddressed,
   type IncomingMention,
 } from '@/utilities/xMentions';
 import { xCreds, isLive, selfId, fetchMentions, postReply, uploadMedia, fetchTweetPhotos } from '@/utilities/xClient';
@@ -178,6 +179,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     ignored_unlinked: 0,
     ignored_no_credits: 0,
     ignored_capped: 0,
+    ignored_not_addressed: 0,
     answered: 0,
     failed: 0,
     live: isLive(),
@@ -204,10 +206,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         authorHandle: raw.authorHandle,
         text: raw.text,
         mediaUrls: raw.photos,
+        inReplyToUserId: raw.inReplyToUserId,
+        selfUserId: me.id,
+        selfHandle: me.username,
       };
 
       // Claim first: two overlapping cycles must not both serve this.
       if (!(await claimMention(m))) continue;
+
+      // Being in the thread is not being spoken to. X hides the handles it
+      // prepends to a reply, so a message aimed at someone else still lands
+      // here — answering those is how a bot becomes the thing that interrupts.
+      if (!isAddressed(m)) {
+        await recordOutcome(m.tweetId, 'ignored_not_addressed');
+        counts.ignored_not_addressed++;
+        continue;
+      }
 
       const gate = await gateMention(m);
       if (!gate.allow) {
