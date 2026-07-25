@@ -191,6 +191,17 @@ const GENERATE_VERBS =
 const CRITIQUE_VERBS =
   /\b(critique|criticism|critic|review|analy[sz]e|interpret|evaluate|thoughts on|what do you think)\b/i;
 
+/**
+ * Phrases that use an art verb but are ABOUT the bot, not a commission.
+ *
+ * "can you make sure it's always full screen" matched GENERATE on the word
+ * "make", was stripped to "sure it's always full screen", and rendered as an
+ * anime portrait — billed to the person who was trying to file a bug report.
+ * The verbs that request art are the verbs people use to talk about software.
+ */
+const NOT_A_COMMISSION =
+  /\b(make sure|make it so|can you (make sure|fix|change|update|stop|add|remove)|why did|why does|what happened|it'?s not|doesn'?t work|didn'?t work|broken|instead of|next time|always|please stop)\b/i;
+
 export function routeMention(m: IncomingMention): MentionIntent {
   const text = m.text || '';
   const hasMedia = !!m.mediaUrls?.length;
@@ -200,6 +211,27 @@ export function routeMention(m: IncomingMention): MentionIntent {
   // an image should read the image, not spend a render guessing at it.
   if (hasMedia) return 'critique';
   if (CRITIQUE_VERBS.test(text)) return 'critique';
-  if (GENERATE_VERBS.test(text)) return 'generate';
+
+  // Feedback and questions about the bot are never a commission, whatever
+  // verbs they happen to contain. Silence beats spending someone's credits
+  // rendering their bug report.
+  if (NOT_A_COMMISSION.test(text)) return null;
+
+  if (GENERATE_VERBS.test(text)) {
+    // A commission needs a SUBJECT. After the request framing is stripped,
+    // "can you make sure..." leaves nothing worth drawing, and rendering that
+    // residue is how the generator invents something nobody asked for.
+    const subject = text
+      .replace(/@\w+/g, ' ')
+      .replace(
+        /\b(make|create|generate|draw|paint|render|mint|imagine|me|my|a|an|the|please|can|could|you|it|is|are|for|of|some|something)\b/gi,
+        ' '
+      )
+      .replace(/[^a-zA-Z0-9 ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (subject.length < 3) return null;
+    return 'generate';
+  }
   return null;
 }
