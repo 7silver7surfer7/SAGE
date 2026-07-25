@@ -513,7 +513,8 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
         // buy_sage is the pre-multi-token intent; treat it as SAGE.
         const isBuy = intent?.action === 'buy_token' || intent?.action === 'buy_sage';
         const isSell = intent?.action === 'sell_token';
-        if (!isBuy && !isSell) throw new Error('unsupported order');
+        const isMint = intent?.action === 'mint_edition';
+        if (!isBuy && !isSell && !isMint) throw new Error('unsupported order');
         setError('');
         const { buyAnyToken, sellAnyToken } = await import('@/utilities/socialToken');
         const { ensureTradeChain, TRADE_VENUE } = await import('./trade');
@@ -530,6 +531,42 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
           byline: isSell ? 'APPROVE, THEN CONFIRM' : 'CONFIRM IN YOUR WALLET',
         });
         const signer = await ensureTradeChain(wallet.signer);
+
+        if (isMint) {
+          // The art is already pinned server-side, so this only deploys the
+          // edition. createEdition returns its address from the receipt.
+          const { createEdition } = await import('@/utilities/socialToken');
+          const { edition, txHash } = await createEdition(
+            intent.name,
+            intent.symbol,
+            intent.tokenUri,
+            Number(intent.maxSupply) || 1,
+            Number(intent.priceEth) || 0,
+            signer
+          );
+          settle({
+            status: 'MINTED',
+            byline: 'SIGNED BY YOU',
+            rows: [
+              { k: 'EDITION', v: edition },
+              { k: 'TX', v: txHash },
+            ],
+          });
+          setTxs((prev) =>
+            [
+              {
+                title: `Mint "${intent.name}"`,
+                venue: 'NFT LAUNCHER · ROBINHOOD CHAIN',
+                status: 'CONFIRMED',
+                hash: txHash,
+                amount: Number(intent.priceEth) > 0 ? `${intent.priceEth} ETH each` : 'FREE MINT',
+                via: 'AGENT',
+                when: 'JUST NOW',
+              },
+            ].concat(prev)
+          );
+          return;
+        }
 
         // Venue (curve vs pool) is resolved from chain state, not assumed.
         const eth = Number(intent.ethAmount);

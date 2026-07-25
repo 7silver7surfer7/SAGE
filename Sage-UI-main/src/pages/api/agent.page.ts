@@ -3,7 +3,7 @@ import prisma from '@/prisma/client';
 import { getRequester, isCrossSiteRequest } from '@/utilities/apiAuth';
 import { getDropsPageData } from '@/prisma/functions';
 import { getSagePriceUsd, getEthUsd } from '@/utilities/sagePrice';
-import { TRADE_CHAIN_NAME, TRADE_CHAIN_ID } from '@/constants/config';
+import { TRADE_CHAIN_NAME, TRADE_CHAIN_ID, parameters } from '@/constants/config';
 import { resolveBuyVenue, resolveSellVenue, sizeSellForEth } from '@/utilities/socialToken';
 import { tradeProvider, TRADE_VENUE, BUILTIN_TOKENS } from '@/components/Agent/trade';
 import { ethers } from 'ethers';
@@ -65,6 +65,12 @@ TRANSACTIONS: you cannot execute anything. prepare_buy builds an UNSIGNED order 
 - Do NOT refuse an order because a name looks unfamiliar, and do not pre-emptively list the roster instead of acting. Pass the user's wording straight to prepare_buy / prepare_sell — the server matches it against the listed tokens and picks the nearest, or tells you when it is genuinely ambiguous. Only then ask which one they meant.
 - When the tool returns an "interpreted" field, state the interpretation in one short sentence ("Reading that as Pixel Cat") so they can correct you before signing. Do not apologise for it or belabour it.
 - You CAN sell too: prepare_sell builds an unsigned sell order. Never tell the user to go to another exchange — selling works here. Selling needs a token approval first, so warn them their wallet may prompt twice.
+
+ART: you can make images with generate_image and mint them with prepare_mint.
+- Write the prompt yourself. Expand the user's words into a full visual description — subject, composition, medium, light. Do not simply echo what they typed.
+- Generating is free and mints nothing. Show the image, then ask whether they want it minted; never mint unprompted.
+- prepare_mint pins the art to IPFS and builds an unsigned edition the user signs. Deploying costs gas even for a free mint, so say so.
+- Default to a 1/1 unless they ask for a run. Suggest a name and ticker rather than demanding one.
 
 NEWCOMERS: explain wallets, minting, gas and Pixels plainly, without condescension.`;
 
@@ -130,6 +136,43 @@ const TOOLS = [
             'Token symbol (e.g. "SAGE", "rhagent") or its 0x contract address. Defaults to SAGE.',
         },
       },
+    },
+  },
+  {
+    name: 'generate_image',
+    description:
+      'Generate an image from a text prompt with Krea AI. Use this whenever the user asks for art, an image, or something to mint. Returns image URLs the user can look at; nothing is minted until they ask and then sign.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description:
+            'What to render. Write a full visual description — subject, composition, medium, lighting — not just the user\u2019s few words.',
+        },
+        aspect_ratio: {
+          type: 'string',
+          enum: ['1:1', '4:5', '3:2', '2:3', '16:9', '9:16'],
+          description: 'Defaults to 1:1.',
+        },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
+    name: 'prepare_mint',
+    description:
+      'Build an UNSIGNED order to mint an image as an NFT edition on Robinhood Chain. Does NOT execute — the user signs it in their own wallet. Use the image_url returned by generate_image, or any https image URL the user gives. This creates a NEW edition contract; use prepare_mint_existing to mint from one that already exists.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        image_url: { type: 'string', description: 'https URL of the image to mint' },
+        name: { type: 'string', description: 'Name of the edition, e.g. "Glass Lamp"' },
+        symbol: { type: 'string', description: 'Short ticker, 2-8 characters, e.g. "LAMP"' },
+        max_supply: { type: 'number', description: 'Editions available. 1 for a one-of-one. Defaults to 1.' },
+        price_eth: { type: 'number', description: 'Price per edition in ETH. 0 for a free mint. Defaults to 0.' },
+      },
+      required: ['image_url', 'name', 'symbol'],
     },
   },
   {
@@ -278,7 +321,14 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
     // search the CHAIN-WIDE pair index — SAGE launched a few dozen tokens, the
     // chain carries ~21.7k pairs, and the thing the user means is far more
     // likely to be one of those than a near-spelling of one of ours.
-    const onChain = await prisma.dexPair.findMany({
+    // The pair index is populated from `parameters` — i.e. the chain THIS
+    // BUILD targets — while the agent always trades mainnet. On a localhost or
+    // staging build those differ, and consulting it there would offer a
+    // testnet token as though it were real. Skip it unless the index and the
+    // trading venue are the same chain; address resolution still works.
+    const indexIsTradingChain = Number(parameters.CHAIN_ID) === TRADE_CHAIN_ID;
+    const onChain = indexIsTradingChain
+      ? await prisma.dexPair.findMany({
       where: {
         OR: [
           { baseSymbol: { equals: q, mode: 'insensitive' } },
@@ -288,8 +338,9 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
       },
       select: { baseToken: true, baseSymbol: true, baseName: true, liquidityEth: true },
       orderBy: { liquidityEth: 'desc' },
-      take: 2,
-    });
+          take: 2,
+        })
+      : [];
     if (onChain.length) {
       const hit = onChain[0];
       return {
@@ -366,6 +417,66 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
     name: String(name).slice(0, 40),
     verified: false,
   };
+}
+
+
+/**
+ * Pull a generated image and pin it permanently, then publish ERC-721
+ * metadata pointing at it.
+ *
+ * Krea's URLs are temporary. Minting one directly would produce an NFT whose
+ * art 404s as soon as their storage expires — the single most common way a
+ * mint turns out worthless — so the bytes are re-hosted on IPFS before any
+ * edition is deployed.
+ *
+ * SSRF: only the generator's own host is fetchable. The URL reaches here via
+ * the model, which reads untrusted text, so an open fetcher would let a
+ * prompt injection make this server read its own metadata endpoints.
+ */
+const IMAGE_SOURCE_HOSTS = new Set(['api.krea.ai', 's.krea.ai', 'krea.ai', 'cdn.krea.ai']);
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
+
+async function pinImageAndMetadata(
+  imageUrl: string,
+  name: string,
+  description: string
+): Promise<{ tokenUri: string; imageUri: string }> {
+  let parsed: URL;
+  try {
+    parsed = new URL(imageUrl);
+  } catch {
+    throw new Error('that image URL is not valid');
+  }
+  if (parsed.protocol !== 'https:' || !IMAGE_SOURCE_HOSTS.has(parsed.hostname)) {
+    throw new Error('images can only be minted from ones the agent generated');
+  }
+
+  const res = await fetch(parsed.toString());
+  if (!res.ok) throw new Error('the generated image could not be retrieved — regenerate it');
+  const type = res.headers.get('content-type') || 'image/png';
+  if (!/^image\//.test(type)) throw new Error('that URL is not an image');
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length) throw new Error('the generated image was empty');
+  if (buf.length > MAX_IMAGE_BYTES) throw new Error('that image is too large to mint');
+
+  const { uploadBufferToFilebase, uploadJsonToFilebase } = await import('@/utilities/serverWallet');
+  const gateway = process.env.FILEBASE_GATEWAY || 'https://ipfs.filebase.io/ipfs';
+  const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : 'jpg';
+  const stamp = `${Date.now()}-${Math.floor(buf.length)}`;
+
+  const imgCid = await uploadBufferToFilebase(`agent-nft/${stamp}.${ext}`, type, buf);
+  if (!imgCid) throw new Error('permanent storage is not configured on this deployment');
+  const imageUri = `${gateway}/${imgCid.replace('ipfs://', '')}`;
+
+  const metaCid = await uploadJsonToFilebase(`agent-nft/${stamp}.json`, {
+    name,
+    description,
+    image: imageUri,
+  });
+  if (!metaCid) throw new Error('permanent storage is not configured on this deployment');
+
+  return { tokenUri: `${gateway}/${String(metaCid).replace('ipfs://', '')}`, imageUri };
 }
 
 const fmtTokens = (wei: ethers.BigNumber) =>
@@ -718,6 +829,105 @@ async function runTool(
       ...(usdTarget > 0 ? { usd_requested: usdTarget, eth_usd_rate: Number(ethUsdUsed.toFixed(2)) } : {}),
       venue: venue.venue,
       note: 'Unsigned SELL order surfaced to the user. Selling needs a token approval first, so their wallet may prompt twice. Do not claim it settled. The quote moves with the market.',
+    });
+  }
+
+  if (name === 'generate_image') {
+    const prompt = String(input?.prompt || '').trim();
+    if (!prompt) return 'ERROR: a prompt is required.';
+    ctx.steps.push('GENERATING · KREA');
+    try {
+      const { generateImage } = await import('@/utilities/krea');
+      const job = await generateImage({
+        prompt,
+        aspectRatio: input?.aspect_ratio,
+      });
+      if (job.status !== 'completed' || !job.urls.length) {
+        return `ERROR: ${job.error || `image generation ${job.status}`}. Tell the user plainly.`;
+      }
+      ctx.cards.push({
+        kind: 'image',
+        status: 'GENERATED',
+        byline: 'KREA · NOT YET MINTED',
+        title: prompt.slice(0, 120),
+        images: job.urls,
+        rows: [{ k: 'RATIO', v: String(input?.aspect_ratio || '1:1') }],
+      });
+      return JSON.stringify({
+        generated: true,
+        image_url: job.urls[0],
+        image_urls: job.urls,
+        note: 'Shown to the user. It is NOT minted and NOT stored permanently. If they want it minted, call prepare_mint with this image_url.',
+      });
+    } catch (e: any) {
+      return `ERROR: ${e?.message || 'image generation failed'}.`;
+    }
+  }
+
+  if (name === 'prepare_mint') {
+    if (!ctx.address) {
+      ctx.cards.push({
+        kind: 'wallet',
+        status: 'WALLET REQUIRED',
+        title: 'Connect a wallet to mint.',
+        body: 'Editions are deployed from your own wallet. The agent never holds custody.',
+        needsConnect: true,
+        rows: [],
+      });
+      return 'ERROR: no wallet connected. Tell the user to connect using the card shown.';
+    }
+    const imageUrl = String(input?.image_url || '');
+    if (!/^https:\/\//.test(imageUrl)) return 'ERROR: image_url must be an https URL.';
+
+    const editionName = String(input?.name || '').trim().slice(0, 40);
+    const symbol = String(input?.symbol || '').trim().toUpperCase().slice(0, 8);
+    if (!editionName || !symbol) return 'ERROR: name and symbol are required.';
+
+    const maxSupply = Math.max(1, Math.floor(Number(input?.max_supply) || 1));
+    const priceEth = Math.max(0, Number(input?.price_eth) || 0);
+
+    ctx.steps.push('PINNING TO IPFS');
+    let pinned: { tokenUri: string; imageUri: string };
+    try {
+      pinned = await pinImageAndMetadata(imageUrl, editionName, String(input?.description || ''));
+    } catch (e: any) {
+      return `ERROR: ${e?.message || 'the image could not be stored permanently'}. Do not offer a mint.`;
+    }
+
+    ctx.steps.push(`BUILDING MINT · ${editionName}`);
+    ctx.cards.push({
+      kind: 'tx',
+      status: 'UNSIGNED ORDER',
+      byline: `${TRADE_CHAIN_NAME.toUpperCase()} · YOU SIGN`,
+      title: `Mint "${editionName}" as ${maxSupply === 1 ? 'a 1/1' : maxSupply + ' editions'}`,
+      pending: true,
+      cta: 'sign & mint',
+      image: pinned.imageUri,
+      intent: {
+        action: 'mint_edition',
+        tokenUri: pinned.tokenUri,
+        imageUrl: pinned.imageUri,
+        name: editionName,
+        symbol,
+        maxSupply,
+        priceEth,
+      },
+      rows: [
+        { k: 'EDITION', v: `${editionName} · ${symbol}` },
+        { k: 'SUPPLY', v: maxSupply === 1 ? '1 of 1' : String(maxSupply) },
+        { k: 'PRICE', v: priceEth > 0 ? `${priceEth} ETH each` : 'FREE MINT' },
+        { k: 'STORAGE', v: 'IPFS · PERMANENT' },
+        { k: 'CHAIN', v: TRADE_CHAIN_NAME.toUpperCase() },
+      ],
+    });
+    return JSON.stringify({
+      prepared: true,
+      name: editionName,
+      symbol,
+      max_supply: maxSupply,
+      price_eth: priceEth,
+      image_uri: pinned.imageUri,
+      note: 'Unsigned mint surfaced to the user. The image is ALREADY pinned to IPFS; signing deploys the edition contract. Do not claim it is minted until they sign. Deploying costs gas even for a free mint.',
     });
   }
 

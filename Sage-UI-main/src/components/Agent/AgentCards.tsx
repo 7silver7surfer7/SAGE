@@ -253,6 +253,44 @@ export default function AgentCard({ card, onConnect }: Props) {
     );
   }
 
+  // Generated art, before anything is minted. The prompt sits UNDER the image
+  // rather than over it: the picture is the point, and the prompt is long.
+  if (card.kind === 'image') {
+    const images: string[] = Array.isArray(card.images) ? card.images : [];
+    return (
+      <div style={{ padding: '20px 22px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+          <span style={pill}>{card.status}</span>
+          <span style={label(9.5, C.ink3, '0.18em')}>{card.byline}</span>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: images.length > 1 ? '1fr 1fr' : '1fr',
+            gap: '8px',
+            marginBottom: '14px',
+          }}
+        >
+          {images.map((src) => (
+            <a key={src} href={src} target='_blank' rel='noreferrer'>
+              <img
+                src={src}
+                alt={card.title || 'generated image'}
+                style={{ width: '100%', display: 'block', border: `1px solid ${C.line}` }}
+              />
+            </a>
+          ))}
+        </div>
+        <div style={{ fontSize: '13.5px', color: C.ink2, lineHeight: 1.55 }}>{card.title}</div>
+        {card.rows?.length ? (
+          <div style={{ ...hairlineStack, marginTop: '14px' }}>
+            {card.rows.map((row: KV) => kvRow(row, '10px 0', 16))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   if (card.kind === 'tx') {
     return (
       <div style={{ padding: '20px 22px' }}>
@@ -260,6 +298,20 @@ export default function AgentCard({ card, onConnect }: Props) {
           <span style={pill}>{card.status}</span>
           <span style={label(9.5, C.ink3, '0.18em')}>{card.byline}</span>
         </div>
+        {/* a mint carries its art; a trade does not */}
+        {card.image ? (
+          <img
+            src={card.image}
+            alt={card.title || ''}
+            style={{
+              width: '100%',
+              maxWidth: '320px',
+              display: 'block',
+              border: `1px solid ${C.line}`,
+              marginBottom: '16px',
+            }}
+          />
+        ) : null}
         <div style={{ fontSize: '19px', marginBottom: '16px' }}>{card.title}</div>
         <div style={{ ...hairlineStack, marginBottom: '18px' }}>
           {card.rows.map((row) => kvRow(row, '11px 0', 16))}
