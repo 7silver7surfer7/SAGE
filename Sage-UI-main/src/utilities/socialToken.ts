@@ -118,7 +118,7 @@ function applySlippage(quoted: ethers.BigNumber, slippageBps: number): ethers.Bi
 // That is exactly what mainnet SAGE does today, and it is why this resolves
 // the venue from `curves().complete` and then insists on a non-zero quote.
 
-export type Venue = 'curve' | 'pool' | 'dex';
+export type Venue = 'curve' | 'pool' | 'dex' | 'v4';
 
 export interface BuyVenue {
   venue: Venue;
@@ -232,6 +232,24 @@ export async function resolveBuyVenue(
     return { venue: 'pool', target: router.address, quoted, graduated: true, launchedHere };
   }
 
+  // Uniswap v4 next. Pools there are singleton state in a PoolManager with no
+  // pair contract, so every v2 lookup above reports "no market" for a token
+  // that may hold millions in liquidity — which is exactly how the second SAGE
+  // read as unlisted. The fee is hook-set and dynamic, so the quote must come
+  // from the on-chain quoter rather than any local maths.
+  try {
+    const { poolKeyFor, quoteV4Buy } = await import('@/utilities/uniswapV4');
+    if (poolKeyFor(tokenAddress)) {
+      const out = await quoteV4Buy(tokenAddress, value, provider);
+      if (out.gt(0)) {
+        const { V4_UNIVERSAL_ROUTER } = await import('@/constants/config');
+        return { venue: 'v4', target: V4_UNIVERSAL_ROUTER, quoted: out, graduated: true, launchedHere };
+      }
+    }
+  } catch {
+    /* not on v4, or the quoter reverted — fall through to the v2 sweep */
+  }
+
   // Not one of ours: SageSwapRouter only resolves pairs through its own curve
   // factory, so it answers "not graduated" for every token minted elsewhere on
   // the chain. Fall back to the chain-wide v2 router, which prices any WETH
@@ -274,6 +292,12 @@ export async function buyAnyToken(
   const resolved = await resolveBuyVenue(tokenAddress, ethAmount, provider, opts);
   const value = ethers.utils.parseEther(toDecimalString(ethAmount));
   const minOut = applySlippage(resolved.quoted, slippageBps);
+
+  if (resolved.venue === 'v4') {
+    const { buyV4 } = await import('@/utilities/uniswapV4');
+    const hash = await buyV4(tokenAddress, value, minOut, signer);
+    return { hash, venue: resolved.venue, quoted: resolved.quoted };
+  }
 
   if (resolved.venue === 'dex') {
     // SupportingFeeOnTransfer: tokens SAGE did not launch may tax transfers,
@@ -442,6 +466,20 @@ export async function resolveSellVenue(
     /* handled by the pair check below */
   }
   if (!pair || pair === ethers.constants.AddressZero) {
+    // v4 first, same reasoning as the buy side.
+    try {
+      const { poolKeyFor, quoteV4Sell } = await import('@/utilities/uniswapV4');
+      if (poolKeyFor(tokenAddress)) {
+        const out = await quoteV4Sell(tokenAddress, amountIn, provider);
+        if (out.gt(0)) {
+          const { V4_UNIVERSAL_ROUTER } = await import('@/constants/config');
+          return { venue: 'v4', target: V4_UNIVERSAL_ROUTER, quoted: out, feeBps: 0 };
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+
     // Same fallback as the buy side: not a SAGE launch, so price it against
     // the chain-wide DEX instead of refusing.
     if (opts.dexRouter && opts.weth) {
@@ -573,6 +611,16 @@ export async function sellAnyToken(
   if (allowance.lt(amount)) {
     const approve = await token.approve(resolved.target, amount);
     await approve.wait(1);
+  }
+
+  if (resolved.venue === 'v4') {
+    // Quoting v4 sells works; EXECUTING one needs a permit2 approval flow the
+    // buy path does not (the router must pull tokens, not just wrapped ETH).
+    // Refusing is correct until that is built — routing it through the v2
+    // router instead would revert after the user had already signed.
+    throw new Error(
+      'selling this token is not supported yet — it trades on Uniswap v4 and the sell path is still being built'
+    );
   }
 
   if (resolved.venue === 'dex') {

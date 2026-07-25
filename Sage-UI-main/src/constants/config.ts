@@ -58,6 +58,24 @@ export const TRADE_DEX_FACTORY_ADDRESS = '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517
 // code. Calling a codeless address does not revert — it silently succeeds — so
 // the edition never deployed and the receipt carried no event.
 export const TRADE_NFT_LAUNCHER_ADDRESS = '0xFb409D31eaEB48e47F57134CC0e83b871eb7819e';
+
+// -- Uniswap v4 on Robinhood mainnet ---------------------------------------
+// Every venue above speaks v2 (getPair/getReserves). v4 has neither: pools are
+// singleton state inside a PoolManager, keyed by a PoolKey. So a v4 token reads
+// as "no market" to all of them, which is exactly why the new SAGE looked
+// unlisted while holding real liquidity -- and v4 is where this chain's volume
+// actually is (1,112 swaps in a recent window against a handful on v2).
+// Verified: the quoter and StateView both report poolManager() == V4_POOL_MANAGER.
+export const V4_POOL_MANAGER = '0x8366a39CC670B4001A1121B8F6A443A643e40951';
+export const V4_QUOTER = '0x51f88773169B5598a047fe514f13835E610b69D1';
+export const V4_STATE_VIEW = '0xF3334192D15450CdD385c8B70e03f9A6bD9E673b';
+export const V4_UNIVERSAL_ROUTER = '0x8876789976dEcBfCbBbe364623C63652db8C0904';
+
+// The SECOND SAGE token -- a Doppler launch trading on v4, not on the bonding
+// curve. Deliberately NOT wired into ASHTOKEN_ADDRESS or points accrual:
+// repointing those before holders migrate would strand the 284 holders of the
+// original token. Listed here so the site can price and link it meanwhile.
+export const SAGE_V2_TOKEN_ADDRESS = '0xE21a2b120FAcF995bC8bF6b1843f409E568beBA3';
 // Candidate factories, newest first. A token's curve state lives in the
 // storage of whichever factory launched it and can never be migrated, so
 // resolution WALKS this list instead of assuming the current one — that is
