@@ -162,7 +162,7 @@ async function main() {
   for (const who of bal.keys()) accrue(who, now);
 
   // ── only real wallets: contracts (pool, token, routers) never earned ──────
-  const rows = [];
+  let rows = [];
   for (const [who, pixels] of earned) {
     if (pixels <= 0n) continue;
     const code = await provider.getCode(who).catch(() => null);
@@ -188,8 +188,49 @@ async function main() {
     throw new Error('transfer history is incomplete — refusing to seed from it');
   }
 
-  console.log(`\n${rows.length} wallets earned pixels before accrual moved:\n`);
-  console.log('  wallet                                        held since    balance      pixels');
+  // ── resolve each HOLDER to the account that should be CREDITED ──────────
+  //
+  // The holder and the earner are not always the same address. Tokens bought
+  // through a custodial/embedded wallet (Privy, via bankrbot) sit in a wallet
+  // the user controls but never signs in with, and LinkedWallet is what ties
+  // that wallet to their SAGE account.
+  //
+  // Without this, seeding credited the HOLDER address — so a bankr buyer got a
+  // PixelAccount minted for their bankr wallet and their actual account, the
+  // one they sign in as, stayed empty. The pixels existed, on an address that
+  // was not their identity.
+  //
+  // Unlinked holders fall back to themselves, which is the original behaviour.
+  const links = await prisma.linkedWallet.findMany({
+    select: { address: true, walletAddress: true },
+  });
+  const creditTo = new Map(links.map((l) => [l.address.toLowerCase(), l.walletAddress]));
+  for (const r of rows) {
+    const owner = creditTo.get(r.address.toLowerCase());
+    r.creditTo = owner || r.address;
+    r.viaLink = !!owner;
+  }
+
+  // Two holders linked to the SAME account must not be seeded as two rows: the
+  // journal marker is per credited account, so the second would be skipped as
+  // "already seeded" and its pixels lost. Merge first, then seed once.
+  const merged = new Map();
+  for (const r of rows) {
+    const key = r.creditTo.toLowerCase();
+    const prev = merged.get(key);
+    if (!prev) {
+      merged.set(key, { ...r, address: r.creditTo, sources: [r.address] });
+    } else {
+      prev.pixels += r.pixels;
+      prev.balance += r.balance;
+      prev.sources.push(r.address);
+      if (r.heldSince < prev.heldSince) prev.heldSince = r.heldSince;
+    }
+  }
+  rows = Array.from(merged.values()).sort((a, b) => (b.pixels > a.pixels ? 1 : -1));
+
+  console.log(`\n${rows.length} accounts earned pixels before accrual moved:\n`);
+  console.log('  account                                       held since    balance      pixels');
   let total = 0n;
   for (const r of rows) {
     total += r.pixels;
@@ -198,7 +239,7 @@ async function main() {
       r.heldSince.toISOString().slice(0, 10),
       String(r.balance).padStart(12),
       String(r.pixels).padStart(10),
-      r.delegated ? ' (7702)' : ''
+      r.viaLink ? ` (via link: ${r.sources.join(', ')})` : r.delegated ? ' (7702)' : ''
     );
   }
   console.log(`\n  total to seed: ${total.toLocaleString()} pixels`);

@@ -122,9 +122,10 @@ export default function PixelsWalletLink() {
     <div className='pixels-link'>
       <p className='howtobuyash__earning-pixels-info'>
         Holding SAGE somewhere you do not sign in from — a Bankr or Privy wallet? Link it and its
-        balance earns Pixels here too. Balances are added together and the 25,000,000 cap applies
-        to the total, so splitting a holding across wallets earns exactly what holding it in one
-        does.
+        balance earns Pixels here too. You prove the wallet is yours by sending a tiny amount{' '}
+        <strong>out of it, to your main wallet</strong> — the tokens never leave your control.
+        Balances are then added together, and the 25,000,000 cap applies to the total, so splitting
+        a holding across wallets earns exactly what holding it in one does.
       </p>
 
       {links.length > 0 && (
@@ -156,13 +157,26 @@ export default function PixelsWalletLink() {
 
       {challenge && (
         <div className='pixels-link__challenge'>
+          {/* The direction is the part people get wrong: the transfer has to
+              come OUT of the wallet being linked. Sending from the main wallet
+              instead proves nothing (it only shows you control the wallet you
+              are already signed in as) and the check will not match. So the
+              steps name both ends explicitly rather than saying "your wallet". */}
           <p className='howtobuyash__earning-pixels-info'>
-            From the wallet you want to link, send <strong>exactly {challenge.amount} SAGE</strong>{' '}
-            to your own address below. The exact amount is what proves the wallet is yours —
-            nothing is sent to us, and the tokens stay with you.
+            <strong>Step 1.</strong> Open your Bankr or Privy wallet — the one holding your SAGE.
+          </p>
+          <p className='howtobuyash__earning-pixels-info'>
+            <strong>Step 2.</strong> From <em>that</em> wallet, send{' '}
+            <strong>exactly {challenge.amount} SAGE</strong> to your main SAGE wallet, the address
+            shown below. The transfer must come <em>out of</em> the wallet you are linking — that
+            is what proves you control it. A transfer from any other wallet will not match.
+          </p>
+          <p className='howtobuyash__earning-pixels-info'>
+            <strong>Step 3.</strong> Come back and press the button. Nothing is sent to us, the
+            tokens stay yours, and it is a normal transfer between two of your own wallets.
           </p>
           <div className='pixels-link__field'>
-            <span className='pixels-link__label'>AMOUNT</span>
+            <span className='pixels-link__label'>SEND EXACTLY</span>
             <code className='pixels-link__value'>{challenge.amount}</code>
             <button
               className='pixels-link__copy'
@@ -175,7 +189,7 @@ export default function PixelsWalletLink() {
             </button>
           </div>
           <div className='pixels-link__field'>
-            <span className='pixels-link__label'>SEND TO</span>
+            <span className='pixels-link__label'>SEND TO (YOUR MAIN WALLET)</span>
             <code className='pixels-link__value'>{challenge.to}</code>
             <button
               className='pixels-link__copy'
