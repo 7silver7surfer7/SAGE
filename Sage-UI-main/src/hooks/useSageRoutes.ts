@@ -5,6 +5,7 @@ import {
   basePathLotteries,
   basePathHome,
   basePathAgentApi,
+  basePathAgent,
   basePathProfile,
   basePathTokens,
   basePathDex,
@@ -49,6 +50,10 @@ export default function useSageRoutes() {
     await router.push(basePathAgentApi);
   }
 
+  async function pushToAgent() {
+    await router.push(basePathAgent);
+  }
+
   async function pushToProfile() {
     await router.push(basePathProfile);
   }
@@ -90,6 +95,7 @@ export default function useSageRoutes() {
     pushToTokens,
     pushToDex,
     pushToAgentApi,
+    pushToAgent,
     pushToProfile,
     pushToSocial,
     pushToHowToBuyAsh,

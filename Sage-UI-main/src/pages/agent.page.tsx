@@ -4,7 +4,7 @@ import AgentRail from '@/components/Agent/AgentRail';
 import AgentHeader from '@/components/Agent/AgentHeader';
 import AgentChat from '@/components/Agent/AgentChat';
 import AgentComposer from '@/components/Agent/AgentComposer';
-import { BotModal, BuyModal, HistoryModal, PortfolioModal } from '@/components/Agent/AgentModals';
+import { BotModal, BuyModal, HistoryModal } from '@/components/Agent/AgentModals';
 import { useAgentEngine } from '@/components/Agent/useAgentEngine';
 import { useAgentWallet } from '@/components/Agent/useAgentWallet';
 import { toAgentDrops, type AgentDrop } from '@/components/Agent/dropIndex';
@@ -85,7 +85,6 @@ export default function AgentPage({ drops }: Props) {
         {showRail && (
           <AgentRail
             onToggleRail={a.toggleRail}
-            portfolioTotal={a.portfolioTotal}
             txCount={a.txCount}
             botStatus={a.botStatus}
             threads={a.threads}
@@ -99,7 +98,6 @@ export default function AgentPage({ drops }: Props) {
             sageLabel={a.sageLabel}
             usdgLabel={a.usdgLabel}
             pixels={a.pixels}
-            onOpenPortfolio={a.openPortfolio}
             onOpenHistory={a.openHistory}
             onOpenBot={a.openBot}
             onOpenBuy={a.openBuy}
@@ -157,15 +155,6 @@ export default function AgentPage({ drops }: Props) {
 
         {a.historyOpen && (
           <HistoryModal onClose={a.closeHistory} address={a.address} txRows={a.txRows} />
-        )}
-        {a.portfolioOpen && (
-          <PortfolioModal
-            onClose={a.closePortfolio}
-            address={a.address}
-            total={a.portfolioUsd}
-            holdings={a.tokenHoldings}
-            nfts={a.nfts}
-          />
         )}
         {a.botOpen && (
           <BotModal

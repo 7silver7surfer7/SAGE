@@ -11,15 +11,29 @@
  * and hiding the marketing chrome) live in styles/pages/_agent.scss.
  */
 
+/**
+ * SURFACES AND ACCENT COME FROM SAGE SOCIAL, so the two halves of the product
+ * read as one. `bg` is Social's dark-theme `base` and `raised` its `base2`
+ * (styles/abstracts/_mixins.scss); `accent` is `$accent` from
+ * styles/abstracts/_colors.scss — the Robinhood-theme lime.
+ *
+ * The surface ladder keeps the ORIGINAL design's step sizes (+4, +10, +17 per
+ * channel off the canvas) rather than copying Social's two flat levels, because
+ * the agent stacks more layers than Social does — canvas, panel, button, hover.
+ * Same hue family, same rhythm as before.
+ *
+ * Ink stays warm-neutral on purpose: only the ground and the trim were meant to
+ * change, and the existing greys sit fine on the green-black.
+ */
 export const C = {
-  /** page canvas */
-  bg: '#0C0C0C',
+  /** page canvas — SAGE Social `base` */
+  bg: '#0E1412',
   /** rail + card surface */
-  panel: '#101010',
-  /** raised surface: buttons, inputs, hovered rows */
-  raised: '#161616',
+  panel: '#121816',
+  /** raised surface: buttons, inputs, hovered rows — SAGE Social `base2` */
+  raised: '#17211C',
   /** hovered raised surface (model menu rows) */
-  raisedHover: '#1D1D1D',
+  raisedHover: '#1D2823',
   /** hairline rules — the design uses this exact alpha everywhere */
   line: 'rgba(255,255,255,0.08)',
   /** stronger hairline: composer, model menu, avatar frames */
@@ -32,10 +46,10 @@ export const C = {
   ink2: '#7C7C78',
   /** tertiary text — micro-labels */
   ink3: '#55554F',
-  /** sage green accent */
-  accent: '#B8D8A8',
+  /** the bolt — SAGE Social's lime trim */
+  accent: '#D4FC52',
   /** scrollbar thumb / meter track */
-  track: '#262626',
+  track: '#24302B',
   /** error card */
   errorBorder: '#6B4A2A',
   errorBg: '#16110C',
@@ -72,7 +86,8 @@ export const btnPrimary: React.CSSProperties = {
   letterSpacing: '0.2em',
   textTransform: 'uppercase',
   background: C.accent,
-  color: '#101010',
+  // dark ink on the lime, not black — matches the canvas it sits on
+  color: C.bg,
   border: 'none',
   padding: '11px 20px',
   cursor: 'pointer',

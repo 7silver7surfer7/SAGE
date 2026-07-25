@@ -6,7 +6,6 @@ import type { Thread } from './types';
 
 export interface Props {
   onToggleRail: () => void;
-  portfolioTotal: string;
   txCount: number;
   botStatus: string;
   threads: Thread[];
@@ -21,7 +20,6 @@ export interface Props {
   sageLabel: string;
   usdgLabel: string;
   pixels: string;
-  onOpenPortfolio: () => void;
   onOpenHistory: () => void;
   onOpenBot: () => void;
   onOpenBuy: () => void;
@@ -30,19 +28,23 @@ export interface Props {
 /**
  * The agent rail links out to the rest of the marketplace, so these are real
  * routes rather than in-app tabs — a user who lands in the agent still has the
- * whole site one click away. "Agent API" is the current page and is rendered
- * active (accent block) instead of as a link target.
+ * whole site one click away. "AI Chat" is THIS page and is rendered active
+ * (accent block) instead of as a link target.
+ *
+ * It used to read "Agent API" pointing at /agent-api, which meant the accent
+ * block claimed the MCP documentation page was current while the visitor was
+ * actually sitting in the chat console. The docs still have their footer link.
  */
 const NAV: { href: string; text: string }[] = [
   { href: '/', text: 'Home' },
   { href: '/drops', text: 'Drops' },
   { href: '/social', text: 'Social' },
   { href: '/tokens', text: 'Tokens' },
-  { href: '/agent-api', text: 'Agent API' },
+  { href: '/agent', text: 'AI Chat' },
   { href: '/howtobuysage', text: 'SAGE Token' },
 ];
 
-const ACTIVE_HREF = '/agent-api';
+const ACTIVE_HREF = '/agent';
 
 const navLink: React.CSSProperties = {
   fontFamily: F.mono,
@@ -84,7 +86,6 @@ function Balance({ name, value }: { name: string; value: string }) {
 
 export default function AgentRail({
   onToggleRail,
-  portfolioTotal,
   txCount,
   botStatus,
   threads,
@@ -98,7 +99,6 @@ export default function AgentRail({
   sageLabel,
   usdgLabel,
   pixels,
-  onOpenPortfolio,
   onOpenHistory,
   onOpenBot,
   onOpenBuy,
@@ -112,13 +112,6 @@ export default function AgentRail({
   });
 
   const panels: { key: string; text: string; value: string; valueStyle: React.CSSProperties; onClick: () => void }[] = [
-    {
-      key: 'portfolio',
-      text: 'Portfolio',
-      value: portfolioTotal,
-      valueStyle: { fontSize: '9px', letterSpacing: '0.14em', color: C.accent },
-      onClick: onOpenPortfolio,
-    },
     {
       key: 'history',
       text: 'History',

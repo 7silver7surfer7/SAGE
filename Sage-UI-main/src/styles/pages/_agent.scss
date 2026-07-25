@@ -37,9 +37,10 @@
 .agent-shell {
   // Scoped rather than global: these would otherwise repaint scrollbars and
   // selection colours across the whole marketplace.
+  // Mirrors components/Agent/tokens.ts — SAGE Social's lime on its base.
   ::selection {
-    background: #b8d8a8;
-    color: #101010;
+    background: #d4fc52;
+    color: #0e1412;
   }
 
   ::-webkit-scrollbar {
@@ -48,7 +49,7 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #262626;
+    background: #24302b;
   }
 
   textarea {
@@ -56,7 +57,7 @@
   }
 
   a {
-    color: #b8d8a8;
+    color: #d4fc52;
     text-decoration: none;
 
     &:hover {

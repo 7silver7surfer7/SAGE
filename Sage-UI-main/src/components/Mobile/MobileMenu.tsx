@@ -12,7 +12,7 @@ import Copyright from '../Branding/Copyright';
 import {
   basePathDrops,
   basePathHome,
-  basePathAgentApi,
+  basePathAgent,
   basePathHowToBuyAsh,
   basePathTokens,
 } from '@/constants/paths';
@@ -45,8 +45,8 @@ const navLinks: NavLink[] = [
     url: basePathTokens,
   },
   {
-    name: 'Agent API',
-    url: basePathAgentApi,
+    name: 'AI Chat',
+    url: basePathAgent,
   },
   {
     name: 'SAGE Token',

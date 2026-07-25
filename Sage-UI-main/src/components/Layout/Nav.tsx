@@ -19,7 +19,7 @@ export default function Nav() {
     pushToHome,
     pushToTokens,
     pushToDex,
-    pushToAgentApi,
+    pushToAgent,
     pushToHowToBuyAsh,
     pushToSocial,
     isProfilePage,
@@ -65,8 +65,8 @@ export default function Nav() {
         ]
       : []),
     {
-      name: 'Agent API',
-      routeFunction: pushToAgentApi,
+      name: 'AI Chat',
+      routeFunction: pushToAgent,
     },
     {
       name: 'SAGE Token',

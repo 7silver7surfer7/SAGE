@@ -10,6 +10,8 @@ import type {
   Tier,
   TxRecord,
 } from './types';
+import { getSession } from 'next-auth/react';
+import useSignIn from '@/hooks/useSignIn';
 import { matchDrop, type AgentDrop } from './dropIndex';
 import type { AgentWallet } from './useAgentWallet';
 import { SAGE_PRICE_TOKEN_ADDRESS } from '@/constants/config';
@@ -137,6 +139,9 @@ interface AgentTurn {
 }
 
 export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngineOptions) {
+  // autoPrompt=false: the app shell already owns the automatic prompt. This
+  // mount only needs the manual trigger, for the X link's explicit re-ask.
+  const { handleSignInClick } = useSignIn(false);
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -383,6 +388,25 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
       setError('THAT CLAIM COULD NOT BE OPENED');
     }
   }, [scrollToEnd]);
+
+  // ?twitter=... from the OAuth round trip
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const q = new URLSearchParams(window.location.search);
+    const t = q.get('twitter');
+    if (!t) return;
+    if (t === 'linked') setError('');
+    else if (t === 'replaced')
+      setError(`X ACCOUNT LINKED · REPLACED @${q.get('previous') || 'PREVIOUS'} ON THIS WALLET`);
+    else if (t === 'signin-required')
+      setError('SIGN IN WITH YOUR WALLET FIRST — THEN CONNECT X AGAIN');
+    else if (t === 'already-linked')
+      setError('THAT X ACCOUNT IS ALREADY LINKED TO ANOTHER WALLET');
+    else if (t === 'failed')
+      setError('X LINK FAILED · ' + (q.get('reason') || 'unknown').toUpperCase().slice(0, 80));
+    loadXLink();
+    window.history.replaceState({}, '', window.location.pathname);
+  }, [loadXLink]);
 
   // ?claim=<tweetId> in the URL, once the wallet is connected
   useEffect(() => {
@@ -1035,13 +1059,28 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
    * granted nothing, while the panel claimed the handle could spend from this
    * wallet.
    */
-  const connectX = useCallback(() => {
+  const connectX = useCallback(async () => {
     if (!wallet.connected) {
       setError('CONNECT A WALLET FIRST — THE X ACCOUNT LINKS TO IT');
       return;
     }
+    // The route needs a SIWE SESSION, not merely a connected wallet — two
+    // different states that are easy to conflate. The app-shell auto-prompt
+    // fires ONCE per connect (its one-shot ref), so a dismissed or expired
+    // signature leaves the wallet connected with no session and no way to
+    // re-prompt short of reconnecting. Navigating in that state dead-ended on
+    // a bare "Not Authenticated" from the API route, with no way back.
+    if (!(await getSession())) {
+      setError('SIGN IN WITH YOUR WALLET TO LINK — CHECK YOUR WALLET FOR THE SIGNATURE');
+      await handleSignInClick();
+      if (!(await getSession())) {
+        setError('SIGN-IN DECLINED — LINKING X NEEDS A SIGNED SESSION');
+        return;
+      }
+    }
+    setError('');
     window.location.href = '/api/twitter/authorize';
-  }, [wallet.connected]);
+  }, [wallet.connected, handleSignInClick]);
 
   const unlinkX = useCallback(async () => {
     try {
