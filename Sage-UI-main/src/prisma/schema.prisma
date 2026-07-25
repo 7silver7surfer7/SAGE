@@ -956,6 +956,50 @@ model BidHistory {
 // Snapshot copies each wallet's on-chain (settled, checkpointSage, lastSync)
 // verbatim, so the math continues seamlessly from the same state. While
 // PIXELS_SOURCE=chain (the default) these tables are shadow-only.
+// A second wallet whose SAGE balance accrues Pixels to a SAGE account.
+//
+// Exists because holdings moved into custodial/embedded wallets (Privy, via
+// bankrbot) that the holder controls but which are NOT their sign-in wallet.
+// Accrual reads balanceOf() on the sign-in wallet, so those balances were
+// invisible and earned nothing.
+//
+// `address` is the PRIMARY KEY, not just indexed: that is what stops the same
+// custodial wallet being claimed by two SAGE accounts and paying both. One
+// external wallet feeds exactly one account, and re-claiming it has to move it
+// rather than duplicate it.
+//
+// Balances are SUMMED across an account's wallets and the cap applied to the
+// TOTAL (see liveSageWhole), so splitting a holding across wallets can never
+// earn more than holding it in one.
+model LinkedWallet {
+  address       String   @id @db.Char(42) // the external wallet (Privy/bankr)
+  walletAddress String   @db.Char(42) // the SAGE account it accrues to
+  // how control was proven — 'signature' or 'transfer'; recorded so a future
+  // audit can tell a signed claim from a weaker one
+  proof         String   @db.VarChar(16)
+  verifiedAt    DateTime @default(now())
+
+  @@index([walletAddress])
+}
+
+// An outstanding "prove you control that wallet" challenge.
+//
+// The proof is a transfer of an EXACT, server-issued dust amount. A bare
+// transfer proves nothing — anyone can send dust to anyone, so a bot's hot
+// wallet paying out to a user would let that user claim the hot wallet and
+// accrue on its whole balance. Nobody can make someone else's wallet send a
+// specific amount they were just handed, so the amount is the proof.
+//
+// fromBlock is stamped at issue so verification scans a bounded, honest range
+// instead of guessing how far back to look from a timestamp.
+model PixelLinkChallenge {
+  walletAddress String   @id @db.Char(42) // the SAGE sign-in wallet being proven TO
+  amountWei     String   @db.VarChar(40) // exact value that must arrive
+  fromBlock     Int
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+}
+
 model PixelAccount {
   walletAddress  String   @id @db.Char(42)
   settled        BigInt   @default(0) // banked whole pixels

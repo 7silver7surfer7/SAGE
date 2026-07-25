@@ -57,3 +57,105 @@
   line-height: 130%;
   text-transform: capitalize;
 }
+
+// ── link an outside wallet (penny-drop verification) ───────────────────────
+// Uses the page's own tokens rather than new colours: this is one more block
+// in the Earning Pixels section, not a separate feature with its own look.
+.pixels-link {
+  @include m.standard-width;
+  @include m.flex-col;
+  gap: 16px;
+  margin-bottom: 40px;
+}
+
+.pixels-link__list {
+  @include m.flex-col;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.pixels-link__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  @include m.theme() {
+    border-bottom: 1px solid rgba(m.t(contrast), 0.14);
+  }
+}
+
+.pixels-link__addr {
+  font-family: monospace;
+  font-size: 13px;
+  word-break: break-all;
+  @include m.theme() {
+    color: m.t(contrast2);
+  }
+}
+
+.pixels-link__unlink {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 0;
+  margin-left: auto;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.55);
+  }
+}
+
+.pixels-link__challenge {
+  @include m.flex-col;
+  gap: 12px;
+}
+
+// The amount and the address are the two things that must be copied exactly;
+// a wrong amount simply never verifies, so they get their own field rows
+// rather than sitting inline in a paragraph.
+.pixels-link__field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  @include m.theme() {
+    background-color: m.t(base2);
+    border: 1px solid rgba(m.t(contrast), 0.14);
+  }
+}
+
+.pixels-link__label {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  flex: none;
+  @include m.theme() {
+    color: rgba(m.t(contrast), 0.55);
+  }
+}
+
+.pixels-link__value {
+  font-family: monospace;
+  font-size: 13px;
+  word-break: break-all;
+  @include m.theme() {
+    color: m.t(contrast);
+  }
+}
+
+.pixels-link__copy {
+  background: none;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 5px 12px;
+  margin-left: auto;
+  flex: none;
+  @include m.theme() {
+    color: m.t(accent);
+    border: 1px solid m.t(accent);
+  }
+}

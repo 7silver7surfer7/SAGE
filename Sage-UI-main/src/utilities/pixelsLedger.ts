@@ -11,6 +11,8 @@ import {
   PIXELS_TOKEN_ADDRESS,
   PIXELS_LEGACY_TOKEN_ADDRESS,
   PIXELS_MIGRATION_ENDS_AT,
+  TRADE_RPC_URL,
+  TRADE_CHAIN_ID,
 } from '@/constants/config';
 
 /**
@@ -50,8 +52,22 @@ export function pixelsSource(): 'chain' | 'db' {
   return process.env.PIXELS_SOURCE === 'db' ? 'db' : 'chain';
 }
 
+/**
+ * PINNED to the pixels chain, exactly like PIXELS_TOKEN_ADDRESS — and for the
+ * same reason.
+ *
+ * This used to read `parameters.RPC_URL`, which resolves per BUILD: testnet on
+ * a localhost or staging build. The token address is pinned to mainnet, so the
+ * pair asked a testnet node for the balance of a mainnet token and got 0 back
+ * for every wallet — accrual that "works", reports no error, and pays nobody.
+ * Pinning one half of a (chain, address) pair is the same bug as pinning
+ * neither; they have to travel together.
+ */
 function ledgerProvider() {
-  return new ethers.providers.StaticJsonRpcProvider({ url: parameters.RPC_URL, timeout: 30000 });
+  return new ethers.providers.StaticJsonRpcProvider(
+    { url: TRADE_RPC_URL, timeout: 30000 },
+    TRADE_CHAIN_ID
+  );
 }
 
 /**
@@ -86,13 +102,50 @@ async function wholeBalance(token: string, address: string): Promise<bigint> {
  * Once the window closes the legacy balance stops counting entirely, and the
  * only accrual input in the codebase is the new token again.
  */
-async function liveSageWhole(address: string): Promise<bigint> {
+async function oneWalletWhole(address: string): Promise<bigint> {
   const fresh = await wholeBalance(PIXELS_TOKEN_ADDRESS, address);
   if (!migrationWindowOpen()) return fresh;
   // a legacy read failing must never zero a live balance
   const legacy = await wholeBalance(PIXELS_LEGACY_TOKEN_ADDRESS, address).catch(() => BigInt(0));
   const legacyEquivalent = legacy * LEGACY_PIXEL_RATIO;
   return legacyEquivalent > fresh ? legacyEquivalent : fresh;
+}
+
+/**
+ * Accrual balance for an ACCOUNT — its sign-in wallet plus any verified
+ * LinkedWallet.
+ *
+ * Holdings moved into embedded/custodial wallets (Privy, via bankrbot) that
+ * the holder controls but does not sign in with, so a balance read against the
+ * sign-in wallet alone returned zero and those holders earned nothing.
+ *
+ * SUMMED across wallets, and the CAP is applied to the total downstream — the
+ * per-wallet max() above resolves the two TOKENS, this resolves the two
+ * WALLETS, and they are different questions. Summing is only safe because the
+ * cap lands on the sum: splitting a holding across wallets earns exactly what
+ * holding it in one does.
+ *
+ * A linked-wallet lookup failure degrades to the sign-in wallet rather than
+ * throwing — the sweep must not stall the whole book over one row.
+ */
+async function liveSageWhole(address: string): Promise<bigint> {
+  let extra: string[] = [];
+  try {
+    extra = (
+      await prisma.linkedWallet.findMany({
+        where: { walletAddress: address },
+        select: { address: true },
+      })
+    ).map((r) => r.address);
+  } catch {
+    /* fall back to the sign-in wallet alone */
+  }
+  if (!extra.length) return oneWalletWhole(address);
+
+  const all = await Promise.all(
+    [address, ...extra].map((a) => oneWalletWhole(a).catch(() => BigInt(0)))
+  );
+  return all.reduce((sum, v) => sum + v, BigInt(0));
 }
 
 /**

@@ -1,4 +1,5 @@
 import Logotype from '@/components/Logotype';
+import PixelsWalletLink from '@/components/PixelsWalletLink';
 import {
   SAGE_V2_TOKEN_ADDRESS,
   PIXELS_LEGACY_TOKEN_ADDRESS,
@@ -115,6 +116,7 @@ export default function howtobuysage() {
         at 100,000. Holding both does not earn twice: whichever token would earn you more is the
         one that counts. After that date only the token above earns.
       </p>
+      <PixelsWalletLink />
     </div>
   );
 }
