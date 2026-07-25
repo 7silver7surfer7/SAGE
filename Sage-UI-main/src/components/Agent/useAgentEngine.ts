@@ -170,7 +170,6 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
   const [botOpen, setBotOpen] = useState(false);
   const [botEnabled, setBotEnabled] = useState(true);
   const [linkDraft, setLinkDraft] = useState('');
-  const [mentionDraft, setMentionDraft] = useState('');
   const [payWith, setPayWith] = useState('eth');
   const [tierId, setTierId] = useState('curator');
 
@@ -1053,17 +1052,6 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     }
   }, [loadXLink]);
 
-  const runMention = useCallback(
-    (text: string) => {
-      if (!botEnabled) {
-        setError('SOCIAL AGENT PAUSED · ENABLE IT TO ACT ON MENTIONS');
-        return;
-      }
-      setBotOpen(false);
-      send(text);
-    },
-    [botEnabled, send]
-  );
 
   const creditsPctNum = Math.max(0, Math.min(100, Math.round((credits / 2500) * 100)));
 
@@ -1201,16 +1189,8 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     connectX,
     unlinkX,
     xLink,
-    runMention,
     linkDraft,
     setLinkDraft,
-    mentionDraft,
-    setMentionDraft,
-    sampleMentions: [
-      '$8 of $rhagent on Robinhood using usdg',
-      'buy the floor punk under 45 ETH',
-      '$25 of $sage using usdg',
-    ],
 
     tiers: TIERS.map((t) => ({
       ...t,

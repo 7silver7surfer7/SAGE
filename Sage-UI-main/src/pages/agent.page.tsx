@@ -178,11 +178,6 @@ export default function AgentPage({ drops }: Props) {
             onConnectX={a.connectX}
             onUnlinkX={a.unlinkX}
             xLink={a.xLink}
-            mentionDraft={a.mentionDraft}
-            onMentionDraftChange={a.setMentionDraft}
-            onRunMention={() => a.runMention(a.mentionDraft || a.sampleMentions[0])}
-            sampleMentions={a.sampleMentions}
-            onRunSample={(t) => a.runMention(t)}
           />
         )}
         {a.buyOpen && (

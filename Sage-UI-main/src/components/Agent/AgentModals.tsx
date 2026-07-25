@@ -382,11 +382,6 @@ export interface BotModalProps {
   onConnectX: () => void;
   onUnlinkX: () => void;
   xLink: { linked: boolean; handle: string | null; dailyCap: number; servedToday: number } | null;
-  mentionDraft: string;
-  onMentionDraftChange: (value: string) => void;
-  onRunMention: () => void;
-  sampleMentions: string[];
-  onRunSample: (text: string) => void;
 }
 
 export function BotModal({
@@ -399,11 +394,6 @@ export function BotModal({
   onConnectX,
   onUnlinkX,
   xLink,
-  mentionDraft,
-  onMentionDraftChange,
-  onRunMention,
-  sampleMentions,
-  onRunSample,
 }: BotModalProps) {
   return (
     <Shell onClose={onClose} maxWidth={880} zIndex={41}>
@@ -551,42 +541,6 @@ export function BotModal({
         </div>
       </div>
 
-      <div style={{ padding: '22px 28px' }}>
-        <div style={{ ...sectionLabel, marginBottom: '14px' }}>SIMULATE AN INCOMING MENTION</div>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
-          <input
-            value={mentionDraft}
-            onChange={(e) => onMentionDraftChange(e.target.value)}
-            placeholder="@SAGEART $8 of $rhagent on Robinhood using usdg"
-            style={{ ...inputStyle, minWidth: '240px', fontFamily: F.sans, fontSize: '14px' }}
-          />
-          <HoverButton
-            onClick={onRunMention}
-            style={{ ...btnPrimary, padding: '12px 24px' }}
-            hover={{ background: C.ink }}
-          >
-            run mention
-          </HoverButton>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {sampleMentions.map((s) => (
-            <HoverButton
-              key={s}
-              onClick={() => onRunSample(s)}
-              style={{
-                ...mono(10.5, C.ink2),
-                background: 'transparent',
-                border: `1px solid ${C.line}`,
-                padding: '9px 13px',
-                cursor: 'pointer',
-              }}
-              hover={{ border: `1px solid ${C.accent}`, color: C.ink }}
-            >
-              {s}
-            </HoverButton>
-          ))}
-        </div>
-      </div>
     </Shell>
   );
 }

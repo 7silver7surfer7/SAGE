@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { serialize } from 'cookie';
-import authClient from '@/utilities/twitter';
+import { authClientFor } from '@/utilities/twitter';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getSession } from 'next-auth/react';
 import { TWITTER_OAUTH_COOKIE } from '@/utilities/twitterOAuthCookie';
@@ -12,6 +12,7 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
+  const authClient = authClientFor(req);
   try {
     // Per-request random state + PKCE challenge, not a fixed env secret —
     // a static value shared by every user gave zero CSRF protection (an

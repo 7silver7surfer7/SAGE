@@ -1,6 +1,6 @@
 import { serialize } from 'cookie';
 import prisma from '@/prisma/client';
-import authClient from '@/utilities/twitter';
+import { authClientFor } from '@/utilities/twitter';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getSession } from 'next-auth/react';
 import { Client } from 'twitter-api-sdk';
@@ -30,6 +30,7 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
     })
   );
 
+  const authClient = authClientFor(req);
   try {
     const raw = req.cookies[TWITTER_OAUTH_COOKIE];
     const stored = raw ? JSON.parse(raw) : null;
