@@ -12,7 +12,7 @@ import { generateImage } from '@/utilities/krea';
 import { imagePriceFor, creditsForImage, DEFAULT_IMAGE_MODEL_ID } from '@/constants/modelPricing';
 import { debitCredits } from '@/utilities/credits';
 import { pinImageAndMetadata } from '@/utilities/pinArt';
-import { PUBLIC_SITE_URL } from '@/constants/config';
+import { PUBLIC_SITE_URL, parameters } from '@/constants/config';
 
 /**
  * One poll cycle of @SAGEARTXYZ mentions.
@@ -45,6 +45,38 @@ async function setCursor(key: string, value: string): Promise<void> {
     create: { key, value },
     update: { value },
   });
+}
+
+/**
+ * Turn a mention into a render prompt.
+ *
+ * A tweet is an INSTRUCTION ("make me a monet"), not a visual description, and
+ * Krea reads it literally — the first live reply returned a photograph of a
+ * framed canvas sitting on a white surface, complete with margins, because
+ * that is what "a monet" denotes when nothing else is said.
+ *
+ * The scaffold is deterministic rather than model-written. Tweet text is
+ * attacker-controlled and this string reaches an image generator, so a fixed
+ * frame around it is one less place for injected instructions to steer
+ * anything. It also costs nothing.
+ */
+function artPrompt(tweetText: string): string {
+  const subject = tweetText
+    .replace(/@\w+/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    // strip the request framing so the subject is what remains
+    .replace(/\b(make|create|generate|draw|paint|render|mint|imagine|me|a|an|please|can you|could you)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+
+  const described = subject || 'an abstract painterly composition';
+  return (
+    `${described}. ` +
+    'A finished painting rendered FULL BLEED — the artwork fills the entire frame edge to edge. ' +
+    'No picture frame, no canvas edge, no border, no matting, no wall, no easel, no desk. ' +
+    'Not a photograph of a painting: the painting itself, cropped to the frame.'
+  );
 }
 
 /** Compose the reply. Deterministic shell; the model only fills the middle. */
@@ -114,13 +146,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         continue;
       }
 
+      let spent = 0;
       try {
         if (intent === 'generate') {
           // Cheapest tier for public traffic: a mention is not the place to
           // spend 30 credits of someone's balance without them choosing it.
           const model = imagePriceFor('krea-2-turbo');
           const job = await generateImage({
-            prompt: raw.text.replace(/@\w+/g, '').trim().slice(0, 500),
+            prompt: artPrompt(raw.text),
+            // 4:5 fills a phone screen; 1:1 leaves bands top and bottom, and
+            // most of this audience reads X on mobile.
+            aspectRatio: '4:5',
             model: model.id,
             timeoutMs: 60_000,
           });
@@ -142,6 +178,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             console.error('pin failed', e);
           }
 
+          // Persist the artifact NOW, before anything that can fail. The reply
+          // is the riskiest step (X permissions, rate limits, network) and a
+          // 403 there previously discarded a rendered, pinned, already-paid-for
+          // artwork — the user was charged and left with nothing.
+          spent = cost;
+
           let mediaIds: string[] = [];
           try {
             const img = await fetch(job.urls[0]);
@@ -154,17 +196,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // The claim is keyed by TWEET ID and authorised against the X account
           // that sent it — see /api/x-claim. A link alone is not a capability:
           // the reply is public, so anyone can read it.
-          const claimUrl = pinned
-            ? `${PUBLIC_SITE_URL}agent?claim=${m.tweetId}`
-            : `${PUBLIC_SITE_URL}agent`;
+          //
+          // Only offered when this instance IS the public one. A local run
+          // writes the claim to a local database while the link points at the
+          // deployed site, so the tweet would carry a mint link that 404s —
+          // the art lands and the claim dies. Better to post the picture alone
+          // than to publish a promise the reader cannot redeem.
+          const isPublicInstance = String(parameters.APP_URL || '').startsWith('https://');
+          const claimUrl =
+            pinned && isPublicInstance ? `${PUBLIC_SITE_URL}agent?claim=${m.tweetId}` : '';
 
           const posted = await postReply(
             creds,
             m.tweetId,
             replyText(
               m.authorHandle,
-              pinned ? 'Made for you. Mint it here —' : 'Made for you.',
-              pinned ? ` ${claimUrl}` : ''
+              claimUrl ? 'Made for you. Mint it here —' : 'Made for you.',
+              claimUrl ? ` ${claimUrl}` : ''
             ),
             mediaIds
           );
@@ -192,7 +240,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       } catch (e: any) {
         console.error('mention failed', m.tweetId, e?.message);
-        await recordOutcome(m.tweetId, 'failed', { walletAddress: gate.walletAddress, intent });
+        // Record what was actually charged. The artwork is already stored, so
+        // the next cycle can retry the reply rather than re-rendering it.
+        await recordOutcome(m.tweetId, 'failed', {
+          walletAddress: gate.walletAddress,
+          intent,
+          creditsSpent: spent,
+        });
         counts.failed++;
       }
     }

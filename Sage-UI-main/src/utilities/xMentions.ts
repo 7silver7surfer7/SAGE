@@ -54,13 +54,16 @@ export interface GateResult {
 }
 
 /**
- * Caps exist for PLATFORM risk, not cost — credits already bound spend. A
- * credited user could legitimately burn their own balance across 200 mentions
- * while this account posts 200 replies in an hour, which is precisely the
- * automated-volume pattern X actions accounts for.
+ * Caps exist for PLATFORM risk, not cost — credits already bound spend, and a
+ * user burning their own balance is their business. What these bound is how
+ * many times THIS ACCOUNT posts in a day, which is what X polices.
+ *
+ * The global cap must stay comfortably above the per-author one or a single
+ * enthusiastic user starves everyone else. Both are well under the volumes
+ * that read as automated spam; raise them together, not separately.
  */
-export const AUTHOR_DAILY_CAP = 5;
-export const GLOBAL_DAILY_CAP = 60;
+export const AUTHOR_DAILY_CAP = 50;
+export const GLOBAL_DAILY_CAP = 200;
 
 /** A turn costs at least this much; below it, do not start work we cannot bill. */
 export const MIN_CREDITS = 1;
