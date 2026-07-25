@@ -230,8 +230,23 @@ const CRITIQUE_VERBS =
  * anime portrait — billed to the person who was trying to file a bug report.
  * The verbs that request art are the verbs people use to talk about software.
  */
-const NOT_A_COMMISSION =
-  /\b(make sure|make it so|can you (make sure|fix|change|update|stop|add|remove)|why did|why does|what happened|it'?s not|doesn'?t work|didn'?t work|broken|instead of|next time|always|please stop)\b/i;
+const NOT_A_COMMISSION = new RegExp(
+  [
+    "\\b(make sure|make it so)\\b",
+    "\\bcan you (make sure|fix|change|update|stop|add|remove)\\b",
+    "\\b(why did|why does|what happened|it'?s not|doesn'?t work|didn'?t work|broken)\\b",
+    "\\b(instead of|next time|always|please stop)\\b",
+    // A suggestion thrown to the timeline is not an order to us: "someone
+    // should make a series about @sage" is a thought, not a commission.
+    "\\b(some(one|body)|y'?all|people|we)\\s+(should|ought to|need(s)? to)\\b",
+    // THE AUTHOR is the one doing the making, so nothing is being asked of us:
+    // "just tell me what feature you want implemented on @sage and I'll make
+    // it happen" was rendered as an abstract painting and billed as a
+    // commission. Someone offering to build something is not ordering art.
+    "\\b(i|we)\\s*(?:'|’)?(?:ll|d|ve)?\\s*(?:will|can|could|shall|am gonna|'?m gonna)?\\s*(make|build|implement|create|add|ship|do|draw|paint)\\b",
+  ].join('|'),
+  'i'
+);
 
 export function routeMention(m: IncomingMention): MentionIntent {
   const text = m.text || '';
@@ -313,7 +328,23 @@ export function isAddressed(m: IncomingMention): boolean {
 
   const lead = (text.match(/^(?:\s*@\w+)+/) || [''])[0];
   const body = text.slice(lead.length);
-  if (new RegExp(`@${handle}\\b`, 'i').test(body)) return true;
+
+  /**
+   * A handle sitting after a preposition is a REFERENT, not an addressee. In
+   * "just tell me what feature you want implemented on @sageartxyz", the author
+   * is talking to their own audience ABOUT us — the same way "I minted on
+   * @sageartxyz" or "check out @sageartxyz" is. Addressing us puts the handle
+   * where a name goes in direct speech: "@sage what do you think", "hey @sage".
+   *
+   * This used to return true on ANY body occurrence, so every brand mention
+   * read as a summons. `to` is deliberately excluded — "gm to @sage" really is
+   * addressed — and so is the rest of the vocative-shaped punctuation.
+   */
+  const referential = new RegExp(
+    `\\b(on|at|from|with|about|via|through|using|over|into|onto|by|out)\\s+@${handle}\\b`,
+    'i'
+  );
+  if (new RegExp(`@${handle}\\b`, 'i').test(body) && !referential.test(body)) return true;
 
   const firstHandle = (lead.match(/@(\w+)/) || [])[1];
   if (firstHandle && firstHandle.toLowerCase() === handle) return true;
