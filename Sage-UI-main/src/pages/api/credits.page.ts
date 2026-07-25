@@ -3,7 +3,9 @@ import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
 import { getCreditBalance } from '@/utilities/credits';
 import { getRequester, isCrossSiteRequest } from '@/utilities/apiAuth';
-import { tradeProvider } from '@/components/Agent/trade';
+import { tradeProvider, explorerTx } from '@/components/Agent/trade';
+import { sendMail, notifyAddress } from '@/utilities/mailer';
+import { creditPurchaseEmail } from '@/utilities/emails/creditPurchase';
 import { TRADE_CHAIN_NAME } from '@/constants/config';
 import {
   CREDIT_TREASURY,
@@ -165,10 +167,72 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     throw e;
   }
 
+  const newBalance = await getCreditBalance(address);
+
+  // Notify the operator. Deliberately AFTER the transaction committed and
+  // after the unique-constraint guard above, so a client retrying a dropped
+  // response returns early via `alreadyClaimed` and cannot send a second mail
+  // for one payment. sendMail never throws — a mail outage must not turn a
+  // settled payment into a 500 — so this is awaited but its result ignored.
+  await notifyCreditPurchase({
+    address,
+    tier,
+    newBalance,
+    paidUsd,
+    weiPaid: paid,
+    txHash,
+  });
+
   return res.json({
-    credits: await getCreditBalance(address),
+    credits: newBalance,
     added: tier.credits,
     tier: tier.id,
     paidUsd: Number(paidUsd.toFixed(2)),
   });
+}
+
+/**
+ * Assemble and send the "credits purchased" notification.
+ *
+ * Kept out of the handler body so the payment logic above reads as one
+ * sequence. Every lookup in here is best-effort: the X handle is a nicety, and
+ * failing to find it must not cost the notification.
+ */
+async function notifyCreditPurchase(p: {
+  address: string;
+  tier: { id: string; title: string; credits: number };
+  newBalance: number;
+  paidUsd: number;
+  weiPaid: ethers.BigNumber;
+  txHash: string;
+}): Promise<void> {
+  const to = notifyAddress();
+  if (!to) return;
+
+  let xHandle: string | null = null;
+  try {
+    const u = await prisma.user.findUnique({
+      where: { walletAddress: p.address },
+      select: { twitterUsername: true },
+    });
+    xHandle = u?.twitterUsername || null;
+  } catch {
+    /* the handle is decoration; send without it */
+  }
+
+  const { subject, html, text } = creditPurchaseEmail({
+    address: p.address,
+    tierTitle: p.tier.title,
+    tierId: p.tier.id,
+    creditsAdded: p.tier.credits,
+    newBalance: p.newBalance,
+    paidUsd: Number(p.paidUsd.toFixed(2)),
+    paidEth: ethers.utils.formatEther(p.weiPaid),
+    txHash: p.txHash,
+    explorerUrl: explorerTx(p.txHash),
+    xHandle,
+    at: new Date().toISOString(),
+  });
+
+  await sendMail({ to, subject, html, text });
 }
