@@ -1,6 +1,11 @@
 import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
-import { parameters, PIXELS_TOKEN_ADDRESS } from '@/constants/config';
+import {
+  parameters,
+  PIXELS_TOKEN_ADDRESS,
+  PIXELS_LEGACY_TOKEN_ADDRESS,
+  PIXELS_MIGRATION_ENDS_AT,
+} from '@/constants/config';
 
 /**
  * Off-chain pixels ledger — the zero-gas successor to on-chain SagePoints.
@@ -43,15 +48,45 @@ function ledgerProvider() {
   return new ethers.providers.StaticJsonRpcProvider({ url: parameters.RPC_URL, timeout: 30000 });
 }
 
-/** Live whole-SAGE balance — a free view call; the only RPC the db mode makes. */
-async function liveSageWhole(address: string): Promise<bigint> {
-  const c = new ethers.Contract(
-    PIXELS_TOKEN_ADDRESS,
-    ['function balanceOf(address) view returns (uint256)'],
-    ledgerProvider()
-  );
+/**
+ * One OLD token buys as many pixels as 250 NEW ones: the old pair was
+ * 0.25 px/token/day capped at 100,000, the new is 0.001 capped at 25,000,000.
+ * 100,000 x 250 lands exactly on the new cap, so a legacy holder's ceiling is
+ * unchanged — the conversion is a re-denomination, not a re-rate.
+ */
+export const LEGACY_PIXEL_RATIO = BigInt(250);
+
+export function migrationWindowOpen(now: Date = new Date()): boolean {
+  return now < PIXELS_MIGRATION_ENDS_AT;
+}
+
+const BALANCE_ABI = ['function balanceOf(address) view returns (uint256)'];
+
+async function wholeBalance(token: string, address: string): Promise<bigint> {
+  const c = new ethers.Contract(token, BALANCE_ABI, ledgerProvider());
   const bal = await c.balanceOf(address);
   return BigInt(bal.div(ethers.constants.WeiPerEther).toString());
+}
+
+/**
+ * The wallet's accrual balance, in NEW-token units.
+ *
+ * While the migration window is open both tokens are read and the BETTER of
+ * the two is credited — never the sum. That is the whole reason a dual window
+ * is safe here: the requirement was that nobody earns from two tokens at once,
+ * and a max() cannot pay twice however the balances are arranged. Holding both
+ * earns exactly what holding the larger one alone would.
+ *
+ * Once the window closes the legacy balance stops counting entirely, and the
+ * only accrual input in the codebase is the new token again.
+ */
+async function liveSageWhole(address: string): Promise<bigint> {
+  const fresh = await wholeBalance(PIXELS_TOKEN_ADDRESS, address);
+  if (!migrationWindowOpen()) return fresh;
+  // a legacy read failing must never zero a live balance
+  const legacy = await wholeBalance(PIXELS_LEGACY_TOKEN_ADDRESS, address).catch(() => BigInt(0));
+  const legacyEquivalent = legacy * LEGACY_PIXEL_RATIO;
+  return legacyEquivalent > fresh ? legacyEquivalent : fresh;
 }
 
 /**

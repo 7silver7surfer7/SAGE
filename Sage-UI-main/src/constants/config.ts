@@ -91,6 +91,20 @@ export const SAGE_V2_TOKEN_ADDRESS = '0xE21a2b120FAcF995bC8bF6b1843f409E568beBA3
 // job pointed at a token with no holders pays nobody while appearing to work —
 // the same class of bug that sent a mint to a codeless address.
 export const PIXELS_TOKEN_ADDRESS = SAGE_V2_TOKEN_ADDRESS;
+
+// The token Pixels USED to accrue from. During the migration window a holder
+// still earns on it, so the 284 wallets holding it do not hit a cliff the day
+// the cutover ships. See pixelsLedger: the two balances are compared, never
+// summed, so nobody earns from both.
+export const PIXELS_LEGACY_TOKEN_ADDRESS = SAGE_PRICE_TOKEN_ADDRESS;
+
+// When legacy accrual stops. A fixed instant, not "two weeks from deploy":
+// the date has to be announceable and identical on every instance, and a
+// deploy-relative window would silently restart on every redeploy.
+// Override with PIXELS_MIGRATION_ENDS_AT (ISO-8601) to extend or cut it short.
+export const PIXELS_MIGRATION_ENDS_AT = new Date(
+  process.env.PIXELS_MIGRATION_ENDS_AT || '2026-08-08T00:00:00Z'
+);
 // Candidate factories, newest first. A token's curve state lives in the
 // storage of whichever factory launched it and can never be migrated, so
 // resolution WALKS this list instead of assuming the current one — that is
