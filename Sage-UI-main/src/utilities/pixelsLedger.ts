@@ -142,10 +142,37 @@ async function liveSageWhole(address: string): Promise<bigint> {
   }
   if (!extra.length) return oneWalletWhole(address);
 
-  const all = await Promise.all(
-    [address, ...extra].map((a) => oneWalletWhole(a).catch(() => BigInt(0)))
+  /**
+   * SUM EACH TOKEN ACROSS WALLETS FIRST, THEN max(). Never the other way round.
+   *
+   * This used to call oneWalletWhole per wallet and sum the results — but that
+   * function's max() is what enforces "you cannot earn from both tokens at
+   * once", so summing its output made the two tokens mutually exclusive only
+   * WITHIN one wallet. Splitting them across two linked wallets doubled the
+   * rate: 10,000 new + 40 legacy together read 10,000, but apart read
+   * 10,000 + 10,000 = 20,000. At the sweet spot (12.5M new + 50k legacy) that
+   * minted +12,500 pixels/day from nothing, for the price of one dust transfer.
+   *
+   * The cap did not save it — a cap bounds the top end, and the exploit works
+   * precisely by walking a holder UP to the cap they were not entitled to.
+   *
+   * Doing it at the account level restores the invariant the module claims:
+   * holding both earns exactly what holding the larger one alone would, no
+   * matter how the balances are arranged across an account's wallets.
+   */
+  const wallets = [address, ...extra];
+  const freshes = await Promise.all(
+    wallets.map((a) => wholeBalance(PIXELS_TOKEN_ADDRESS, a).catch(() => BigInt(0)))
   );
-  return all.reduce((sum, v) => sum + v, BigInt(0));
+  const fresh = freshes.reduce((s, v) => s + v, BigInt(0));
+  if (!migrationWindowOpen()) return fresh;
+
+  // a legacy read failing must never zero a live balance
+  const legacies = await Promise.all(
+    wallets.map((a) => wholeBalance(PIXELS_LEGACY_TOKEN_ADDRESS, a).catch(() => BigInt(0)))
+  );
+  const legacyEquivalent = legacies.reduce((s, v) => s + v, BigInt(0)) * LEGACY_PIXEL_RATIO;
+  return legacyEquivalent > fresh ? legacyEquivalent : fresh;
 }
 
 /**
