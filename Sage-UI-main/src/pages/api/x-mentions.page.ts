@@ -16,7 +16,7 @@ import { chatReply, critiqueReply } from '@/utilities/mentionBrain';
 import { resolveSubject, subjectImage } from '@/utilities/critique';
 import { getDropsPageData } from '@/prisma/functions';
 import { getSagePriceUsd } from '@/utilities/sagePrice';
-import { PUBLIC_SITE_URL, parameters } from '@/constants/config';
+import { PUBLIC_SITE_URL, parameters, TRADE_CHAIN_ID } from '@/constants/config';
 
 /**
  * One poll cycle of @SAGEARTXYZ mentions.
@@ -90,19 +90,37 @@ function artPrompt(tweetText: string): string {
  * query it never gets to make, and this keeps the conversational path free of
  * anything that touches money.
  */
+/** Whether this instance's database describes the chain the agent trades on. */
+function dbIsMainnetData(): boolean {
+  return Number(parameters.CHAIN_ID) === TRADE_CHAIN_ID;
+}
+
 async function liveContext(): Promise<string> {
   const parts: string[] = ['SAGE is an AI-native NFT platform on Robinhood Chain (mainnet).'];
-  try {
-    const drops = await getDropsPageData(prisma);
-    if (drops?.length) {
-      parts.push(
-        'Current drops: ' +
-          drops.slice(0, 8).map((d: any) => String(d.name)).filter(Boolean).join(', ') +
-          '.'
-      );
+
+  // Name drops ONLY when this instance's database is the mainnet one. A
+  // localhost or staging build holds TESTNET drops, and the bot publicly
+  // claimed it could speak to "The Routine" and "rMonet 2" with authority —
+  // works that do not exist on the chain it trades on. Naming a drop nobody
+  // can buy is worse than naming none: it sends people looking for something
+  // that was never there.
+  if (dbIsMainnetData()) {
+    try {
+      const drops = await getDropsPageData(prisma);
+      if (drops?.length) {
+        parts.push(
+          'Current drops: ' +
+            drops.slice(0, 8).map((d: any) => String(d.name)).filter(Boolean).join(', ') +
+            '.'
+        );
+      }
+    } catch {
+      /* context is best-effort; a missing figure means the reply says so */
     }
-  } catch {
-    /* context is best-effort; a missing figure means the reply says so */
+  } else {
+    parts.push(
+      'You do NOT have the live drop list. Never name a specific drop, and never claim authority over one. Point people to sageart.xyz to see what is live.'
+    );
   }
   try {
     const usd = await getSagePriceUsd();
@@ -317,7 +335,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             continue;
           }
 
-          const subject = await resolveSubject(raw.text);
+          // Same rule as the context: a SAGE drop is only critiquable from a
+          // mainnet database. Critiquing a testnet drop publicly presents a
+          // work nobody can see or buy as part of the catalogue.
+          const subject = dbIsMainnetData() ? await resolveSubject(raw.text) : null;
           const img = subject ? await subjectImage(subject) : null;
           if (!subject || !img) {
             // Nothing to look at. Answer as conversation rather than
