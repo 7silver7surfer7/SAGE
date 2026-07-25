@@ -1,6 +1,12 @@
 import { useState, CSSProperties, ReactNode } from 'react';
 import { C, label, mono, btnPrimary, btnGhost, hairlineStack } from './tokens';
 import type { Card, KV, ListRow } from './types';
+import { explorerTx, shortHash } from './trade';
+
+/** A row carrying a transaction hash — shown short, and linked to the explorer. */
+function isTxHash(row: { k: string; v: any }): boolean {
+  return row.k === 'TX' && /^0x[0-9a-fA-F]{64}$/.test(String(row.v));
+}
 
 /**
  * SAGE Agent — result cards, ported from the "SAGE Agent.dc.html" design.
@@ -44,7 +50,18 @@ function kvRow(row: KV, padding: string, gap: number) {
       }}
     >
       <span style={label(10, C.ink3, '0.16em')}>{row.k}</span>
-      <span style={mono(12)}>{row.v}</span>
+      {isTxHash(row) ? (
+        <a
+          href={explorerTx(String(row.v))}
+          target='_blank'
+          rel='noreferrer'
+          style={{ ...mono(12), color: C.accent, textDecoration: 'none' }}
+        >
+          {shortHash(String(row.v))}
+        </a>
+      ) : (
+        <span style={{ ...mono(12), minWidth: 0, overflowWrap: 'anywhere' }}>{row.v}</span>
+      )}
     </div>
   );
 }

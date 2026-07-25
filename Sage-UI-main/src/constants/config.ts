@@ -29,6 +29,28 @@ export const SAGE_PRICE_CHAIN_ID = 4663;
 export const SAGE_PRICE_FACTORY_ADDRESS = '0xeF0c6F3461A373B4b6703EeBc5d44bF3885a200f';
 export const SAGE_PRICE_ROUTER_ADDRESS = '0x9ae6208E6dad5AF7A48a87A621b921AbCC43F06d';
 
+// ── Robinhood mainnet as a TRADING venue ───────────────────────────────────
+// The agent always trades on mainnet, whatever NEXT_PUBLIC_APP_MODE the build
+// was made with — the same reasoning as the price constants above. Routing a
+// buy through `parameters` instead is what broke the first live order: a
+// staging build resolved SAGE to the mainnet address but signed against chain
+// 46630, where 0x1456… has no code, so ethers failed with a bare
+// `call revert exception` that told the user nothing. Testnet cannot be the
+// fallback either — SAGE was never launched on the testnet factory.
+export const TRADE_CHAIN_ID = SAGE_PRICE_CHAIN_ID;
+export const TRADE_CHAIN_NAME = 'Robinhood Chain';
+export const TRADE_RPC_URL = SAGE_PRICE_RPC_URL;
+export const TRADE_ROUTER_ADDRESS = SAGE_PRICE_ROUTER_ADDRESS;
+// Candidate factories, newest first. A token's curve state lives in the
+// storage of whichever factory launched it and can never be migrated, so
+// resolution WALKS this list instead of assuming the current one — that is
+// what makes an arbitrary token resolvable, not just SAGE.
+export const TRADE_FACTORY_ADDRESSES = [
+  '0xcF7BF8EB756849dc46f7eD26a7D5F4CA17616Cde', // current — LP-to-treasury, 2026-07-19
+  '0x6a22f6647b00022928bb103E66fA0a6659f7A64F', // pre-2026-07-19
+  SAGE_PRICE_FACTORY_ADDRESS, // original — SAGE graduated here
+];
+
 // The chain-wide DEX product (screener, pair pages, ext charts, indexer
 // sweeps) ships dark: every surface gates on this BUILD-TIME flag, off
 // unless the build sets NEXT_PUBLIC_DEX_ENABLED=true (deploy scripts pass

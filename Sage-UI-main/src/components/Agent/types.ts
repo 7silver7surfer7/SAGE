@@ -135,7 +135,11 @@ export interface Message {
 export interface ModelOption {
   id: string;
   label: string;
-  /** credit multiplier per turn */
+  /** published list price, USD per million INPUT tokens */
+  usdIn: number;
+  /** published list price, USD per million OUTPUT tokens */
+  usdOut: number;
+  /** credit multiplier per turn — derived from usdIn, not hand-set */
   rate: number;
   note: string;
 }
@@ -187,6 +191,9 @@ export interface Tier {
   title: string;
   credits: number;
   bonus?: string;
+  /** USD price — the denomination the tier is actually sold in */
   cost: string;
+  /** live ETH equivalent, quoted at the current rate; empty until it loads */
+  costEth?: string;
   note?: string;
 }

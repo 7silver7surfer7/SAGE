@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BotLink,
   Card,
@@ -13,8 +13,13 @@ import type {
 import { matchDrop, type AgentDrop } from './dropIndex';
 import type { AgentWallet } from './useAgentWallet';
 import { SAGE_PRICE_TOKEN_ADDRESS } from '@/constants/config';
+import { CREDIT_TIERS } from '@/constants/credits';
 
-/** The SAGE token the agent buys — the bonding-curve token, pinned in config. */
+/**
+ * Fallback only. Orders now carry their own token address, resolved and priced
+ * server-side; this covers a `buy_sage` intent from an older card still on
+ * screen. It is the MAINNET address, which is the chain the agent trades on.
+ */
 const SAGE_TOKEN = SAGE_PRICE_TOKEN_ADDRESS;
 
 /**
@@ -44,12 +49,35 @@ const SAGE_TOKEN = SAGE_PRICE_TOKEN_ADDRESS;
 
 const FEED_NOTE = 'SAMPLE FEED · NOT LIVE DATA';
 
-export const MODELS: ModelOption[] = [
-  { id: 'claude-opus-5', label: 'OPUS 5', rate: 5, note: 'DEEPEST REASONING' },
-  { id: 'claude-sonnet-5', label: 'SONNET 5', rate: 1, note: 'BALANCED · DEFAULT' },
-  { id: 'claude-fable-5', label: 'FABLE', rate: 1.6, note: 'CURATORIAL PROSE' },
-  { id: 'claude-haiku-4-5', label: 'HAIKU 4.5', rate: 0.3, note: 'FAST · CHEAPEST' },
+/** The model the picker starts on, by id — not by position in the list. */
+const DEFAULT_MODEL_ID = 'claude-sonnet-5';
+
+/**
+ * Published list prices, USD per million tokens.
+ *
+ * The design shipped invented multipliers (Opus 5×, Fable 1.6×, Haiku 0.3×)
+ * which do not match what these models actually cost — it billed Fable, the
+ * most expensive of the four, at under a third of Opus. Rates are therefore
+ * DERIVED from the real prices below rather than typed by hand, so the meter
+ * cannot drift from the price list again.
+ *
+ * Output is exactly 5× input for all four, which is what makes the single
+ * `rate` per model sound: the meter already weights output 5× (see `cost`
+ * below), so scaling by the input ratio prices both halves correctly.
+ * Sonnet is the unit — 1 credit ≈ 1k Sonnet input-equivalent tokens.
+ */
+const PRICES = [
+  { id: 'claude-fable-5', label: 'FABLE 5', usdIn: 10, usdOut: 50, note: 'HARDEST PROBLEMS' },
+  { id: 'claude-opus-5', label: 'OPUS 5', usdIn: 5, usdOut: 25, note: 'DEEPEST REASONING' },
+  { id: 'claude-sonnet-5', label: 'SONNET 5', usdIn: 2, usdOut: 10, note: 'BALANCED · DEFAULT' },
+  { id: 'claude-haiku-4-5', label: 'HAIKU 4.5', usdIn: 1, usdOut: 5, note: 'FAST · CHEAPEST' },
 ];
+const SONNET_USD_IN = PRICES.find((m) => m.id === DEFAULT_MODEL_ID)!.usdIn;
+
+export const MODELS: ModelOption[] = PRICES.map((m) => ({
+  ...m,
+  rate: m.usdIn / SONNET_USD_IN,
+}));
 
 // The drop catalogue is REAL — passed in from getStaticProps via the same
 // getDropsPageData() the /drops page uses, so the agent cannot describe a drop
@@ -65,11 +93,16 @@ const LISTINGS = [
 // Wallet figures are REAL — supplied by useAgentWallet (wagmi + the app's own
 // useSAGEAccount). Nothing about a balance is mocked here.
 
-const TIERS: Tier[] = [
-  { id: 'taste', title: 'Taste', credits: 500, cost: '0.006 ETH', note: 'A few sessions' },
-  { id: 'curator', title: 'Curator', credits: 2500, bonus: '+10%', cost: '0.028 ETH', note: 'Most popular' },
-  { id: 'patron', title: 'Patron', credits: 10000, bonus: '+20%', cost: '0.098 ETH', note: 'Heavy tool use' },
-];
+// One source for prices, shared with the API route that verifies payments.
+// Priced in USD; the ETH figure is filled in from the live quote below.
+const TIERS: Tier[] = CREDIT_TIERS.map((t) => ({
+  id: t.id,
+  title: t.title,
+  credits: t.credits,
+  cost: `$${t.usd.toFixed(2)}`,
+  note: t.note,
+  ...(t.bonus ? { bonus: t.bonus } : {}),
+}));
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
@@ -81,13 +114,34 @@ export interface AgentEngineOptions {
   startingCredits?: number;
 }
 
-export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentEngineOptions) {
+/** One assistant turn. `usage` is present only when the server actually billed. */
+interface AgentTurn {
+  steps: string[];
+  cards: Card[];
+  prose: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+    credits: number;
+    model: string;
+  };
+}
+
+export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngineOptions) {
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Zero until the server says otherwise. A new wallet genuinely has no
+  // credits, and seeding a balance here would show someone compute they never
+  // bought — the server would refuse the very first turn.
   const [credits, setCredits] = useState(startingCredits);
-  const [modelId, setModelId] = useState('claude-sonnet-5');
+  const [creditsLoaded, setCreditsLoaded] = useState(false);
+  const [buying, setBuying] = useState(false);
+  /** live ETH quote per tier id, from /api/credits */
+  const [tierEth, setTierEth] = useState<Record<string, number>>({});
+  const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
   const [modelOpen, setModelOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
 
@@ -101,24 +155,44 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
   const [payWith, setPayWith] = useState('eth');
   const [tierId, setTierId] = useState('curator');
 
-  const [txs, setTxs] = useState<TxRecord[]>([
-    {
-      title: 'Buy RMonet #128',
-      venue: 'SECONDARY · SAGE · ROBINHOOD CHAIN',
-      status: 'CONFIRMED',
-      hash: '0x8b12…44de',
-      amount: '0.1405 ETH',
-      via: 'CONSOLE',
-      when: '12 JUL',
-    },
-  ]);
-  const [owned, setOwned] = useState<Holding[]>([
-    { name: 'RMonet #128', venue: 'SAGE', chain: 'ROBINHOOD CHAIN', cost: 0.1405, when: '12 JUL' },
-  ]);
+  // Empty, not seeded. The ledger now records real signed transactions, and a
+  // fabricated row sitting next to a confirmed on-chain one reads as history.
+  const [txs, setTxs] = useState<TxRecord[]>([]);
+  const [owned, setOwned] = useState<Holding[]>([]);
   const [links, setLinks] = useState<BotLink[]>([
     { handle: '@collector_eth', wallet: '0x7F3a…9C21', perTweet: 0.5, daily: 2.0, spent: 0.35, scopes: 'BUY · MINT · SWAP' },
     { handle: '@nulldelta', wallet: '0x2Ba1…8fD0', perTweet: 0.1, daily: 0.4, spent: 0.0, scopes: 'BUY ONLY' },
   ]);
+
+  /**
+   * The authoritative balance comes from the server, per wallet. Refetched on
+   * every address change so switching accounts cannot carry the previous
+   * wallet's credits across.
+   */
+  useEffect(() => {
+    let live = true;
+    if (!wallet.connected) {
+      setCredits(0);
+      setCreditsLoaded(false);
+      return () => {
+        live = false;
+      };
+    }
+    fetch('/api/credits/')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!live) return;
+        setCredits(Number(d?.credits) || 0);
+        setCreditsLoaded(true);
+        const quotes: Record<string, number> = {};
+        for (const t of d?.tiers || []) if (t.eth) quotes[t.id] = t.eth;
+        setTierEth(quotes);
+      })
+      .catch(() => live && setCreditsLoaded(true));
+    return () => {
+      live = false;
+    };
+  }, [wallet.connected, wallet.address]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // late-bound: respond() closes over these before confirmIntent is declared
@@ -127,7 +201,8 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
   const seq = useRef(0);
   const nextId = () => ++seq.current;
 
-  const model = MODELS.find((m) => m.id === modelId) || MODELS[1];
+  const model =
+    MODELS.find((m) => m.id === modelId) || MODELS.find((m) => m.id === DEFAULT_MODEL_ID)!;
 
   const scrollToEnd = useCallback(() => {
     // next paint, so the just-appended message is measured
@@ -164,7 +239,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
    * into a dead end — the fallback is clearly labelled as sample data.
    */
   const respond = useCallback(
-    async (text: string): Promise<{ steps: string[]; cards: Card[]; prose: string }> => {
+    async (text: string): Promise<AgentTurn> => {
       try {
         const history = msgs
           .filter((m) => m.text)
@@ -196,6 +271,19 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
               return { ...c, id };
             }),
             prose: String(d.text || ''),
+            usage: d.usage,
+          };
+        }
+        if (r.status === 402) {
+          // Server refused the turn: the wallet is out of credits. This is the
+          // authoritative balance, so trust it over whatever is on screen.
+          const d = await r.json().catch(() => ({}));
+          setCredits(Number(d?.credits) || 0);
+          setBuyOpen(true);
+          return {
+            steps: [],
+            cards: [],
+            prose: 'You are out of compute credits. Top up to keep going — every turn is metered by the tokens it actually uses.',
           };
         }
         if (r.status === 401) {
@@ -215,7 +303,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
 
   /** Deterministic offline answer — used only when /api/agent is unreachable. */
   const localRespond = useCallback(
-    async (text: string): Promise<{ steps: string[]; cards: Card[]; prose: string }> => {
+    async (text: string): Promise<AgentTurn> => {
       const q = text.toLowerCase();
       const steps: string[] = [];
       const cards: Card[] = [];
@@ -346,25 +434,33 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
       scrollToEnd();
 
       try {
-        const { steps, cards, prose } = await respond(text);
-        // Meter exactly as the design does: ~1 credit per 1k tokens, output
-        // weighted 5×, scaled by the model's rate. Kept even while the
-        // responder is local so the accounting is already correct when a real
-        // model is wired in.
-        const inTok = Math.round((text.length + 1900) / 4) * (1 + steps.length);
-        const outTok = Math.round(prose.length / 4) + 60 * steps.length;
-        const cost = Math.max(1, Math.ceil(((inTok + outTok * 5) / 1000) * model.rate));
-        const balance = Math.max(0, credits - cost);
-        setCredits(balance);
-        patchLast((m) => {
-          m.thinking = false;
-          m.text = prose;
-          m.steps = steps;
-          m.cards = cards;
-          m.costLabel =
-            model.label + ' · ' + fmt(inTok) + ' TOK IN · ' + fmt(outTok) + ' OUT · −' + fmt(cost) + ' CR';
-          m.balanceLabel = 'BALANCE ' + fmt(balance) + ' CR';
-        });
+        const { steps, cards, prose, usage } = await respond(text);
+        // Billing is the SERVER's. It has the real token counts from the API
+        // response and has already debited the ledger; the previous estimate
+        // here (token counts guessed from string lengths) could not agree with
+        // what was actually charged. With no usage — the offline responder —
+        // nothing was spent, so nothing is shown.
+        if (usage) {
+          setCredits(usage.credits);
+          patchLast((m) => {
+            m.thinking = false;
+            m.text = prose;
+            m.steps = steps;
+            m.cards = cards;
+            m.costLabel =
+              (usage.model || model.label) +
+              ' · ' + fmt(usage.inputTokens) + ' TOK IN · ' + fmt(usage.outputTokens) +
+              ' OUT · −' + fmt(usage.cost) + ' CR';
+            m.balanceLabel = 'BALANCE ' + fmt(usage.credits) + ' CR';
+          });
+        } else {
+          patchLast((m) => {
+            m.thinking = false;
+            m.text = prose;
+            m.steps = steps;
+            m.cards = cards;
+          });
+        }
       } catch (e: any) {
         setError('AGENT ERROR · ' + (e?.message || 'request failed'));
         patchLast((m) => {
@@ -414,40 +510,63 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
           }))
         );
       try {
-        if (intent?.action !== 'buy_sage') throw new Error('unsupported order');
+        // buy_sage is the pre-multi-token intent; treat it as SAGE.
+        const isBuy = intent?.action === 'buy_token' || intent?.action === 'buy_sage';
+        const isSell = intent?.action === 'sell_token';
+        if (!isBuy && !isSell) throw new Error('unsupported order');
         setError('');
-        const { buyToken, buyOnPool, factoryContract } = await import('@/utilities/socialToken');
-        const token = SAGE_TOKEN;
-        // Same curve-vs-pool decision the token page makes.
-        let graduated = false;
-        try {
-          const curve = await factoryContract(wallet.signer, token).curves(token);
-          graduated = !!curve?.complete;
-        } catch {
-          /* unreadable curve state → take the curve path, which reverts safely */
-        }
+        const { buyAnyToken, sellAnyToken } = await import('@/utilities/socialToken');
+        const { ensureTradeChain, TRADE_VENUE } = await import('./trade');
+        const { ethers } = await import('ethers');
+
+        const token = intent.token || SAGE_TOKEN;
+        const symbol = intent.symbol || 'SAGE';
+
+        // Put the wallet on the trading chain FIRST and keep the signer it
+        // hands back — the original is still bound to the old network, and
+        // signing with it sends the order to whatever chain the user was on.
+        settle({
+          status: 'SIGNING',
+          byline: isSell ? 'APPROVE, THEN CONFIRM' : 'CONFIRM IN YOUR WALLET',
+        });
+        const signer = await ensureTradeChain(wallet.signer);
+
+        // Venue (curve vs pool) is resolved from chain state, not assumed.
         const eth = Number(intent.ethAmount);
-        const txHash = graduated
-          ? await buyOnPool(token, eth, wallet.signer)
-          : await buyToken(token, eth, wallet.signer);
-        settle({ status: 'CONFIRMED', byline: 'SIGNED BY YOU', rows: [{ k: 'TX', v: txHash }] });
+        const tokenAmount = Number(intent.tokenAmount);
+        const { hash, venue, quoted } = isSell
+          ? await sellAnyToken(token, tokenAmount, signer, undefined, TRADE_VENUE)
+          : await buyAnyToken(token, eth, signer, undefined, TRADE_VENUE);
+
+        settle({ status: 'CONFIRMED', byline: 'SIGNED BY YOU', rows: [{ k: 'TX', v: hash }] });
         setTxs((prev) =>
           [
             {
-              title: `Buy SAGE with ${eth} ETH`,
-              venue: graduated ? 'POOL · ROBINHOOD CHAIN' : 'CURVE · ROBINHOOD CHAIN',
+              title: isSell
+                ? `Sell ${tokenAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${symbol}`
+                : `Buy ${symbol} with ${eth} ETH`,
+              venue: (venue === 'pool' ? 'POOL' : 'CURVE') + ' · ROBINHOOD CHAIN',
               status: 'CONFIRMED',
-              hash: txHash,
-              amount: `${eth} ETH`,
+              hash,
+              amount: isSell
+                ? `${Number(ethers.utils.formatEther(quoted)).toFixed(6)} ETH`
+                : `${eth} ETH`,
               via: 'AGENT',
               when: 'JUST NOW',
             },
           ].concat(prev)
         );
       } catch (e: any) {
-        // A revert here is usually slippage protection doing its job.
-        settle({ status: 'FAILED', byline: (e?.message || 'rejected').slice(0, 80) });
-        setError('ORDER NOT SENT · ' + (e?.message || 'rejected').slice(0, 90));
+        // Wallet rejections are a normal outcome, not a fault — say so in the
+        // user's language. Everything else keeps the underlying reason, which
+        // resolveBuyVenue/ensureTradeChain already phrase readably.
+        const code = e?.code ?? e?.data?.originalError?.code;
+        const reason =
+          code === 4001 || code === 'ACTION_REJECTED'
+            ? 'declined in wallet'
+            : e?.reason || e?.message || 'rejected';
+        settle({ status: 'FAILED', byline: reason.slice(0, 80) });
+        setError('ORDER NOT SENT · ' + reason.slice(0, 90));
       }
     },
     [wallet.signer]
@@ -468,27 +587,81 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
   confirmIntentRef.current = confirmIntent;
   discardIntentRef.current = discardIntent;
 
+  /**
+   * Buy credits for real: pay the treasury in ETH, then have the server verify
+   * the payment on chain and credit the ledger.
+   *
+   * The client cannot grant itself anything here — it sends a transaction and
+   * reports the hash. Every figure that matters (tier, price, credits added)
+   * is decided server-side from the value actually received, so a tampered
+   * client can at most claim what it genuinely paid.
+   */
   const buyCredits = useCallback(
-    (tierId: string) => {
+    async (tierId: string) => {
       const t = TIERS.find((x) => x.id === tierId) || TIERS[1];
-      setTxs((prev) =>
-        [
-          {
-            title: fmt(t.credits) + ' compute credits',
-            venue: 'SAGE CREDIT DESK',
-            status: 'CONFIRMED',
-            hash: '0x41be…7d02',
-            amount: t.cost,
-            via: 'CONSOLE',
-            when: 'JUST NOW',
-          },
-        ].concat(prev)
-      );
-      setCredits((c) => c + t.credits);
-      setBuyOpen(false);
+      if (!wallet.signer) {
+        setError('CONNECT A WALLET TO BUY CREDITS');
+        return;
+      }
+      setBuying(true);
       setError('');
+      try {
+        const { ethers } = await import('ethers');
+        const { ensureTradeChain } = await import('./trade');
+        const { CREDIT_TREASURY } = await import('@/constants/credits');
+
+        // Re-quote NOW rather than trusting a figure fetched when the page
+        // loaded — prices are set in USD, so a stale ETH rate underpays and
+        // the server correctly refuses to credit it.
+        const q = await fetch('/api/credits/').then((r) => (r.ok ? r.json() : null));
+        const quoted = (q?.tiers || []).find((x: any) => x.id === t.id);
+        if (!quoted?.wei) throw new Error('could not price that tier — try again in a moment');
+
+        const signer = await ensureTradeChain(wallet.signer);
+        const tx = await signer.sendTransaction({
+          to: CREDIT_TREASURY,
+          value: ethers.BigNumber.from(quoted.wei),
+        });
+        setTxs((prev) =>
+          [
+            {
+              title: fmt(t.credits) + ' compute credits',
+              venue: 'SAGE CREDIT DESK · ROBINHOOD CHAIN',
+              status: 'PENDING',
+              hash: tx.hash,
+              amount: `${t.cost} · ${Number(quoted.eth).toFixed(6)} ETH`,
+              via: 'CONSOLE',
+              when: 'JUST NOW',
+            },
+          ].concat(prev)
+        );
+        await tx.wait(1);
+
+        const r = await fetch('/api/credits/', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ txHash: tx.hash }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d?.error || 'the payment could not be credited');
+
+        setCredits(Number(d.credits) || 0);
+        setTxs((prev) =>
+          prev.map((x) => (x.hash === tx.hash ? { ...x, status: 'CONFIRMED' } : x))
+        );
+        setBuyOpen(false);
+      } catch (e: any) {
+        const code = e?.code ?? e?.data?.originalError?.code;
+        const reason =
+          code === 4001 || code === 'ACTION_REJECTED'
+            ? 'declined in wallet'
+            : e?.reason || e?.message || 'payment failed';
+        setError('CREDITS NOT ADDED · ' + String(reason).slice(0, 90));
+      } finally {
+        setBuying(false);
+      }
     },
-    []
+    [wallet.signer]
   );
 
   const revoke = useCallback((handle: string) => {
@@ -652,25 +825,36 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
       '$25 of $sage using usdg',
     ],
 
-    tiers: TIERS,
+    tiers: TIERS.map((t) => ({
+      ...t,
+      // second line under the USD price, once the quote lands
+      costEth: tierEth[t.id] ? `${tierEth[t.id].toFixed(6)} ETH` : '',
+    })),
     buyCredits,
+    buying,
+    creditsLoaded,
     tierId,
     setTierId,
     payWith,
     setPayWith,
-    payOptions: [
-      { id: 'eth', label: 'ETH' },
-      // the design prices SAGE 15% cheaper to push payment into the token
-      { id: 'sage', label: 'SAGE · −15%' },
-    ],
-    buyCta: wallet.connected ? 'confirm purchase' : 'connect wallet to buy',
+    // ETH only. Paying in SAGE would need a price the server can trust when it
+    // verifies the payment; discounting against a client-supplied figure is a
+    // way to mint credits for free.
+    payOptions: [{ id: 'eth', label: 'ETH' }],
+    buyCta: buying
+      ? 'confirming…'
+      : wallet.connected
+      ? 'confirm purchase'
+      : 'connect wallet to buy',
     buyFootnote:
-      'Credits are non-transferable and never expire. Settled on Robinhood Chain. ' + FEED_NOTE,
+      'Credits are non-transferable and never expire. Paid in ETH and settled on Robinhood Chain.',
 
+    // No sample-feed disclaimer any more: drops, balances, quotes, orders and
+    // the credit meter are all live. The offline responder still labels itself
+    // when /api/agent is unreachable — see localRespond.
     footerLeft:
       (wallet.connected ? 'AGENT MAY ACT ON-CHAIN · YOU SIGN EVERY TX' : 'READ-ONLY · CONNECT A WALLET TO ACT') +
-      ' · METERED BY TOKENS · ' +
-      FEED_NOTE,
+      ' · METERED BY REAL TOKEN USAGE · ROBINHOOD MAINNET',
   };
 }
 

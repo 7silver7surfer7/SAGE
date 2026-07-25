@@ -10,80 +10,80 @@ datasource db {
 }
 
 model Drop {
-  id                               Int         @id @default(autoincrement())
-  name                             String
-  createdAt                        DateTime    @default(now())
-  approvedAt                       DateTime?
-  goLiveAt                         DateTime? // staged until this time; null = live once approved
-  approvedBy                       String?     @db.Char(42)
-  bannerImageS3Path                String
+  id                       Int                  @id @default(autoincrement())
+  name                     String
+  createdAt                DateTime             @default(now())
+  approvedAt               DateTime?
+  goLiveAt                 DateTime? // staged until this time; null = live once approved
+  approvedBy               String?              @db.Char(42)
+  bannerImageS3Path        String
   // Set only when the artist uploaded a VIDEO as the banner: bannerImageS3Path
   // is always a static first-frame poster (most banner surfaces — dashboard
   // cards, this drop's own social post preview thumbnail, etc. — render it
   // as a plain <img> and can't play video), while this holds the real clip
   // for the few surfaces that DO know how to play it (the drop's Twitter-
   // style announcement post on the social feed).
-  bannerVideoS3Path                String?
+  bannerVideoS3Path        String?
   // Custom ERC-721 ticker/symbol, set at drop creation. Only actually takes
   // effect the FIRST time this drop's artist deploys their shared NFT
   // contract (Open Edition / Auction mint into that one contract, and its
   // symbol is immutable once deployed) — ignored on every later drop by the
   // same artist, since there's nothing left to set. Null = auto-derive from
   // the artist's display name, same as before this field existed.
-  nftSymbol                        String?
-  description                      String
-  mobileCoverS3Path                String?
-  tileImageS3Path                  String?
-  featuredMediaS3Path              String?
-  artistAddress                    String      @db.Char(42)
+  nftSymbol                String?
+  description              String
+  mobileCoverS3Path        String?
+  tileImageS3Path          String?
+  featuredMediaS3Path      String?
+  artistAddress            String               @db.Char(42)
   // Per-drop artist display name override. Set once at drop creation and
   // frozen — does not track later profile renames or apply to other drops
   // by the same wallet. Null = show the artist's current profile username.
-  artistDisplayName                String?
+  artistDisplayName        String?
   // Secondary-sale royalty in PERCENT (12 = 12%). Stamped onto the artist's
   // NFT contract as basis points at drop deploy; each token minted for this
   // drop keeps the value permanently. Marketplace re-sales only — primary
   // sale splits are unaffected.
-  royaltyPercentage                Float       @default(10)
+  royaltyPercentage        Float                @default(10)
   // Payment currency for every game in this drop: "SAGE" (the ERC-20) or
   // "ETH" (native). Chosen at creation, baked into the game contracts at
   // deploy (on-chain: address(0) = SAGE, the 0xEeee..EEeE sentinel = ETH).
-  currency                         String      @default("SAGE")
+  currency                 String               @default("SAGE")
   // True for drops created through the SAGE Social self-serve launcher
   // (storage:'filebase' at creation) — distinguishes them from admin-curated
   // marketplace drops so their primary-sale split can differ (99% artist /
   // 1% platform vs the marketplace default) without touching the shared
   // SageConfig dial that marketplace drops still use.
-  isSocial                          Boolean     @default(false)
+  isSocial                 Boolean              @default(false)
   // Allowlist gating: when enabled, only wallets in AllowlistEntries may
   // mint/bid/buy (on-chain via a per-drop SageWhitelist contract for open
   // editions + lotteries; UI-gate for auctions). Editable pre- and post-deploy.
-  allowlistEnabled                 Boolean     @default(false)
-  whitelistContractAddress         String?     @db.Char(42) // deployed SageWhitelist; null until approval
+  allowlistEnabled         Boolean              @default(false)
+  whitelistContractAddress String?              @db.Char(42) // deployed SageWhitelist; null until approval
   // IP gate: minting requires claiming a spot first (one per IP, hashed) —
   // the claim auto-adds the wallet to the drop's on-chain whitelist, so
   // direct-contract mints from unclaimed wallets revert. Sybil SPEED BUMP,
   // not a wall (VPNs rotate IPs; shared IPs get one spot total).
-  ipGateEnabled                    Boolean     @default(false)
+  ipGateEnabled            Boolean              @default(false)
   // SAGE Social follow gate: when on, anyone who follows this drop's artist
   // on SAGE Social is auto-added to the drop's allowlist (DB + on-chain).
-  followGateEnabled                Boolean     @default(false)
+  followGateEnabled        Boolean              @default(false)
   // Gas-free gating (opt-in): when true, the drop's games deploy on the
   // VOUCHER contracts (voucherGated=true) instead of a per-drop SageWhitelist.
   // Eligibility (allowlist / IP-gate / follow-gate) still populates
   // DropAllowlistEntry, but nothing is written on-chain — the server signs a
   // per-wallet voucher at mint time and the minter redeems it themselves.
   // Zero platform gas. Default false = the classic whitelist path.
-  voucherGating                    Boolean     @default(false)
-  NftContract                      NftContract @relation("ContractDrops", fields:[artistAddress], references: [artistAddress])
-  ApprovedByUser                   User?       @relation("Drop_approvedByToUser", fields: [approvedBy], references: [walletAddress])
-  Auctions                         Auction[]
-  Lotteries                        Lottery[]
-  OpenEditions                     OpenEdition[]
-  CollectionMints                  CollectionMint[]
-  UserFavoriteDrops                User[]      @relation("userFavoriteDrops")
-  FeaturedDropConfig               Config?     @relation("ConfigFeaturedDrop")
-  AllowlistEntries                 DropAllowlistEntry[]
+  voucherGating            Boolean              @default(false)
+  NftContract              NftContract          @relation("ContractDrops", fields: [artistAddress], references: [artistAddress])
+  ApprovedByUser           User?                @relation("Drop_approvedByToUser", fields: [approvedBy], references: [walletAddress])
+  Auctions                 Auction[]
+  Lotteries                Lottery[]
+  OpenEditions             OpenEdition[]
+  CollectionMints          CollectionMint[]
+  UserFavoriteDrops        User[]               @relation("userFavoriteDrops")
+  FeaturedDropConfig       Config?              @relation("ConfigFeaturedDrop")
+  AllowlistEntries         DropAllowlistEntry[]
 }
 
 // First-party visitor analytics: one row per pageview beacon. Privacy-sane —
@@ -98,10 +98,11 @@ model SiteVisit {
   walletAddress String?  @db.Char(42)
   path          String   @db.VarChar(120)
   referrer      String?  @db.VarChar(120) // host only, never full URLs
-  country       String?  @db.Char(2)      // from Cloudflare's cf-ipcountry on prod
-  device        String   @db.VarChar(10)  // mobile | tablet | desktop
+  country       String?  @db.Char(2) // from Cloudflare's cf-ipcountry on prod
+  device        String   @db.VarChar(10) // mobile | tablet | desktop
   ipHash        String?  @db.Char(64)
   createdAt     DateTime @default(now())
+
   @@index([createdAt])
   @@index([visitorId, createdAt])
   @@index([path])
@@ -117,6 +118,7 @@ model MintIpClaim {
   ipHash        String   @db.Char(64) // sha256(salt + client ip), hex
   walletAddress String   @db.Char(42)
   createdAt     DateTime @default(now())
+
   @@unique([dropId, ipHash])
   @@unique([dropId, walletAddress])
 }
@@ -139,39 +141,39 @@ model FaucetClaim {
 // is no upfront Nft row per image — Nft rows materialize per mint (see
 // RegisterCollectionMint), keyed off the manifest paths.
 model CollectionMint {
-  id               Int       @id @default(autoincrement())
-  dropId           Int
-  collectionId     Int? // on-chain collection id (== id, set at deploy/approval)
-  contractAddress  String?   @db.Char(42)
+  id                 Int       @id @default(autoincrement())
+  dropId             Int
+  collectionId       Int? // on-chain collection id (== id, set at deploy/approval)
+  contractAddress    String?   @db.Char(42)
   // Dedicated per-drop SageNFT the collection mints into, named after the
   // DROP — external marketplaces title collections by ERC-721 name(), so
   // this makes each collection drop its own marketplace collection. Null =
   // legacy (minted into the artist's shared contract, e.g. rMonet).
-  nftContractAddress String? @db.Char(42)
+  nftContractAddress String?   @db.Char(42)
   // Custom ERC-721 ticker/symbol for the DEDICATED contract this collection
   // deploys (unlike Drop.nftSymbol, this always applies — every ZIP
   // collection gets its own fresh contract). Null = auto-derive from the
   // drop's name, same as before this field existed.
-  nftSymbol        String?
-  costTokens       Float     @default(0) // mint price in SAGE
-  maxSupply        Int // number of images == hard mint cap
-  limitPerUser     Int       @default(0) // 0 = unlimited
-  mintCount        Int       @default(0) // cached on-chain mint count
-  isLive           Boolean   @default(false)
-  startTime        DateTime
-  endTime          DateTime? // null = NO deadline — mint stays open until sold out
-  manifestId       String? // Arweave path-manifest txid (set when processing completes)
-  baseUri          String? // https://arweave.net/{manifestId}/ — token i's metadata at {i}.json
-  previewImagePath String? // first image's URL, for tiles/cards
-  status           String    @default("staging") // staging | processing | done | failed
-  progress         String? // JSON: { imagesTotal, imagesBundled, bundlesPosted: [txids], error? }
+  nftSymbol          String?
+  costTokens         Float     @default(0) // mint price in SAGE
+  maxSupply          Int // number of images == hard mint cap
+  limitPerUser       Int       @default(0) // 0 = unlimited
+  mintCount          Int       @default(0) // cached on-chain mint count
+  isLive             Boolean   @default(false)
+  startTime          DateTime
+  endTime            DateTime? // null = NO deadline — mint stays open until sold out
+  manifestId         String? // Arweave path-manifest txid (set when processing completes)
+  baseUri            String? // https://arweave.net/{manifestId}/ — token i's metadata at {i}.json
+  previewImagePath   String? // first image's URL, for tiles/cards
+  status             String    @default("staging") // staging | processing | done | failed
+  progress           String? // JSON: { imagesTotal, imagesBundled, bundlesPosted: [txids], error? }
   // JSON: { "<index>": { img: dataItemId, json: dataItemId, ext: "png" } } —
   // written as processing batches complete; doubles as the resume checkpoint
   // (DataItem ids are NOT reproducible across retries: Arweave RSA-PSS
   // signatures are randomized, so a re-signed item gets a new id) and as the
   // register-time lookup for each minted token's direct image URL.
-  pathMap          String?
-  Drop             Drop      @relation(fields: [dropId], references: [id])
+  pathMap            String?
+  Drop               Drop      @relation(fields: [dropId], references: [id])
 }
 
 model DropAllowlistEntry {
@@ -187,69 +189,71 @@ model DropAllowlistEntry {
 }
 
 model Lottery {
-  id                          Int        @id @default(autoincrement()) 
-  dropId                      Int    
-  isRefundable                Boolean    @default(false) 
-  isLive                      Boolean    @default(false)
-  contractAddress             String?    @db.Char(42)
-  costPerTicketTokens         Float      @default(0.0)
-  costPerTicketPoints         Int        @default(0)
-  maxTickets                  Int        @default(0)
-  maxTicketsPerUser           Int        @default(0)
-  whitelistId                 Int?
+  id                  Int          @id @default(autoincrement())
+  dropId              Int
+  isRefundable        Boolean      @default(false)
+  isLive              Boolean      @default(false)
+  contractAddress     String?      @db.Char(42)
+  costPerTicketTokens Float        @default(0.0)
+  costPerTicketPoints Int          @default(0)
+  maxTickets          Int          @default(0)
+  maxTicketsPerUser   Int          @default(0)
+  whitelistId         Int?
   // Gas-free gating: when true, this lottery has voucherGated=true set on-chain
   // and tickets are bought via buyTicketsWithVoucher (a signed per-wallet
   // voucher) instead of the whitelist. false = the classic whitelist path.
-  voucherGated                Boolean    @default(false)
-  prizesAwardedAt             DateTime?
-  endTime                     DateTime
-  startTime                   DateTime
-  Drop                        Drop       @relation(fields: [dropId], references: [id])
-  Whitelist                   Whitelist?  @relation(fields: [whitelistId], references: [id])
-  Nfts                        Nft[]
-  PrizeProofs                 PrizeProof[]  
-  Refunds                     Refund[] 
+  voucherGated        Boolean      @default(false)
+  prizesAwardedAt     DateTime?
+  endTime             DateTime
+  startTime           DateTime
+  Drop                Drop         @relation(fields: [dropId], references: [id])
+  Whitelist           Whitelist?   @relation(fields: [whitelistId], references: [id])
+  Nfts                Nft[]
+  PrizeProofs         PrizeProof[]
+  Refunds             Refund[]
 }
 
 model OpenEdition {
-  id              Int       @id @default(autoincrement())
+  id              Int      @id @default(autoincrement())
   dropId          Int
   nftId           Int
   editionId       Int? // on-chain open edition id (set at deploy/approval)
-  contractAddress String?   @db.Char(42)
-  costTokens      Float     @default(0) // price per mint in SAGE
-  costPoints      Int       @default(0) // price per mint in pixels
-  maxPerUser      Int       @default(0) // 0 = unlimited
-  mintCount       Int       @default(0) // cached on-chain mint count
-  isLive          Boolean   @default(false)
+  contractAddress String?  @db.Char(42)
+  costTokens      Float    @default(0) // price per mint in SAGE
+  costPoints      Int      @default(0) // price per mint in pixels
+  maxPerUser      Int      @default(0) // 0 = unlimited
+  mintCount       Int      @default(0) // cached on-chain mint count
+  isLive          Boolean  @default(false)
   // Gas-free gating: when true this edition lives on OPENEDITION_VOUCHER_ADDRESS
   // and mints ONLY via batchMintWithVoucher (a platform-signed per-wallet
   // voucher). false = the classic whitelist path on OPENEDITION_ADDRESS.
-  voucherGated    Boolean   @default(false)
+  voucherGated    Boolean  @default(false)
   startTime       DateTime
   endTime         DateTime
-  Drop            Drop      @relation(fields: [dropId], references: [id])
-  Nft             Nft       @relation(fields: [nftId], references: [id])
+  Drop            Drop     @relation(fields: [dropId], references: [id])
+  Nft             Nft      @relation(fields: [nftId], references: [id])
+
   @@unique([nftId])
 }
 
 model Auction {
-  id                    Int        @id @default(autoincrement())
-  dropId                Int        
-  lastUpdatedAt         DateTime?
-  minimumPrice          String?
-  settled               Boolean    @default(false)
-  startTime             DateTime
-  endTime               DateTime?
-  duration              Int?
-  isLive                Boolean    @default(false) 
-  nftId                 Int 
-  winnerAddress         String?     @db.Char(42)
-  claimedAt             DateTime?
-  contractAddress       String?   @db.Char(42)
-  Drop                  Drop @relation(fields: [dropId], references: [id])
-  Nft                   Nft  @relation(fields: [nftId], references: [id])
-  Bids                  BidHistory[]
+  id              Int          @id @default(autoincrement())
+  dropId          Int
+  lastUpdatedAt   DateTime?
+  minimumPrice    String?
+  settled         Boolean      @default(false)
+  startTime       DateTime
+  endTime         DateTime?
+  duration        Int?
+  isLive          Boolean      @default(false)
+  nftId           Int
+  winnerAddress   String?      @db.Char(42)
+  claimedAt       DateTime?
+  contractAddress String?      @db.Char(42)
+  Drop            Drop         @relation(fields: [dropId], references: [id])
+  Nft             Nft          @relation(fields: [nftId], references: [id])
+  Bids            BidHistory[]
+
   @@unique([nftId])
 }
 
@@ -262,72 +266,73 @@ model SplitEntry {
 }
 
 model Splitter {
-  id                     Int          @id @default(autoincrement())
-  splitterAddress        String?      @db.Char(42)
-  NftContract            NftContract[] @relation("Splitter")
-  SplitterEntries        SplitEntry[]
+  id              Int           @id @default(autoincrement())
+  splitterAddress String?       @db.Char(42)
+  NftContract     NftContract[] @relation("Splitter")
+  SplitterEntries SplitEntry[]
 }
 
 model Whitelist {
-  id               Int              @id @default(autoincrement())
-  contractAddress  String           @db.Char(42)
-  targetAddress    String?          @db.Char(42)
-  tokenId          Int?
-  minBalance       Int?
-  name             String
-  Type             WhitelistType
-  Lotteries        Lottery[]
+  id              Int           @id @default(autoincrement())
+  contractAddress String        @db.Char(42)
+  targetAddress   String?       @db.Char(42)
+  tokenId         Int?
+  minBalance      Int?
+  name            String
+  Type            WhitelistType
+  Lotteries       Lottery[]
 }
 
 model Nft {
-  id                       Int          @id @default(autoincrement())
-  tokenId                  Int?
-  name                     String
-  description              String
-  metadataPath             String?
-  arweavePath              String?
-  s3Path                   String
-  s3PathOptimized          String
+  id                Int          @id @default(autoincrement())
+  tokenId           Int?
+  name              String
+  description       String
+  metadataPath      String?
+  arweavePath       String?
+  s3Path            String
+  s3PathOptimized   String
   // "video" | "image" (null = legacy/image). s3Path/s3PathOptimized store
   // the real media either way — this just tells BaseMedia whether it's safe
   // to <video> it, since a Filebase/IPFS URL has no file extension to sniff
   // (unlike an arweave.net tx or a plain .mp4 path).
-  mediaType                String?
-  tags                     String?
-  width                    Int?
-  height                   Int?
-  numberOfEditions         Int          @default(0)
-  isHidden                 Boolean      @default(false)
-  lotteryId                Int?
-  price                    Float?
-  ownerAddress             String?      @db.Char(42)
-  artistAddress            String?      @db.Char(42)
+  mediaType         String?
+  tags              String?
+  width             Int?
+  height            Int?
+  numberOfEditions  Int          @default(0)
+  isHidden          Boolean      @default(false)
+  lotteryId         Int?
+  price             Float?
+  ownerAddress      String?      @db.Char(42)
+  artistAddress     String?      @db.Char(42)
   // Snapshot of the parent Drop's artistDisplayName (if any) at the moment
   // this Nft was created — frozen per-NFT for the same reason Drop's own
   // field is frozen: a later profile rename or a different drop by the same
   // wallet shouldn't retroactively change how an already-minted piece is
   // attributed. Null = fall back to the artist's live username.
-  artistDisplayName        String?
-  PrizeProof               PrizeProof[]
-  Auction                  Auction?
-  OpenEdition              OpenEdition?
-  Lottery                  Lottery?     @relation(fields: [lotteryId], references: [id])
-  NftContract              NftContract? @relation(fields: [artistAddress], references: [artistAddress])
-  Offers                   Offer[]   
+  artistDisplayName String?
+  PrizeProof        PrizeProof[]
+  Auction           Auction?
+  OpenEdition       OpenEdition?
+  Lottery           Lottery?     @relation(fields: [lotteryId], references: [id])
+  NftContract       NftContract? @relation(fields: [artistAddress], references: [artistAddress])
+  Offers            Offer[]
 }
 
 model NftContract {
-  artistAddress          String  @id @db.Char(42)
-  contractAddress        String? @db.Char(42)
+  artistAddress     String    @id @db.Char(42)
+  contractAddress   String?   @db.Char(42)
   // DEPRECATED — never read; superseded by Drop.royaltyPercentage (per-drop,
   // stamped on-chain at deploy). Kept to avoid a destructive column drop.
-  royaltyPercentage      Float       @default(0.0)
-  splitterId             Int?
-  Splitter               Splitter?   @relation("Splitter", fields: [splitterId], references: [id])
-  Artist                 User        @relation("ArtistContract", fields: [artistAddress], references: [walletAddress])
-  Drops                  Drop[]  @relation("ContractDrops")
-  ListingNfts            Nft[] 
-  @@unique([contractAddress])      
+  royaltyPercentage Float     @default(0.0)
+  splitterId        Int?
+  Splitter          Splitter? @relation("Splitter", fields: [splitterId], references: [id])
+  Artist            User      @relation("ArtistContract", fields: [artistAddress], references: [walletAddress])
+  Drops             Drop[]    @relation("ContractDrops")
+  ListingNfts       Nft[]
+
+  @@unique([contractAddress])
 }
 
 model PrizeProof {
@@ -342,6 +347,7 @@ model PrizeProof {
   Nft           Nft       @relation(fields: [nftId], references: [id])
   Lottery       Lottery   @relation(fields: [lotteryId], references: [id])
   User          User      @relation(fields: [winnerAddress], references: [walletAddress])
+
   @@id([lotteryId, winnerAddress, nftId])
 }
 
@@ -354,6 +360,7 @@ model TokenTransaction {
   assetType      AssetType
   id             Int       @id @default(autoincrement())
   txHash         String    @db.Char(66)
+
   @@index([from, to])
 }
 
@@ -366,17 +373,17 @@ model EarnedPoints {
 }
 
 model RewardType {
-  type               AssetType @id
-  rewardRate         Float
-  lastBlockInspected Int
-  chainId            Int
-  contract           String    @db.Char(42)
-  startingBlock      Int
-  positionSizeLimit  String    @default("0")
+  type                 AssetType @id
+  rewardRate           Float
+  lastBlockInspected   Int
+  chainId              Int
+  contract             String    @db.Char(42)
+  startingBlock        Int
+  positionSizeLimit    String    @default("0")
   // watermark for the pixels ACCRUAL pass (distinct from lastBlockInspected,
   // which tracks Transfer-event SCANNING): transactions at or below this
   // block are already folded into PixelAccrual rows
-  pointsBlockProcessed Int     @default(0)
+  pointsBlockProcessed Int       @default(0)
 }
 
 // Per-(holder, asset) pixels checkpoint. The updater used to reload the whole
@@ -391,85 +398,87 @@ model PixelAccrual {
   balance   String    @default("0") // wei, decimal string
   pixels    Float     @default(0)
   refTime   Int       @default(0) // unix seconds of last balance change; 0 = none yet
+
   @@unique([address, assetType])
 }
 
 model User {
-  walletAddress                 String        @id @db.Char(42)
-  email                         String?       @db.VarChar(40)
-  twitterUsername               String?       @db.VarChar(40)
-  instagramUsername             String?       @db.VarChar(40)
-  webpage                       String?       @db.VarChar(50)
-  mediumUsername                String?       @db.VarChar(40)
-  createdAt                     DateTime      @default(now())
-  role                          Role          @default(USER)
-  bio                           String?       @db.VarChar(1000)
-  location                      String?       @db.VarChar(60) // freeform, Twitter-style
+  walletAddress            String              @id @db.Char(42)
+  email                    String?             @db.VarChar(40)
+  twitterUsername          String?             @db.VarChar(40)
+  instagramUsername        String?             @db.VarChar(40)
+  webpage                  String?             @db.VarChar(50)
+  mediumUsername           String?             @db.VarChar(40)
+  createdAt                DateTime            @default(now())
+  role                     Role                @default(USER)
+  bio                      String?             @db.VarChar(1000)
+  location                 String?             @db.VarChar(60) // freeform, Twitter-style
   // One pinned post shown at the top of the profile, Twitter-style. Must be
   // one of the user's OWN posts (enforced server-side); null = nothing pinned.
-  pinnedPostId                   Int?          @unique
-  PinnedPost                     SocialPost?   @relation("PinnedPost", fields: [pinnedPostId], references: [id])
+  pinnedPostId             Int?                @unique
+  PinnedPost               SocialPost?         @relation("PinnedPost", fields: [pinnedPostId], references: [id])
   // Admin moderation: a banned wallet's profile 404s for everyone but admins,
   // their posts drop out of every feed, and every one of their drops is
   // delisted (approvedAt cleared) the moment the ban lands. On-chain state
   // (minted tokens, deployed contracts) is untouched — this is a platform
   // takedown, not a chain-level action.
-  bannedAt                       DateTime?
-  bannedReason                   String?       @db.VarChar(300)
-  bannedBy                       String?       @db.Char(42)
-  ashBalanceAtCreation          String        @default("0")
-  profilePicture                String?
-  country                       String?
-  state                         String?
-  bannerImageS3Path            	String?
-  receiveEmailNotification      Boolean       @default(true)
-  username                      String?       @db.VarChar(40)
+  bannedAt                 DateTime?
+  bannedReason             String?             @db.VarChar(300)
+  bannedBy                 String?             @db.Char(42)
+  ashBalanceAtCreation     String              @default("0")
+  profilePicture           String?
+  country                  String?
+  state                    String?
+  bannerImageS3Path        String?
+  receiveEmailNotification Boolean             @default(true)
+  username                 String?             @db.VarChar(40)
   // SAGE Social verified pfp: when the avatar was picked from an owned NFT,
   // this points at it. Verification is computed at READ time (owner must
   // still match and profilePicture must still be that NFT's image), so a
   // sold NFT or a custom re-upload silently un-verifies without any cron.
-  pfpNftId                      Int?
+  pfpNftId                 Int?
   // SAGE Social paid verification ($10 in SAGE to the platform treasury):
   // the checkmark + premium features (sell/collect posts, points-collect,
   // boost, DMs). Posting stays free.
-  verifiedAt                    DateTime?
-  verifiedTxHash                String?       @db.Char(66)
+  verifiedAt               DateTime?
+  verifiedTxHash           String?             @db.Char(66)
   // Referral gate: the invite code this wallet redeemed to join SAGE Social.
   // Null + role USER + unverified = can browse but not post yet.
-  invitedByCode                 String?
+  invitedByCode            String?
   // Set true the moment this wallet ever signs in through sage-mcp (the AI
   // agent MCP server) — see AGENT_SIWE_STATEMENT in [...nextauth].page.ts.
   // Drives the "Agent" badge on SAGE Social so humans aren't fooled into
   // treating an agent-run account as a person. Sticky: never reset to false,
   // since a wallet that has ever driven itself via MCP has demonstrated
   // agent capability regardless of which client signs in next.
-  isAgent                        Boolean       @default(false)
+  isAgent                  Boolean             @default(false)
   // Last time this wallet opened the Activity tab — drives the Twitter-style
   // unread counter on the Activity nav item (count of likes/reposts/tips/
   // collects/follows/replies directed at them since this timestamp). Null =
   // never opened, so everything counts as unread.
-  lastSeenActivityAt             DateTime?
-  SocialInviteCodes             SocialInviteCode[] @relation("InviteOwner")
-  SocialMessagesSent            SocialMessage[]    @relation("SocialMsgFrom")
-  SocialMessagesReceived        SocialMessage[]    @relation("SocialMsgTo")
-  SocialPointsSpends            SocialPointsSpend[]
-  SocialTokenLaunches           SocialTokenLaunch[]
-  SocialGroupChat               SocialGroupChat?
-  SocialNftEditions             SocialNftEdition[] @relation("SocialEditions")
-  DropsApproved                 Drop[]        @relation("Drop_approvedByToUser")
-  NftContract                   NftContract?  @relation("ArtistContract")
-  EarnedPoints                  EarnedPoints?
-  FavoriteDrops                 Drop[]        @relation("userFavoriteDrops")
-  Bids                          BidHistory[]
-  PrizeProofs                   PrizeProof[]
+  lastSeenActivityAt       DateTime?
+  SocialInviteCodes        SocialInviteCode[]  @relation("InviteOwner")
+  SocialMessagesSent       SocialMessage[]     @relation("SocialMsgFrom")
+  SocialMessagesReceived   SocialMessage[]     @relation("SocialMsgTo")
+  SocialPointsSpends       SocialPointsSpend[]
+  SocialTokenLaunches      SocialTokenLaunch[]
+  SocialGroupChat          SocialGroupChat?
+  SocialNftEditions        SocialNftEdition[]  @relation("SocialEditions")
+  DropsApproved            Drop[]              @relation("Drop_approvedByToUser")
+  NftContract              NftContract?        @relation("ArtistContract")
+  EarnedPoints             EarnedPoints?
+  FavoriteDrops            Drop[]              @relation("userFavoriteDrops")
+  Bids                     BidHistory[]
+  PrizeProofs              PrizeProof[]
   // SAGE Social: wallet == identity for the BlueSky-style network
-  SocialPosts                   SocialPost[]    @relation("SocialAuthor")
-  SocialLikes                   SocialLike[]
-  SocialReposts                 SocialRepost[]
-  Following                     SocialFollow[]  @relation("SocialFollower")
-  Followers                     SocialFollow[]  @relation("SocialFollowing")
-  @@index([walletAddress])
+  SocialPosts              SocialPost[]        @relation("SocialAuthor")
+  SocialLikes              SocialLike[]
+  SocialReposts            SocialRepost[]
+  Following                SocialFollow[]      @relation("SocialFollower")
+  Followers                SocialFollow[]      @relation("SocialFollowing")
+
   @@unique([username])
+  @@index([walletAddress])
 }
 
 // ─────────────────────────── SAGE Social ───────────────────────────
@@ -477,69 +486,70 @@ model User {
 // tipped in SAGE tokens, and avatars are the user's (NFT) profilePicture.
 
 model SocialPost {
-  id           Int            @id @default(autoincrement())
-  authorAddress String        @db.Char(42)
-  Author       User           @relation("SocialAuthor", fields: [authorAddress], references: [walletAddress])
-  PinnedByUser User?          @relation("PinnedPost")
-  text         String         @db.VarChar(500)
-  imageUrl     String?        // optional media (S3 URL from /api/social-upload)
-  mediaType    String?        // "image" | "video" (null = legacy/image)
-  createdAt    DateTime       @default(now())
+  id              Int             @id @default(autoincrement())
+  authorAddress   String          @db.Char(42)
+  Author          User            @relation("SocialAuthor", fields: [authorAddress], references: [walletAddress])
+  PinnedByUser    User?           @relation("PinnedPost")
+  text            String          @db.VarChar(500)
+  imageUrl        String? // optional media (S3 URL from /api/social-upload)
+  mediaType       String? // "image" | "video" (null = legacy/image)
+  createdAt       DateTime        @default(now())
   // soft delete: history (tips/leaderboards) stays intact, feeds filter it
   // out, GetPost 404s. Posts with collects can NEVER be deleted — the minted
   // NFTs' tokenURI metadata lives at this row.
-  deletedAt    DateTime?
+  deletedAt       DateTime?
   // editing is a VERIFIED-only perk (Twitter Blue style); set on every edit
   // so the card can show an "edited" label
-  editedAt     DateTime?
+  editedAt        DateTime?
   // reply threading (self-relation); null = top-level post
-  replyToId    Int?
-  ReplyTo      SocialPost?    @relation("SocialReplies", fields: [replyToId], references: [id], onDelete: Cascade)
-  Replies      SocialPost[]   @relation("SocialReplies")
+  replyToId       Int?
+  ReplyTo         SocialPost?     @relation("SocialReplies", fields: [replyToId], references: [id], onDelete: Cascade)
+  Replies         SocialPost[]    @relation("SocialReplies")
   // denormalized counters kept in sync on write (cheap reads on the feed)
-  likeCount    Int            @default(0)
-  repostCount  Int            @default(0)
-  replyCount   Int            @default(0)
-  tipTotal     Float          @default(0) // total SAGE tipped to this post
-  tipTotalEth  Float          @default(0) // total native ETH tipped to this post
+  likeCount       Int             @default(0)
+  repostCount     Int             @default(0)
+  replyCount      Int             @default(0)
+  tipTotal        Float           @default(0) // total SAGE tipped to this post
+  tipTotalEth     Float           @default(0) // total native ETH tipped to this post
   // Currency the author sells this post in when collectible ("SAGE" | "ETH"),
   // mirroring the per-drop currency pattern. Points-collect is SAGE-only.
-  collectCurrency String      @default("SAGE")
+  collectCurrency String          @default("SAGE")
   // burn-to-boost (Twitter-style, SOFT): a boost is a budget × duration
   // campaign that gently lifts the post in the ranked feed for its window,
   // then fades. boostedAt..boostedUntil is the active window; boostStrength
   // (set from the daily budget) is the max soft rank bonus, decayed linearly
   // across the window in getFeed. Verified on-chain server-side (SAGE burn).
-  boostedAt    DateTime?
-  boostedUntil DateTime?
-  boostStrength Float         @default(0)
-  boostBurned  Float          @default(0) // lifetime SAGE burned on this post
+  boostedAt       DateTime?
+  boostedUntil    DateTime?
+  boostStrength   Float           @default(0)
+  boostBurned     Float           @default(0) // lifetime SAGE burned on this post
   // collect-as-NFT: author sets a SAGE price (0 = free collect); each collect
   // pays the author directly and server-mints the post into the platform's
   // "SAGE Social" SageNFT contract.
-  collectPrice Float?
-  collectCount Int            @default(0)
+  collectPrice    Float?
+  collectCount    Int             @default(0)
   // link preview (Twitter-style card): the first URL in the text is unfurled
   // server-side at post time (OG tags / oEmbed) and frozen here
-  linkUrl      String?        @db.VarChar(500)
-  linkTitle    String?        @db.VarChar(200)
-  linkDesc     String?        @db.VarChar(300)
-  linkImage    String?        @db.VarChar(500)
+  linkUrl         String?         @db.VarChar(500)
+  linkTitle       String?         @db.VarChar(200)
+  linkDesc        String?         @db.VarChar(300)
+  linkImage       String?         @db.VarChar(500)
   // Twitter-style DROP posts: the post is the storefront — likes/replies/
   // shares work as usual, the CTA drives to the auction/mint
-  dropId       Int?
-  dropKind     String?        // "auction" | "openEdition" | "collection"
-  dropPrice    Float?         // reserve (auction) / mint price, in the drop's currency
+  dropId          Int?
+  dropKind        String? // "auction" | "openEdition" | "collection"
+  dropPrice       Float? // reserve (auction) / mint price, in the drop's currency
   // quote-reposts: a new post that embeds another as a card (self-relation)
-  quotedPostId Int?
-  Quoted       SocialPost?    @relation("SocialQuotes", fields: [quotedPostId], references: [id], onDelete: SetNull)
-  Quotes       SocialPost[]   @relation("SocialQuotes")
-  quoteCount   Int            @default(0)
-  Likes        SocialLike[]
-  Reposts      SocialRepost[]
-  Tips         SocialTip[]
-  Boosts       SocialBoost[]
-  Collects     SocialCollect[]
+  quotedPostId    Int?
+  Quoted          SocialPost?     @relation("SocialQuotes", fields: [quotedPostId], references: [id], onDelete: SetNull)
+  Quotes          SocialPost[]    @relation("SocialQuotes")
+  quoteCount      Int             @default(0)
+  Likes           SocialLike[]
+  Reposts         SocialRepost[]
+  Tips            SocialTip[]
+  Boosts          SocialBoost[]
+  Collects        SocialCollect[]
+
   @@index([createdAt])
   @@index([authorAddress])
   @@index([replyToId])
@@ -553,6 +563,7 @@ model SocialHashtag {
   postId    Int
   tag       String   @db.VarChar(80)
   createdAt DateTime @default(now())
+
   @@index([tag, createdAt])
   @@index([postId])
 }
@@ -563,25 +574,28 @@ model SocialFollow {
   createdAt        DateTime @default(now())
   Follower         User     @relation("SocialFollower", fields: [followerAddress], references: [walletAddress])
   Following        User     @relation("SocialFollowing", fields: [followingAddress], references: [walletAddress])
+
   @@id([followerAddress, followingAddress])
   @@index([followingAddress])
 }
 
 model SocialLike {
-  postId       Int
-  userAddress  String     @db.Char(42)
-  createdAt    DateTime   @default(now())
-  Post         SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  User         User       @relation(fields: [userAddress], references: [walletAddress])
+  postId      Int
+  userAddress String     @db.Char(42)
+  createdAt   DateTime   @default(now())
+  Post        SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  User        User       @relation(fields: [userAddress], references: [walletAddress])
+
   @@id([postId, userAddress])
 }
 
 model SocialRepost {
-  postId       Int
-  userAddress  String     @db.Char(42)
-  createdAt    DateTime   @default(now())
-  Post         SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  User         User       @relation(fields: [userAddress], references: [walletAddress])
+  postId      Int
+  userAddress String     @db.Char(42)
+  createdAt   DateTime   @default(now())
+  Post        SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  User        User       @relation(fields: [userAddress], references: [walletAddress])
+
   @@id([postId, userAddress])
 }
 
@@ -590,11 +604,12 @@ model SocialTip {
   postId      Int
   fromAddress String     @db.Char(42)
   toAddress   String     @db.Char(42)
-  amount      Float      // amount in `currency`
+  amount      Float // amount in `currency`
   currency    String     @default("SAGE") // "SAGE" | "ETH"
-  txHash      String     @db.Char(66) @unique // one credit per on-chain transfer
+  txHash      String     @unique @db.Char(66) // one credit per on-chain transfer
   createdAt   DateTime   @default(now())
   Post        SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
   @@index([postId])
 }
 
@@ -602,11 +617,12 @@ model SocialBoost {
   id          Int        @id @default(autoincrement())
   postId      Int
   fromAddress String     @db.Char(42)
-  amount      Float      // SAGE burned
-  hours       Float      // boost duration this burn bought
-  txHash      String     @db.Char(66) @unique // one credit per on-chain burn
+  amount      Float // SAGE burned
+  hours       Float // boost duration this burn bought
+  txHash      String     @unique @db.Char(66) // one credit per on-chain burn
   createdAt   DateTime   @default(now())
   Post        SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
   @@index([postId])
 }
 
@@ -629,37 +645,38 @@ model SocialTreasuryTxClaim {
 // on-chain state (SocialTokenFactory) for the profile buy widget; the chain
 // is the source of truth for reserves/price (read live).
 model SocialTokenLaunch {
-  id              Int      @id @default(autoincrement())
+  id                  Int      @id @default(autoincrement())
   // creators can launch many tokens; the FIRST (lowest id) is the profile token
-  creatorAddress  String   @db.Char(42)
-  Creator         User     @relation(fields: [creatorAddress], references: [walletAddress])
-  tokenAddress    String   @unique @db.Char(42)
-  name            String   @db.VarChar(40)
-  symbol          String   @db.VarChar(12)
-  launchTxHash    String   @db.Char(66)
-  imageUrl        String?  // optional token art (S3)
-  bannerUrl       String?  // optional wide banner shown on the token page (pump.fun-style)
-  description     String?  @db.VarChar(300) // pump.fun-style one-liner
-  website         String?  @db.VarChar(120) // project link shown next to the description
+  creatorAddress      String   @db.Char(42)
+  Creator             User     @relation(fields: [creatorAddress], references: [walletAddress])
+  tokenAddress        String   @unique @db.Char(42)
+  name                String   @db.VarChar(40)
+  symbol              String   @db.VarChar(12)
+  launchTxHash        String   @db.Char(66)
+  imageUrl            String? // optional token art (S3)
+  bannerUrl           String? // optional wide banner shown on the token page (pump.fun-style)
+  description         String?  @db.VarChar(300) // pump.fun-style one-liner
+  website             String?  @db.VarChar(120) // project link shown next to the description
   // Social links, DexScreener token-info style. Editable post-launch by the
   // creator via UpdateTokenInfo (unlike everything above, which is launch-
   // frozen); shown on the token page header and the DEX screener.
-  twitter         String?  @db.VarChar(120)
-  telegram        String?  @db.VarChar(120)
-  discord         String?  @db.VarChar(120)
+  twitter             String?  @db.VarChar(120)
+  telegram            String?  @db.VarChar(120)
+  discord             String?  @db.VarChar(120)
   // pump.fun-style opt-out: false = the creator holds ZERO tokens at launch
   // (no airdrop allocation), so the coin cannot be dumped on followers
-  airdropEnabled  Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  airdropCount    Int      @default(0) // followers airdropped to (cumulative)
+  airdropEnabled      Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  airdropCount        Int      @default(0) // followers airdropped to (cumulative)
   // post-graduation swap indexing cursor: last pair block scanned into
   // SocialTokenTrade (null = pool never scanned). Int gives ~6y headroom at
   // this chain's ~0.1s blocks (13.9M as of 2026-07); revisit before 2.1B.
-  poolSyncedBlock Int?
+  poolSyncedBlock     Int?
   // Transfer-recipient indexing cursor: last block scanned into
   // SocialTokenTransferee (null = never scanned; first sweep binary-searches
   // the token contract's creation block). Same headroom note as above.
   transferSyncedBlock Int?
+
   @@index([createdAt])
   @@index([creatorAddress])
 }
@@ -674,6 +691,7 @@ model SocialTokenTransferee {
   id           Int    @id @default(autoincrement())
   tokenAddress String @db.Char(42)
   address      String @db.Char(42)
+
   @@unique([tokenAddress, address])
 }
 
@@ -681,20 +699,21 @@ model SocialTokenTransferee {
 // project mints). Chain is the source of truth for minted counts; this row
 // powers discovery and the profile mint widget.
 model SocialNftEdition {
-  id              Int      @id @default(autoincrement())
-  artistAddress   String   @db.Char(42)
-  Artist          User     @relation("SocialEditions", fields: [artistAddress], references: [walletAddress])
-  editionAddress  String   @unique @db.Char(42)
-  name            String   @db.VarChar(60)
-  symbol          String   @db.VarChar(12)
-  imageUrl        String   // edition art (S3, compressed)
-  priceEth        Float
-  maxSupply       Int
-  launchTxHash    String   @db.Char(66)
-  createdAt       DateTime @default(now())
+  id             Int       @id @default(autoincrement())
+  artistAddress  String    @db.Char(42)
+  Artist         User      @relation("SocialEditions", fields: [artistAddress], references: [walletAddress])
+  editionAddress String    @unique @db.Char(42)
+  name           String    @db.VarChar(60)
+  symbol         String    @db.VarChar(12)
+  imageUrl       String // edition art (S3, compressed)
+  priceEth       Float
+  maxSupply      Int
+  launchTxHash   String    @db.Char(66)
+  createdAt      DateTime  @default(now())
   // creator pressed "Stop mint": the UI hides/disables minting. (UI gate —
   // the on-chain contract keeps its hard cap regardless.)
-  haltedAt        DateTime?
+  haltedAt       DateTime?
+
   @@index([artistAddress])
   @@index([createdAt])
 }
@@ -706,12 +725,13 @@ model SocialTokenTrade {
   id           Int      @id @default(autoincrement())
   tokenAddress String   @db.Char(42)
   trader       String   @db.Char(42)
-  side         String   // "buy" | "sell"
-  ethAmount    Float    // ETH in (buy) or out (sell), net of fee
-  tokenAmount  Float    // tokens received (buy) or sold (sell)
-  priceEth     Float    // ETH per 1M tokens at this trade (for the chart)
+  side         String // "buy" | "sell"
+  ethAmount    Float // ETH in (buy) or out (sell), net of fee
+  tokenAmount  Float // tokens received (buy) or sold (sell)
+  priceEth     Float // ETH per 1M tokens at this trade (for the chart)
   txHash       String   @unique @db.Char(66)
   createdAt    DateTime @default(now())
+
   @@index([tokenAddress, id])
   @@index([tokenAddress, trader])
 }
@@ -720,9 +740,10 @@ model SocialTokenTrade {
 // their own profile. ref is the contract or item address (lowercased).
 model SocialHiddenItem {
   ownerAddress String   @db.Char(42)
-  kind         String   // "token" | "edition" | "nft"
-  ref          String   // address or "contract:tokenId"
+  kind         String // "token" | "edition" | "nft"
+  ref          String // address or "contract:tokenId"
   createdAt    DateTime @default(now())
+
   @@id([ownerAddress, kind, ref])
   @@index([ownerAddress])
 }
@@ -731,10 +752,10 @@ model SocialCollect {
   id               Int        @id @default(autoincrement())
   postId           Int
   collectorAddress String     @db.Char(42)
-  amount           Float      // paid to the author in `currency` (0 = free/points collect)
+  amount           Float // paid to the author in `currency` (0 = free/points collect)
   currency         String     @default("SAGE") // "SAGE" | "ETH"
-  pointsSpent      BigInt?    // pixels burned instead of SAGE (verified users)
-  payTxHash        String?    @db.Char(66) @unique // null for free collects
+  pointsSpent      BigInt? // pixels burned instead of SAGE (verified users)
+  payTxHash        String?    @unique @db.Char(66) // null for free collects
   // Nullable so a row can be created as an atomic CLAIM (using the
   // @@unique([postId, collectorAddress]) below as the race guard) BEFORE the
   // slow verify-payment + on-chain-mint work runs, then filled in once
@@ -748,6 +769,7 @@ model SocialCollect {
   tokenId          Int?
   createdAt        DateTime   @default(now())
   Post             SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
   @@unique([postId, collectorAddress]) // one edition per wallet
   @@index([postId])
   @@index([collectorAddress])
@@ -757,12 +779,13 @@ model SocialCollect {
 // require redeeming an invite code. Codes auto-provision per user; verified
 // users get more. The code doubles as the share slug: /invite/{code}.
 model SocialInviteCode {
-  code          String   @id // e.g. SAGE-7F3K2A
-  ownerAddress  String   @db.Char(42)
-  Owner         User     @relation("InviteOwner", fields: [ownerAddress], references: [walletAddress])
-  maxUses       Int      @default(5)
-  uses          Int      @default(0)
-  createdAt     DateTime @default(now())
+  code         String   @id // e.g. SAGE-7F3K2A
+  ownerAddress String   @db.Char(42)
+  Owner        User     @relation("InviteOwner", fields: [ownerAddress], references: [walletAddress])
+  maxUses      Int      @default(5)
+  uses         Int      @default(0)
+  createdAt    DateTime @default(now())
+
   @@index([ownerAddress])
 }
 
@@ -770,10 +793,10 @@ model SocialInviteCode {
 // owner's FOLLOWERS are the members — follow to enter, talk alpha. The owner
 // can switch it off (enabled=false hides it and blocks posting).
 model SocialGroupChat {
-  ownerAddress String   @id @db.Char(42)
-  Owner        User     @relation(fields: [ownerAddress], references: [walletAddress])
-  enabled      Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  ownerAddress String               @id @db.Char(42)
+  Owner        User                 @relation(fields: [ownerAddress], references: [walletAddress])
+  enabled      Boolean              @default(true)
+  createdAt    DateTime             @default(now())
   Messages     SocialGroupMessage[]
 }
 
@@ -784,6 +807,7 @@ model SocialGroupMessage {
   fromAddress  String          @db.Char(42)
   text         String          @db.VarChar(1000)
   createdAt    DateTime        @default(now())
+
   @@index([ownerAddress, id])
 }
 
@@ -798,6 +822,7 @@ model SocialMessage {
   text        String    @db.VarChar(1000)
   createdAt   DateTime  @default(now())
   readAt      DateTime?
+
   @@index([toAddress, readAt])
   @@index([fromAddress, toAddress, id])
   @@index([toAddress, fromAddress, id])
@@ -809,28 +834,28 @@ model SocialPointsSpend {
   id        Int      @id @default(autoincrement())
   address   String   @db.Char(42)
   User      User     @relation(fields: [address], references: [walletAddress])
-  amount    BigInt   // pixels spent
-  reason    String   // e.g. "collect:123"
+  amount    BigInt // pixels spent
+  reason    String // e.g. "collect:123"
   createdAt DateTime @default(now())
+
   @@index([address])
 }
 
 model Offer {
-  id                       Int    @id @default(autoincrement())
-  signer                   String @db.Char(42)
-  nftContractAddress       String @db.Char(42)
-  price                    Float
-  nftId                    Int
-  expiresAt                Int
-  isSellOffer              Boolean
-  signedOffer              String
+  id                 Int        @id @default(autoincrement())
+  signer             String     @db.Char(42)
+  nftContractAddress String     @db.Char(42)
+  price              Float
+  nftId              Int
+  expiresAt          Int
+  isSellOffer        Boolean
+  signedOffer        String
   // Currency the offer was SIGNED in ("SAGE" | "ETH") — part of the signed
   // message on the new marketplace contract, so it must be replayed exactly.
   // ETH is only valid for sell offers (listings); buy offers are SAGE-only.
-  currency                 String @default("SAGE")
-  state                    OfferState @default(ACTIVE)
-  Nft                      Nft   @relation(fields:[nftId], references: [id])
-
+  currency           String     @default("SAGE")
+  state              OfferState @default(ACTIVE)
+  Nft                Nft        @relation(fields: [nftId], references: [id])
 }
 
 enum OfferState {
@@ -841,18 +866,20 @@ enum OfferState {
 }
 
 model Config {
-  id              Int    @id @default(autoincrement())
-  featuredDropId  Int?
-  FeaturedDrop    Drop?  @relation("ConfigFeaturedDrop", fields:[featuredDropId], references:[id])
-  welcomeMessage  String
-  gasLimitForTxs  Int
+  id             Int    @id @default(autoincrement())
+  featuredDropId Int?
+  FeaturedDrop   Drop?  @relation("ConfigFeaturedDrop", fields: [featuredDropId], references: [id])
+  welcomeMessage String
+  gasLimitForTxs Int
+
   @@unique([featuredDropId])
 }
 
 model Follow {
-  walletAddress                 String @db.Char(42)
-  followedAddress               String @db.Char(42)
-  @@id([walletAddress, followedAddress])  
+  walletAddress   String @db.Char(42)
+  followedAddress String @db.Char(42)
+
+  @@id([walletAddress, followedAddress])
 }
 
 enum AssetType {
@@ -881,38 +908,40 @@ enum SaleEventType {
 }
 
 model SaleEvent {
-  id              Int    @id @default(autoincrement())
-  eventType       SaleEventType
-  eventId         Int    // lotteryId | auctionId | nftId
-  seller          String @db.Char(42) // artistAddress
-  buyer           String @db.Char(42)
-  amountTokens    Float // ASH
-  amountPoints    Int?
-  amountUSD       Float?
-  txHash          String? @db.Char(66)
-  blockTimestamp  Int
+  id             Int           @id @default(autoincrement())
+  eventType      SaleEventType
+  eventId        Int // lotteryId | auctionId | nftId
+  seller         String        @db.Char(42) // artistAddress
+  buyer          String        @db.Char(42)
+  amountTokens   Float // ASH
+  amountPoints   Int?
+  amountUSD      Float?
+  txHash         String?       @db.Char(66)
+  blockTimestamp Int
 }
 
 model Refund {
-  id               Int @id @default(autoincrement())
-  buyer            String @db.Char(42)
+  id               Int     @id @default(autoincrement())
+  buyer            String  @db.Char(42)
   lotteryId        Int
   refundableTokens Float
   blockTimestamp   Int?
   txHash           String? @db.Char(66)
   Lottery          Lottery @relation(fields: [lotteryId], references: [id])
-  @@unique([buyer,lotteryId])
+
+  @@unique([buyer, lotteryId])
 }
 
 model BidHistory {
-  id                    Int        @id @default(autoincrement())
-  auctionId             Int
-  bidderAddress         String @db.Char(42)
-  amount                Float
-  blockTimestamp        Int
-  Auction               Auction @relation(fields: [auctionId], references: [id])
-  Bidder                User @relation(fields: [bidderAddress], references: [walletAddress])
+  id             Int     @id @default(autoincrement())
+  auctionId      Int
+  bidderAddress  String  @db.Char(42)
+  amount         Float
+  blockTimestamp Int
+  Auction        Auction @relation(fields: [auctionId], references: [id])
+  Bidder         User    @relation(fields: [bidderAddress], references: [walletAddress])
 }
+
 // ─── Off-chain pixels ledger (migration prep, 2026-07-20) ────────────────────
 // Mirrors SagePoints v3's exact streaming design so accrual needs NO writes:
 // points-at-read-time = settled + min(checkpointSage, cap) × rate × elapsed.
@@ -922,11 +951,11 @@ model BidHistory {
 // verbatim, so the math continues seamlessly from the same state. While
 // PIXELS_SOURCE=chain (the default) these tables are shadow-only.
 model PixelAccount {
-  walletAddress String   @id @db.Char(42)
-  settled       BigInt   @default(0) // banked whole pixels
-  checkpointSage BigInt  @default(0) // whole SAGE sustained since lastSync
-  lastSync      DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  walletAddress  String   @id @db.Char(42)
+  settled        BigInt   @default(0) // banked whole pixels
+  checkpointSage BigInt   @default(0) // whole SAGE sustained since lastSync
+  lastSync       DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 // Append-only journal — the auditability that replaces on-chain transparency.
@@ -935,10 +964,11 @@ model PixelAccount {
 model PixelJournal {
   id            Int      @id @default(autoincrement())
   walletAddress String   @db.Char(42)
-  delta         BigInt   // signed whole pixels
+  delta         BigInt // signed whole pixels
   kind          String   @db.VarChar(20) // snapshot|bank|spend|credit|refund
   reason        String   @db.VarChar(120)
   createdAt     DateTime @default(now())
+
   @@index([walletAddress, createdAt])
 }
 
@@ -966,6 +996,7 @@ model DexPair {
   priceEth        Float    @default(0)
   liquidityEth    Float    @default(0) // WETH reserve (x1 side)
   updatedAt       DateTime @updatedAt
+
   @@index([baseToken])
   @@index([updatedAt])
 }
@@ -981,6 +1012,7 @@ model DexSwap {
   tokenAmount Float
   priceEth    Float // ETH per 1M base tokens
   createdAt   DateTime
+
   @@index([pairAddress, createdAt])
 }
 
@@ -995,8 +1027,36 @@ model DexIndexState {
 // spend at 3 instances), and failures cache too (ok=false) so a 429 storm
 // can't retry the same dead query every keystroke
 model DexLookupCache {
-  q  String   @id @db.VarChar(120)
+  q    String   @id @db.VarChar(120)
   rows Json
-  ok Boolean  @default(true)
-  at DateTime @default(now())
+  ok   Boolean  @default(true)
+  at   DateTime @default(now())
+}
+
+// ── SAGE Agent compute credits ─────────────────────────────────────────────
+// Metering is SERVER-side and this table is the only balance that counts. The
+// client's number is a display of this row, never the source of truth: the
+// agent route reads it before a model call and debits real token usage after,
+// so a tampered client cannot buy itself inference.
+model AgentCreditAccount {
+  address   String   @id @db.Char(42) // checksummed, from the SIWE session
+  credits   Int      @default(0) // new wallets start at ZERO and must buy in
+  spent     Int      @default(0) // lifetime debits, for the meter display
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// One row per settled purchase. txHash is UNIQUE — that constraint is what
+// makes claiming idempotent, so replaying the same payment cannot mint
+// credits twice even under concurrent requests.
+model AgentCreditPurchase {
+  id        Int      @id @default(autoincrement())
+  txHash    String   @unique @db.Char(66)
+  address   String   @db.Char(42)
+  tier      String   @db.VarChar(20)
+  credits   Int
+  weiPaid   String   @db.VarChar(78) // exact value, never a lossy Float
+  createdAt DateTime @default(now())
+
+  @@index([address, id])
 }

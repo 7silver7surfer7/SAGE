@@ -2,8 +2,13 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import prisma from '@/prisma/client';
 import { getRequester, isCrossSiteRequest } from '@/utilities/apiAuth';
 import { getDropsPageData } from '@/prisma/functions';
-import { getSagePriceUsd } from '@/utilities/sagePrice';
-import { parameters } from '@/constants/config';
+import { getSagePriceUsd, getEthUsd } from '@/utilities/sagePrice';
+import { TRADE_CHAIN_NAME, TRADE_CHAIN_ID } from '@/constants/config';
+import { resolveBuyVenue, resolveSellVenue, sizeSellForEth } from '@/utilities/socialToken';
+import { tradeProvider, TRADE_VENUE, BUILTIN_TOKENS } from '@/components/Agent/trade';
+import { ethers } from 'ethers';
+import { MODEL_PRICES, DEFAULT_MODEL_ID, priceFor, creditsForUsage } from '@/constants/modelPricing';
+import { getCreditBalance, debitCredits } from './credits.page';
 
 /**
  * SAGE Agent — server-side model call.
@@ -31,13 +36,10 @@ const ANTHROPIC_VERSION = '2023-06-01';
  * through unchecked — an arbitrary string lets a caller select the most
  * expensive model available, or a nonexistent one that just burns retries.
  */
-const MODELS: Record<string, { api: string; maxTokens: number }> = {
-  'claude-opus-5': { api: 'claude-opus-4-5', maxTokens: 1200 },
-  'claude-sonnet-5': { api: 'claude-sonnet-4-5', maxTokens: 1200 },
-  'claude-fable-5': { api: 'claude-sonnet-4-5', maxTokens: 1200 },
-  'claude-haiku-4-5': { api: 'claude-haiku-4-5', maxTokens: 1000 },
-};
-const DEFAULT_MODEL = 'claude-sonnet-5';
+const MODELS: Record<string, { api: string; maxTokens: number }> = Object.fromEntries(
+  MODEL_PRICES.map((m) => [m.id, { api: m.api, maxTokens: m.maxTokens }])
+);
+const DEFAULT_MODEL = DEFAULT_MODEL_ID;
 
 /** Hard ceilings — a runaway tool loop is the expensive failure mode. */
 const MAX_TOOL_ROUNDS = 5;
@@ -56,6 +58,11 @@ FACTUAL LIMITS — obey strictly:
 TOOLS: use them whenever a drop, token figure or balance is involved. Each renders a visual card in the interface, so do NOT repeat every number in prose — add the context or judgement the card cannot.
 
 TRANSACTIONS: you cannot execute anything. prepare_buy builds an UNSIGNED order that the user signs in their own wallet; the agent never holds custody. Say plainly what a purchase will cost, surface the order, and let them sign. Never claim a purchase is complete.
+- prepare_buy works for ANY token traded on Robinhood Chain, not only SAGE — pass the symbol the user named. Use list_tokens when they ask what is buyable or name something unfamiliar.
+- NEVER convert between dollars and ETH yourself. You do not know the ETH price and any figure you produce will be wrong. If the user names a dollar amount, pass usd_amount and let the server price it; if they name ETH, pass eth_amount. Never state an ETH/USD rate that a tool did not return.
+- It returns the quote it priced. Quotes move, so call the figure approximate. If prepare_buy returns an error, relay the reason in plain words and do not offer an order.
+- If a token is not listed on SAGE, say so before the user signs. You have no opinion on its merit.
+- You CAN sell too: prepare_sell builds an unsigned sell order. Never tell the user to go to another exchange — selling works here. Selling needs a token approval first, so warn them their wallet may prompt twice.
 
 NEWCOMERS: explain wallets, minting, gas and Pixels plainly, without condescension.`;
 
@@ -89,7 +96,7 @@ const TOOLS = [
   {
     name: 'get_balances',
     description:
-      "Read a public address's SAGE balance. Only call this when the user has connected a wallet and asks about their holdings.",
+      "Read the connected wallet's ETH and SAGE balances on the trading chain. Call this when the user asks about their holdings, or to check they can afford a purchase before preparing one.",
     input_schema: {
       type: 'object',
       properties: { address: { type: 'string', description: '0x… wallet address' } },
@@ -97,20 +104,146 @@ const TOOLS = [
     },
   },
   {
+    name: 'list_tokens',
+    description:
+      'List the tokens that can be bought on Robinhood Chain through SAGE, with their symbols. Use this when the user asks what they can buy, or names a token you have not seen before.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
     name: 'prepare_buy',
     description:
-      'Build an UNSIGNED order to buy SAGE with ETH. This does NOT execute — it returns an order for the user to sign in their own wallet. Requires a connected wallet.',
+      'Build an UNSIGNED order to buy a token on Robinhood Chain. This does NOT execute — it returns an order the user signs in their own wallet. Works for SAGE and any other listed token; pass its symbol. Requires a connected wallet. Give EITHER eth_amount OR usd_amount — never convert between them yourself, you do not have the rate.',
     input_schema: {
       type: 'object',
       properties: {
         eth_amount: { type: 'number', description: 'ETH to spend, e.g. 0.01' },
+        usd_amount: {
+          type: 'number',
+          description:
+            'US dollars to spend, e.g. 10. Use this whenever the user names a dollar amount — the server converts it at the live ETH/USD rate. Never do this arithmetic yourself.',
+        },
+        token: {
+          type: 'string',
+          description:
+            'Token symbol (e.g. "SAGE", "rhagent") or its 0x contract address. Defaults to SAGE.',
+        },
       },
-      required: ['eth_amount'],
+    },
+  },
+  {
+    name: 'prepare_sell',
+    description:
+      'Build an UNSIGNED order to SELL a token for ETH on Robinhood Chain. Does NOT execute — the user signs it in their own wallet. Give the token, plus exactly one of usd_amount, eth_amount, token_amount or percent. Never convert between dollars, ETH and token counts yourself.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        token: {
+          type: 'string',
+          description: 'Token symbol (e.g. "SAGE") or its 0x contract address. Defaults to SAGE.',
+        },
+        usd_amount: { type: 'number', description: 'Dollars of proceeds to raise, e.g. 10' },
+        eth_amount: { type: 'number', description: 'ETH of proceeds to raise, e.g. 0.01' },
+        token_amount: { type: 'number', description: 'Exact number of whole tokens to sell' },
+        percent: { type: 'number', description: 'Percent of the holding to sell, 1-100' },
+      },
     },
   },
 ];
 
 type Card = Record<string, any>;
+
+// ── token resolution ────────────────────────────────────────────────────────
+
+interface TradableToken {
+  address: string;
+  symbol: string;
+  name: string;
+  /** launched through SAGE (registry-known) rather than merely quotable */
+  verified: boolean;
+}
+
+/**
+ * Turn what the model asked for — "SAGE", "$rhagent", a raw 0x address — into
+ * a token that can actually be priced on the trading chain.
+ *
+ * The model's argument is attacker-reachable: a prompt injected into any tool
+ * output could ask it to prepare a buy. So resolution runs two independent
+ * gates. First the REGISTRY — a symbol only ever becomes an address through
+ * SocialTokenLaunch or the builtin map, so an invented ticker cannot resolve
+ * to anything. Then the CHAIN — whatever survives has to quote non-zero at a
+ * real venue. A raw address outside the registry is still allowed, because the
+ * router prices any pair on Robinhood, but it comes back `verified: false` and
+ * the order card says UNVERIFIED before the user signs.
+ */
+async function resolveTradableToken(raw: any): Promise<TradableToken> {
+  const q = String(raw ?? 'SAGE').trim().replace(/^\$/, '');
+  if (!q) throw new Error('no token specified');
+
+  const builtin = BUILTIN_TOKENS[q.toUpperCase()];
+  if (builtin) {
+    return { address: builtin, symbol: q.toUpperCase(), name: q.toUpperCase(), verified: true };
+  }
+
+  const isAddress = ethers.utils.isAddress(q);
+  // Symbols are NOT unique — launching is free and permissionless, so anyone
+  // can mint a second token claiming an existing ticker. Take two rows and
+  // fail CLOSED on a collision rather than letting findFirst pick arbitrarily:
+  // silently resolving a ticker to an impostor is a token-substitution hole
+  // that ends with the user signing a buy for the wrong contract.
+  const matches = await prisma.socialTokenLaunch.findMany({
+    where: isAddress
+      ? { tokenAddress: ethers.utils.getAddress(q) }
+      : { symbol: { equals: q, mode: 'insensitive' } },
+    select: { tokenAddress: true, symbol: true, name: true },
+    orderBy: { id: 'asc' },
+    take: 2,
+  });
+  if (matches.length > 1) {
+    throw new Error(
+      `more than one token is listed as "${q}". Ask the user which one they mean and pass its contract address — do not guess.`
+    );
+  }
+  const launch = matches[0];
+  if (launch) {
+    return {
+      address: launch.tokenAddress,
+      symbol: launch.symbol,
+      name: launch.name,
+      verified: true,
+    };
+  }
+
+  if (!isAddress) {
+    throw new Error(
+      `no token called "${q}" is listed on SAGE. Use list_tokens to see what can be bought, or give a contract address.`
+    );
+  }
+
+  // Unlisted address: read its own metadata so the card names what it is
+  // rather than showing the user a bare 0x string to sign against.
+  const address = ethers.utils.getAddress(q);
+  let symbol = '';
+  let name = '';
+  try {
+    const erc20 = new ethers.Contract(
+      address,
+      ['function symbol() view returns (string)', 'function name() view returns (string)'],
+      tradeProvider()
+    );
+    [symbol, name] = await Promise.all([erc20.symbol(), erc20.name()]);
+  } catch {
+    /* non-standard or not a token — the venue check below is the real gate */
+  }
+  return {
+    address,
+    symbol: String(symbol).slice(0, 12),
+    name: String(name).slice(0, 40),
+    verified: false,
+  };
+}
+
+const fmtTokens = (wei: ethers.BigNumber) =>
+  Number(ethers.utils.formatEther(wei)).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
 async function runTool(
   name: string,
@@ -159,13 +292,30 @@ async function runTool(
     } catch {
       /* price feed is best-effort; the model is told when it is unavailable */
     }
+    // The trading chain, not the build's — getSagePriceUsd() already reads
+    // mainnet regardless of APP_MODE, so quoting parameters.CHAIN_ID here
+    // would label a mainnet price with a testnet chain id.
+    // The ETH rate is carried here too: without it the model has no way to
+    // answer "what is that in dollars" except by inventing a price.
+    let ethUsd = 0;
+    try {
+      ethUsd = await getEthUsd();
+    } catch {
+      /* best-effort, same as the SAGE price above */
+    }
     const rows = [
       { k: 'SAGE', v: usd > 0 ? '$' + usd.toPrecision(3) : 'unavailable' },
-      { k: 'CHAIN', v: 'ROBINHOOD' },
-      { k: 'CHAIN ID', v: String(parameters.CHAIN_ID) },
+      { k: 'ETH', v: ethUsd > 0 ? '$' + ethUsd.toFixed(2) : 'unavailable' },
+      { k: 'CHAIN', v: TRADE_CHAIN_NAME.toUpperCase() },
+      { k: 'CHAIN ID', v: String(TRADE_CHAIN_ID) },
     ];
     ctx.cards.push({ kind: 'stats', status: 'SAGE TOKEN', byline: 'LIVE', rows });
-    return JSON.stringify({ sage_usd: usd || null, chain_id: parameters.CHAIN_ID });
+    return JSON.stringify({
+      sage_usd: usd || null,
+      eth_usd: ethUsd || null,
+      chain_id: TRADE_CHAIN_ID,
+      note: 'Use eth_usd for any dollar/ETH conversion the user asks about. Never estimate it.',
+    });
   }
 
   if (name === 'get_balances') {
@@ -184,31 +334,67 @@ async function runTool(
       return 'ERROR: no wallet connected. Tell the user to connect using the card shown.';
     }
     ctx.steps.push('READING WALLET · ' + ctx.address.slice(0, 6) + '…' + ctx.address.slice(-4));
-    const { ethers } = await import('ethers');
-    const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
+    // Read the TRADING chain, not `parameters` — a staging build would
+    // otherwise report a testnet balance for the mainnet token the agent
+    // actually buys, and quote affordability off the wrong number.
+    const provider = tradeProvider();
     const token = new ethers.Contract(
-      parameters.ASHTOKEN_ADDRESS,
+      BUILTIN_TOKENS.SAGE,
       ['function balanceOf(address) view returns (uint256)'],
       provider
     );
-    const raw = await token.balanceOf(ctx.address);
+    const [raw, nativeRaw] = await Promise.all([
+      token.balanceOf(ctx.address),
+      provider.getBalance(ctx.address),
+    ]);
     const sage = Number(ethers.utils.formatEther(raw));
+    const eth = Number(ethers.utils.formatEther(nativeRaw));
     ctx.cards.push({
       kind: 'wallet',
       status: 'CONNECTED · ' + ctx.address.slice(0, 6) + '…' + ctx.address.slice(-4),
       title: 'Holdings',
-      body: 'Read-only snapshot at current block.',
-      rows: [{ k: 'SAGE', v: sage.toLocaleString('en-US') }],
+      body: `Read-only snapshot at current block · ${TRADE_CHAIN_NAME}.`,
+      rows: [
+        { k: 'ETH', v: eth.toLocaleString('en-US', { maximumFractionDigits: 4 }) },
+        { k: 'SAGE', v: sage.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
+      ],
     });
-    return JSON.stringify({ address: ctx.address, sage });
+    return JSON.stringify({ address: ctx.address, chain: TRADE_CHAIN_NAME, eth, sage });
   }
 
   if (name === 'prepare_buy') {
     // Returns an INTENT. Nothing is signed here and this server holds no key
     // to the user's funds — the client renders a pending card and the user's
     // own wallet executes it.
-    const eth = Number(input?.eth_amount);
-    if (!Number.isFinite(eth) || eth <= 0) return 'ERROR: eth_amount must be a positive number.';
+    // USD → ETH is converted HERE, never by the model. Asked for "$10 of
+    // SAGE", the model has no rate to work from and simply guesses one: it
+    // priced ETH at $1,000 against a real $1,861 and built an order for
+    // $18.61. A language model doing FX arithmetic on a live order is a
+    // money bug, so the rate comes from the same feed the rest of the app
+    // prices with, and a missing feed is an error rather than an estimate.
+    let eth = Number(input?.eth_amount);
+    let usd = Number(input?.usd_amount);
+    let ethUsd = 0;
+
+    if (Number.isFinite(usd) && usd > 0) {
+      try {
+        ethUsd = await getEthUsd();
+      } catch {
+        return 'ERROR: the ETH/USD rate is unavailable, so a dollar amount cannot be converted. Ask the user to name an amount in ETH instead. Do NOT convert it yourself.';
+      }
+      if (!(ethUsd > 0)) {
+        return 'ERROR: the ETH/USD rate is unavailable. Ask the user for an amount in ETH. Do NOT convert it yourself.';
+      }
+      // 6dp is well inside wei and keeps the figure legible on the card
+      eth = Number((usd / ethUsd).toFixed(6));
+      if (!(eth > 0)) return 'ERROR: that dollar amount is too small to buy.';
+    } else {
+      usd = 0;
+    }
+
+    if (!Number.isFinite(eth) || eth <= 0) {
+      return 'ERROR: give either eth_amount or usd_amount as a positive number.';
+    }
     if (!ctx.address) {
       ctx.cards.push({
         kind: 'wallet',
@@ -220,26 +406,195 @@ async function runTool(
       });
       return 'ERROR: no wallet connected. Tell the user to connect using the card shown.';
     }
-    ctx.steps.push('BUILDING ORDER · ' + eth + ' ETH → SAGE');
+    // Resolve the token and PRICE IT before showing an order. Quoting here is
+    // what turns the two failure modes that killed the first live buy —
+    // wrong chain, and a graduated token whose curve quotes zero — into a
+    // sentence the user can read, instead of a revert after they sign.
+    let token: TradableToken;
+    let venue: Awaited<ReturnType<typeof resolveBuyVenue>>;
+    try {
+      token = await resolveTradableToken(input?.token);
+      venue = await resolveBuyVenue(token.address, eth, tradeProvider(), TRADE_VENUE);
+    } catch (e: any) {
+      return `ERROR: ${e?.message || 'could not price that token'}. Tell the user plainly; do not offer an order.`;
+    }
+
+    const label = token.symbol || token.name || token.address.slice(0, 10);
+    const expected = fmtTokens(venue.quoted);
+
+    ctx.steps.push(`BUILDING ORDER · ${eth} ETH → ${label}`);
     ctx.cards.push({
       kind: 'tx',
       status: 'UNSIGNED ORDER',
-      byline: 'ROBINHOOD CHAIN · YOU SIGN',
-      title: `Buy SAGE with ${eth} ETH`,
+      byline: `${TRADE_CHAIN_NAME.toUpperCase()} · YOU SIGN`,
+      title: `Buy ${label} with ${eth} ETH`,
       pending: true,
       cta: 'sign & buy',
       // consumed by the client to build the actual transaction
-      intent: { action: 'buy_sage', ethAmount: eth },
+      intent: {
+        action: 'buy_token',
+        token: token.address,
+        symbol: label,
+        ethAmount: eth,
+      },
       rows: [
-        { k: 'SPEND', v: `${eth} ETH` },
-        { k: 'VENUE', v: 'SAGE' },
-        { k: 'CHAIN', v: 'ROBINHOOD' },
+        { k: 'SPEND', v: usd > 0 ? `${eth} ETH · $${usd.toFixed(2)}` : `${eth} ETH` },
+        { k: 'RECEIVE', v: `≈ ${expected} ${label}` },
+        ...(ethUsd > 0 ? [{ k: 'ETH RATE', v: `$${ethUsd.toFixed(2)}` }] : []),
+        { k: 'VENUE', v: venue.venue === 'pool' ? 'POOL' : 'BONDING CURVE' },
+        { k: 'CHAIN', v: TRADE_CHAIN_NAME.toUpperCase() },
+        ...(token.verified ? [] : [{ k: 'WARNING', v: 'UNVERIFIED TOKEN' }]),
       ],
     });
     return JSON.stringify({
       prepared: true,
       eth_amount: eth,
-      note: 'Unsigned order surfaced to the user. They must sign it; do not claim it settled.',
+      ...(usd > 0 ? { usd_amount: usd, eth_usd_rate: Number(ethUsd.toFixed(2)) } : {}),
+      token: label,
+      token_address: token.address,
+      expected_out: `${expected} ${label}`,
+      venue: venue.venue,
+      listed_on_sage: token.verified,
+      note:
+        'Unsigned order surfaced to the user. They must sign it; do not claim it settled. The quote moves with the market, so describe it as approximate.' +
+        (token.verified
+          ? ''
+          : ' This token is NOT listed on SAGE — say so explicitly before they sign.'),
+    });
+  }
+
+  if (name === 'prepare_sell') {
+    // Same posture as prepare_buy: an INTENT, never an execution. Sizing and
+    // pricing happen here so the user sees real proceeds before signing, and
+    // so the model never does arithmetic on money.
+    if (!ctx.address) {
+      ctx.cards.push({
+        kind: 'wallet',
+        status: 'WALLET REQUIRED',
+        title: 'Connect a wallet to trade.',
+        body: 'Orders are signed in your own wallet. The agent never holds custody.',
+        needsConnect: true,
+        rows: [],
+      });
+      return 'ERROR: no wallet connected. Tell the user to connect using the card shown.';
+    }
+
+    let token: TradableToken;
+    try {
+      token = await resolveTradableToken(input?.token);
+    } catch (e: any) {
+      return `ERROR: ${e?.message || 'unknown token'}.`;
+    }
+    const label = token.symbol || token.name || token.address.slice(0, 10);
+
+    // What the wallet actually holds bounds everything below.
+    const provider = tradeProvider();
+    const erc20 = new ethers.Contract(
+      token.address,
+      ['function balanceOf(address) view returns (uint256)'],
+      provider
+    );
+    let held = 0;
+    try {
+      held = Number(ethers.utils.formatEther(await erc20.balanceOf(ctx.address)));
+    } catch {
+      return `ERROR: could not read your ${label} balance.`;
+    }
+    if (!(held > 0)) {
+      return `ERROR: this wallet holds no ${label}, so there is nothing to sell.`;
+    }
+
+    // Resolve the requested size into whole tokens.
+    let amount = 0;
+    let usdTarget = 0;
+    let ethUsdUsed = 0;
+    try {
+      const pct = Number(input?.percent);
+      const tokenAmount = Number(input?.token_amount);
+      const usd = Number(input?.usd_amount);
+      const eth = Number(input?.eth_amount);
+
+      if (Number.isFinite(pct) && pct > 0) {
+        amount = held * (Math.min(100, pct) / 100);
+      } else if (Number.isFinite(tokenAmount) && tokenAmount > 0) {
+        amount = tokenAmount;
+      } else if (Number.isFinite(eth) && eth > 0) {
+        amount = await sizeSellForEth(token.address, eth, provider, TRADE_VENUE);
+      } else if (Number.isFinite(usd) && usd > 0) {
+        ethUsdUsed = await getEthUsd();
+        if (!(ethUsdUsed > 0)) throw new Error('the ETH/USD rate is unavailable');
+        usdTarget = usd;
+        amount = await sizeSellForEth(token.address, usd / ethUsdUsed, provider, TRADE_VENUE);
+      } else {
+        return 'ERROR: say how much to sell — a dollar amount, an ETH amount, a token count, or a percent.';
+      }
+    } catch (e: any) {
+      return `ERROR: ${e?.message || 'could not size that sale'}. Relay this plainly; do not offer an order.`;
+    }
+
+    // Never propose selling more than the wallet has.
+    const capped = Math.min(amount, held);
+    if (!(capped > 0)) return `ERROR: that works out to zero ${label}.`;
+
+    let venue: Awaited<ReturnType<typeof resolveSellVenue>>;
+    try {
+      venue = await resolveSellVenue(token.address, capped, provider, TRADE_VENUE);
+    } catch (e: any) {
+      return `ERROR: ${e?.message || 'could not price that sale'}.`;
+    }
+    const proceedsEth = Number(ethers.utils.formatEther(venue.quoted));
+    const proceedsUsd = ethUsdUsed > 0 ? proceedsEth * ethUsdUsed : 0;
+
+    ctx.steps.push(`BUILDING ORDER · ${fmtTokens(ethers.utils.parseEther(capped.toFixed(6)))} ${label} → ETH`);
+    ctx.cards.push({
+      kind: 'tx',
+      status: 'UNSIGNED ORDER',
+      byline: `${TRADE_CHAIN_NAME.toUpperCase()} · YOU SIGN`,
+      title: `Sell ${capped.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${label}`,
+      pending: true,
+      cta: 'sign & sell',
+      intent: {
+        action: 'sell_token',
+        token: token.address,
+        symbol: label,
+        tokenAmount: capped,
+      },
+      rows: [
+        { k: 'SELL', v: `${capped.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${label}` },
+        {
+          k: 'RECEIVE',
+          v: `≈ ${proceedsEth.toFixed(6)} ETH` + (proceedsUsd > 0 ? ` · $${proceedsUsd.toFixed(2)}` : ''),
+        },
+        { k: 'VENUE', v: venue.venue === 'pool' ? 'POOL' : 'BONDING CURVE' },
+        { k: 'CHAIN', v: TRADE_CHAIN_NAME.toUpperCase() },
+        ...(capped >= held ? [{ k: 'NOTE', v: 'ENTIRE HOLDING' }] : []),
+      ],
+    });
+    return JSON.stringify({
+      prepared: true,
+      token: label,
+      token_amount: capped,
+      held,
+      expected_eth: proceedsEth,
+      ...(usdTarget > 0 ? { usd_requested: usdTarget, eth_usd_rate: Number(ethUsdUsed.toFixed(2)) } : {}),
+      venue: venue.venue,
+      note: 'Unsigned SELL order surfaced to the user. Selling needs a token approval first, so their wallet may prompt twice. Do not claim it settled. The quote moves with the market.',
+    });
+  }
+
+  if (name === 'list_tokens') {
+    ctx.steps.push('READING TOKEN REGISTRY');
+    const launches = await prisma.socialTokenLaunch.findMany({
+      select: { tokenAddress: true, symbol: true, name: true },
+      orderBy: { id: 'desc' },
+      take: 50,
+    });
+    return JSON.stringify({
+      chain: TRADE_CHAIN_NAME,
+      tokens: [{ symbol: 'SAGE', name: 'SAGE', address: BUILTIN_TOKENS.SAGE }].concat(
+        launches.map((l) => ({ symbol: l.symbol, name: l.name, address: l.tokenAddress }))
+      ),
+      note: 'Any of these can be passed to prepare_buy as `token`. Listing is not endorsement.',
     });
   }
 
@@ -280,9 +635,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const messages: any[] = history.concat([{ role: 'user', content: text }]);
 
+  // Credits are checked HERE, not in the client. A turn is refused outright
+  // when the wallet cannot pay for it — the browser's copy of the balance is
+  // a display, and treating it as authority is how someone gets free
+  // inference on our API key.
+  const payer = requester.walletAddress ? ethers.utils.getAddress(requester.walletAddress) : null;
+  if (!payer) return res.status(401).json({ error: 'connect a wallet to use the agent' });
+  if ((await getCreditBalance(payer)) < 1) {
+    return res.status(402).json({
+      error: 'out of compute credits',
+      credits: 0,
+      needsCredits: true,
+    });
+  }
+
   try {
     let rounds = 0;
     let finalText = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
 
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++;
@@ -311,6 +682,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const data = await r.json();
+      // Every round of the tool loop is billable — charging only the last one
+      // would make tool-heavy turns, the expensive ones, effectively free.
+      inputTokens += Number(data?.usage?.input_tokens || 0);
+      outputTokens += Number(data?.usage?.output_tokens || 0);
       const blocks = Array.isArray(data.content) ? data.content : [];
       finalText = blocks
         .filter((b: any) => b.type === 'text')
@@ -336,7 +711,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       messages.push({ role: 'user', content: results });
     }
 
-    return res.status(200).json({ text: finalText, steps: ctx.steps, cards: ctx.cards });
+    // Debit AFTER the work, from real usage. If the balance ran out mid-turn
+    // the answer is still delivered — we already paid upstream for it — and
+    // the account simply floors at whatever it had; the gate above stops the
+    // NEXT turn. Charging for work we then withhold would be worse.
+    const cost = creditsForUsage(chosen, inputTokens, outputTokens);
+    const remaining = await debitCredits(payer, cost);
+
+    return res.status(200).json({
+      text: finalText,
+      steps: ctx.steps,
+      cards: ctx.cards,
+      usage: { inputTokens, outputTokens, cost, credits: remaining, model: priceFor(chosen).label },
+    });
   } catch (e: any) {
     console.error('agent route error', e?.message);
     return res.status(500).json({ error: 'agent request failed' });

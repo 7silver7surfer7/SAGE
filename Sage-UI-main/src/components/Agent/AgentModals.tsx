@@ -7,6 +7,7 @@
  */
 import React, { useState } from 'react';
 import { C, F, label, mono, btnPrimary, btnGhost, scrim } from './tokens';
+import { explorerTx, shortHash } from './trade';
 import type { BotLink, Holding, Tier, TxRecord } from './types';
 
 /* `text-wrap: pretty` is not in this @types/react's csstype yet, so it has to
@@ -226,9 +227,19 @@ export function HistoryModal({ onClose, address, txRows }: HistoryModalProps) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
               <span style={mono(12.5, C.ink)}>{t.amount}</span>
-              <span style={{ ...mono(10.5, C.ink2), width: '92px', textAlign: 'right' }}>
-                {t.hash}
-              </span>
+              <a
+                href={explorerTx(t.hash)}
+                target='_blank'
+                rel='noreferrer'
+                style={{
+                  ...mono(10.5, C.ink2),
+                  width: '92px',
+                  textAlign: 'right',
+                  textDecoration: 'none',
+                }}
+              >
+                {shortHash(t.hash)}
+              </a>
               <span style={{ ...label(9, C.ink3, '0.16em'), width: '78px', textAlign: 'right' }}>
                 {t.when}
               </span>
@@ -602,8 +613,8 @@ export function BuyModal({
           <h2 style={h2}>Buy compute credits</h2>
           <p style={{ ...blurb, maxWidth: '470px' }}>
             Credits are spent by the token: 1 CR ≈ 1,000 tokens of context and reasoning, output
-            weighted 5×. Long threads and tool-heavy trades cost more. Pay in SAGE for a 15%
-            discount.
+            weighted 5×. Long threads and tool-heavy trades cost more. Priced in USD,
+            paid in ETH on Robinhood Chain at the current rate.
           </p>
         </div>
         <EscButton onClose={onClose} />
@@ -687,7 +698,12 @@ export function BuyModal({
                 <div style={{ ...label(10, C.ink3, '0.2em'), marginTop: '6px' }}>CREDITS</div>
               </div>
               <div>
+                {/* USD is the price; ETH is what actually gets sent, quoted
+                    live so the two can never disagree at the moment of paying */}
                 <div style={mono(15, C.ink)}>{t.cost}</div>
+                {t.costEth ? (
+                  <div style={{ ...mono(11, C.ink3), marginTop: '4px' }}>{t.costEth}</div>
+                ) : null}
                 <div
                   style={{
                     fontSize: '13px',

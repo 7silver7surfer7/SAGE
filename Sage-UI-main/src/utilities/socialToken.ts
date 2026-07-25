@@ -104,6 +104,426 @@ function applySlippage(quoted: ethers.BigNumber, slippageBps: number): ethers.Bi
   return minOut;
 }
 
+// ───────────── generic venue resolution (any token, any factory) ───────────
+//
+// A token is buyable at exactly one of two venues, and which one is a property
+// of CHAIN STATE, not of configuration:
+//
+//   pre-graduation   → the bonding curve, on the factory that launched it
+//   post-graduation  → the Uniswap pair, via SageSwapRouter
+//
+// Guessing wrong does not fail loudly. A graduated token still answers
+// `quoteBuy` on its factory — with ZERO, because the curve is spent — so the
+// curve path on a graduated token produces a zero quote rather than an error.
+// That is exactly what mainnet SAGE does today, and it is why this resolves
+// the venue from `curves().complete` and then insists on a non-zero quote.
+
+export interface BuyVenue {
+  venue: 'curve' | 'pool';
+  /** address actually called to execute the buy */
+  target: string;
+  /** tokens out at the current block, before slippage */
+  quoted: ethers.BigNumber;
+  graduated: boolean;
+  /** false when no factory in the candidate list ever launched this token */
+  launchedHere: boolean;
+}
+
+export interface VenueOptions {
+  /** factories to search, newest first. Defaults to the configured one. */
+  factories?: string[];
+  router?: string;
+}
+
+/**
+ * Work out where `tokenAddress` trades and what it currently quotes.
+ *
+ * Read-only: safe to call before showing the user an order. Throws with a
+ * message meant to be read by a human, because every one of these failures
+ * otherwise surfaces as ethers' opaque `call revert exception`.
+ */
+export async function resolveBuyVenue(
+  tokenAddress: string,
+  ethAmount: number,
+  provider: ethers.providers.Provider,
+  opts: VenueOptions = {}
+): Promise<BuyVenue> {
+  if (!ethers.utils.isAddress(tokenAddress)) {
+    throw new Error(`${tokenAddress} is not a valid token address`);
+  }
+  const value = ethers.utils.parseEther(toDecimalString(ethAmount));
+
+  // A wrong-chain address is the single most common failure, and the bare
+  // revert it produces is unreadable. Name it before anything else.
+  if ((await provider.getCode(tokenAddress)) === '0x') {
+    const net = await provider.getNetwork();
+    throw new Error(
+      `no token contract at ${tokenAddress} on chain ${net.chainId} — check the address, or whether this token lives on another network`
+    );
+  }
+
+  // Search the candidate factories for the one holding this token's curve.
+  // A legacy pin wins outright: that IS the launching factory.
+  const pinned = LEGACY_FACTORY_BY_TOKEN[tokenAddress.toLowerCase()];
+  const candidates = pinned
+    ? [pinned]
+    : opts.factories?.length
+    ? opts.factories
+    : [parameters.SOCIAL_TOKEN_FACTORY_ADDRESS];
+
+  let graduated = false;
+  let launchedHere = false;
+  let curveFactory = '';
+  for (const address of candidates) {
+    try {
+      const curve = await new ethers.Contract(address, factoryJson.abi, provider).curves(
+        tokenAddress
+      );
+      if (curve.creator && curve.creator !== ethers.constants.AddressZero) {
+        launchedHere = true;
+        graduated = !!curve.complete;
+        curveFactory = address;
+        break;
+      }
+    } catch {
+      /* not a factory, or an ABI mismatch — try the next candidate */
+    }
+  }
+
+  // Pre-graduation: quote off the curve. Its quoteBuy takes the POST-fee
+  // amount, unlike the router's, so net the fee off first.
+  if (launchedHere && !graduated) {
+    const factory = new ethers.Contract(curveFactory, factoryJson.abi, provider);
+    const feeBps = await factory.FEE_BPS();
+    const quoted = await factory.quoteBuy(tokenAddress, value.sub(value.mul(feeBps).div(10000)));
+    if (quoted.gt(0)) {
+      return { venue: 'curve', target: curveFactory, quoted, graduated: false, launchedHere: true };
+    }
+    // A live curve quoting zero means it graduated between the read and now,
+    // or the ABI is lying about the state. Fall through to the pool.
+  }
+
+  // Graduated, or launched somewhere we don't track, or not one of ours at
+  // all — the router prices any pair on the chain, so let it answer.
+  const router = new ethers.Contract(
+    opts.router || parameters.SAGE_SWAP_ROUTER_ADDRESS,
+    routerJson.abi,
+    provider
+  );
+  let quoted = ethers.BigNumber.from(0);
+  try {
+    quoted = await router.quoteBuy(tokenAddress, value);
+  } catch {
+    /* no pair — reported as "no market" below, not as a raw revert */
+  }
+  if (quoted.gt(0)) {
+    return { venue: 'pool', target: router.address, quoted, graduated: true, launchedHere };
+  }
+
+  throw new Error(
+    launchedHere
+      ? 'this token has no liquidity to buy from right now'
+      : `no market for ${tokenAddress} on this chain — it has no bonding curve and no pool`
+  );
+}
+
+/**
+ * Buy ANY token with ETH, routing to whichever venue actually holds its
+ * liquidity. Prefer this over buyToken/buyOnPool when the token is not known
+ * ahead of time — those two commit to a venue at the call site.
+ */
+export async function buyAnyToken(
+  tokenAddress: string,
+  ethAmount: number,
+  signer: Signer,
+  slippageBps: number = DEFAULT_SLIPPAGE_BPS,
+  opts: VenueOptions = {}
+): Promise<{ hash: string; venue: 'curve' | 'pool'; quoted: ethers.BigNumber }> {
+  const provider = signer.provider;
+  if (!provider) throw new Error('wallet has no provider — reconnect and try again');
+
+  const resolved = await resolveBuyVenue(tokenAddress, ethAmount, provider, opts);
+  const value = ethers.utils.parseEther(toDecimalString(ethAmount));
+  const minOut = applySlippage(resolved.quoted, slippageBps);
+
+  const abi = resolved.venue === 'curve' ? factoryJson.abi : routerJson.abi;
+  const contract = new ethers.Contract(resolved.target, abi, signer);
+  const tx = await contract.buy(tokenAddress, minOut, { value });
+  await tx.wait(1);
+  return { hash: tx.hash, venue: resolved.venue, quoted: resolved.quoted };
+}
+
+// ───────────── sell-side quoting (neither venue exposes quoteSell) ─────────
+//
+// `sell(token, amount, minEthOut)` exists on both venues but there is no
+// on-chain sell quote, which is why every sell in this file historically
+// passed minEthOut = 0 — an unprotected market order that a sandwich can take
+// almost all of. The proceeds are computable: both venues price by constant
+// product, and both DO expose a buy quote. So rather than hardcode a fee that
+// has already changed once between router versions, derive it — find the fee
+// that reproduces the venue's own quoteBuy exactly, then apply it to the sell.
+
+const UNISWAP_PAIR_ABI = [
+  'function getReserves() view returns (uint112,uint112,uint32)',
+  'function token0() view returns (address)',
+];
+const ROUTER_META_ABI = [
+  'function weth() view returns (address)',
+  'function curveFactory() view returns (address)',
+];
+
+/** Uniswap v2 constant-product output, including the pair's own 0.3%. */
+function ammOut(
+  amountIn: ethers.BigNumber,
+  reserveIn: ethers.BigNumber,
+  reserveOut: ethers.BigNumber
+): ethers.BigNumber {
+  if (amountIn.lte(0) || reserveIn.lte(0) || reserveOut.lte(0)) {
+    return ethers.BigNumber.from(0);
+  }
+  const inWithFee = amountIn.mul(997);
+  return inWithFee.mul(reserveOut).div(reserveIn.mul(1000).add(inWithFee));
+}
+
+/**
+ * The venue's fee in bps, found by reproducing its own buy quote.
+ *
+ * Exact-match search rather than a constant: the mainnet router charges 123bps
+ * and predates the `feeBpsFor()` getter the current ABI declares, so asking it
+ * directly reverts. Returns null when nothing matches, so callers can refuse
+ * to quote instead of inventing a number.
+ */
+async function impliedFeeBps(
+  quote: (ethIn: ethers.BigNumber) => Promise<ethers.BigNumber>,
+  reserveEth: ethers.BigNumber,
+  reserveTok: ethers.BigNumber
+): Promise<number | null> {
+  const probe = reserveEth.div(1000); // ~0.1% of the pool: real, but tiny impact
+  if (probe.lte(0)) return null;
+  let actual: ethers.BigNumber;
+  try {
+    actual = await quote(probe);
+  } catch {
+    return null;
+  }
+  if (actual.lte(0)) return null;
+  for (let bps = 0; bps <= 500; bps++) {
+    const net = probe.sub(probe.mul(bps).div(10000));
+    if (ammOut(net, reserveEth, reserveTok).eq(actual)) return bps;
+  }
+  return null;
+}
+
+export interface SellVenue {
+  venue: 'curve' | 'pool';
+  /** address to call sell() on */
+  target: string;
+  /** ETH out at the current block, before slippage */
+  quoted: ethers.BigNumber;
+  feeBps: number;
+}
+
+/**
+ * Work out where `tokenAddress` sells and what the proceeds are worth now.
+ * `tokenAmount` is in whole tokens, matching sellToken/sellOnPool.
+ */
+export async function resolveSellVenue(
+  tokenAddress: string,
+  tokenAmount: number,
+  provider: ethers.providers.Provider,
+  opts: VenueOptions = {}
+): Promise<SellVenue> {
+  if (!ethers.utils.isAddress(tokenAddress)) {
+    throw new Error(`${tokenAddress} is not a valid token address`);
+  }
+  if ((await provider.getCode(tokenAddress)) === '0x') {
+    const net = await provider.getNetwork();
+    throw new Error(
+      `no token contract at ${tokenAddress} on chain ${net.chainId} — wrong network for this token`
+    );
+  }
+  const amountIn = ethers.utils.parseEther(toDecimalString(tokenAmount));
+  if (amountIn.lte(0)) throw new Error('sell amount must be greater than zero');
+
+  // Which factory holds this token's curve, and has it graduated?
+  const pinned = LEGACY_FACTORY_BY_TOKEN[tokenAddress.toLowerCase()];
+  const candidates = pinned
+    ? [pinned]
+    : opts.factories?.length
+    ? opts.factories
+    : [parameters.SOCIAL_TOKEN_FACTORY_ADDRESS];
+
+  let curveFactory = '';
+  let graduated = false;
+  for (const address of candidates) {
+    try {
+      const curve = await new ethers.Contract(address, factoryJson.abi, provider).curves(
+        tokenAddress
+      );
+      if (curve.creator && curve.creator !== ethers.constants.AddressZero) {
+        curveFactory = address;
+        graduated = !!curve.complete;
+        // Pre-graduation the curve's own virtual reserves ARE the market.
+        if (!graduated) {
+          const factory = new ethers.Contract(address, factoryJson.abi, provider);
+          const feeBps: number = Number(await factory.FEE_BPS());
+          const gross = ammOut(amountIn, curve.virtualTokenReserves, curve.virtualEthReserves);
+          const quoted = gross.sub(gross.mul(feeBps).div(10000));
+          if (quoted.lte(0)) throw new Error('this curve cannot buy back that amount right now');
+          return { venue: 'curve', target: address, quoted, feeBps };
+        }
+      }
+    } catch (e: any) {
+      if (e?.message?.includes('curve cannot buy back')) throw e;
+      /* not a factory for this token — keep looking */
+    }
+  }
+
+  // Graduated (or not ours): price against the real pair behind the router.
+  const routerAddress = opts.router || parameters.SAGE_SWAP_ROUTER_ADDRESS;
+  const router = new ethers.Contract(routerAddress, routerJson.abi, provider);
+  const meta = new ethers.Contract(routerAddress, ROUTER_META_ABI, provider);
+
+  let pair = '';
+  let weth = '';
+  try {
+    weth = await meta.weth();
+    const factoryForPair = curveFactory || (await meta.curveFactory());
+    pair = await new ethers.Contract(factoryForPair, factoryJson.abi, provider).pairOf(
+      tokenAddress
+    );
+  } catch {
+    /* handled by the pair check below */
+  }
+  if (!pair || pair === ethers.constants.AddressZero) {
+    throw new Error(`no pool to sell ${tokenAddress} into on this chain`);
+  }
+
+  const pairContract = new ethers.Contract(pair, UNISWAP_PAIR_ABI, provider);
+  const [reserves, token0] = await Promise.all([pairContract.getReserves(), pairContract.token0()]);
+  const wethIsToken0 = token0.toLowerCase() === weth.toLowerCase();
+  const reserveEth = wethIsToken0 ? reserves[0] : reserves[1];
+  const reserveTok = wethIsToken0 ? reserves[1] : reserves[0];
+
+  const feeBps = await impliedFeeBps(
+    (ethIn) => router.quoteBuy(tokenAddress, ethIn),
+    reserveEth,
+    reserveTok
+  );
+  if (feeBps === null) {
+    throw new Error('could not determine this pool’s fee, so the sale cannot be priced safely');
+  }
+
+  const gross = ammOut(amountIn, reserveTok, reserveEth);
+  const quoted = gross.sub(gross.mul(feeBps).div(10000));
+  if (quoted.lte(0)) throw new Error('this pool has too little liquidity to sell into');
+  return { venue: 'pool', target: routerAddress, quoted, feeBps };
+}
+
+/**
+ * How many whole tokens to sell to raise roughly `targetEth`.
+ *
+ * Sizing off the spot price alone is wrong for anything but a dust trade,
+ * because selling moves the price against you. So this quotes what the naive
+ * size would actually raise and rescales once by the shortfall — one extra
+ * read, and it converges tightly for any size the pool can absorb.
+ */
+export async function sizeSellForEth(
+  tokenAddress: string,
+  targetEth: number,
+  provider: ethers.providers.Provider,
+  opts: VenueOptions = {}
+): Promise<number> {
+  const target = ethers.utils.parseEther(toDecimalString(targetEth));
+  if (target.lte(0)) throw new Error('amount must be greater than zero');
+
+  // wei per whole token: the router knows it post-graduation, the curve pre-.
+  let spotWei: ethers.BigNumber = ethers.BigNumber.from(0);
+  try {
+    const router = new ethers.Contract(
+      opts.router || parameters.SAGE_SWAP_ROUTER_ADDRESS,
+      ['function poolPriceWei(address) view returns (uint256)'],
+      provider
+    );
+    spotWei = await router.poolPriceWei(tokenAddress);
+  } catch {
+    /* not pooled — fall through to the curve */
+  }
+  if (spotWei.lte(0)) {
+    const factories = opts.factories?.length
+      ? opts.factories
+      : [parameters.SOCIAL_TOKEN_FACTORY_ADDRESS];
+    const pinned = LEGACY_FACTORY_BY_TOKEN[tokenAddress.toLowerCase()];
+    for (const address of pinned ? [pinned] : factories) {
+      try {
+        const f = new ethers.Contract(
+          address,
+          ['function spotPriceWei(address) view returns (uint256)'],
+          provider
+        );
+        const wei = await f.spotPriceWei(tokenAddress);
+        if (wei.gt(0)) {
+          spotWei = wei;
+          break;
+        }
+      } catch {
+        /* try the next factory */
+      }
+    }
+  }
+  if (spotWei.lte(0)) throw new Error('no price available for that token');
+
+  const naive = Number(ethers.utils.formatEther(target.mul(ethers.constants.WeiPerEther).div(spotWei)));
+  if (!(naive > 0)) throw new Error('that amount is too small to sell');
+
+  // Correct for the price impact the naive size ignores.
+  const { quoted } = await resolveSellVenue(tokenAddress, naive, provider, opts);
+  const raised = Number(ethers.utils.formatEther(quoted));
+  if (raised <= 0) throw new Error('that token has no liquidity to sell into');
+  const corrected = naive * (targetEth / raised);
+  return Number(corrected.toFixed(6));
+}
+
+/**
+ * Sell ANY token for ETH at whichever venue holds its liquidity, WITH price
+ * protection. Approves the venue first if needed.
+ */
+export async function sellAnyToken(
+  tokenAddress: string,
+  tokenAmount: number,
+  signer: Signer,
+  slippageBps: number = DEFAULT_SLIPPAGE_BPS,
+  opts: VenueOptions = {}
+): Promise<{ hash: string; venue: 'curve' | 'pool'; quoted: ethers.BigNumber }> {
+  const provider = signer.provider;
+  if (!provider) throw new Error('wallet has no provider — reconnect and try again');
+
+  const resolved = await resolveSellVenue(tokenAddress, tokenAmount, provider, opts);
+  const amount = ethers.utils.parseEther(toDecimalString(tokenAmount));
+  const minEthOut = applySlippage(resolved.quoted, slippageBps);
+
+  const owner = await signer.getAddress();
+  const token = new ethers.Contract(tokenAddress, ERC20StandardJson.abi, signer);
+  const balance: ethers.BigNumber = await token.balanceOf(owner);
+  if (balance.lt(amount)) {
+    throw new Error(
+      `you hold ${Number(ethers.utils.formatEther(balance)).toLocaleString()} of this token, less than the ${tokenAmount.toLocaleString()} being sold`
+    );
+  }
+
+  const allowance: ethers.BigNumber = await token.allowance(owner, resolved.target);
+  if (allowance.lt(amount)) {
+    const approve = await token.approve(resolved.target, amount);
+    await approve.wait(1);
+  }
+
+  const abi = resolved.venue === 'curve' ? factoryJson.abi : routerJson.abi;
+  const contract = new ethers.Contract(resolved.target, abi, signer);
+  const tx = await contract.sell(tokenAddress, amount, minEthOut);
+  await tx.wait(1);
+  return { hash: tx.hash, venue: resolved.venue, quoted: resolved.quoted };
+}
+
 /** Buy a creator coin off the bonding curve with ETH (1% fee to the treasury). */
 export async function buyToken(
   tokenAddress: string,

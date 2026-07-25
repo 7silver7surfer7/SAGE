@@ -1,14 +1,19 @@
 import { useNetwork, useSwitchNetwork } from 'wagmi';
 import { useEffect, useState } from 'react';
-import { parameters } from '@/constants/config';
+import { useRouter } from 'next/router';
 import { toast } from 'react-toastify';
+import { expectedChainForPath } from '@/components/Agent/trade';
 import useModal from './useModal';
-
-const designatedChain = parameters.NETWORK_NAME;
 
 export default function useWatchNetwork() {
   const [isLoading, setIsLoading] = useState(false);
   const { chain: activeChain } = useNetwork();
+  // Per-route, because /agent trades mainnet from every build. Reading the
+  // build's chain here nagged the user back to testnet right after the agent
+  // had correctly switched them to mainnet to sign an order.
+  const { pathname } = useRouter();
+  const expected = expectedChainForPath(pathname);
+  const designatedChain = expected.name;
   const {
     isOpen: isNetworkModalOpen,
     openModal: openNetworkModal,
@@ -19,19 +24,19 @@ export default function useWatchNetwork() {
 
   function switchToCorrectNetwork() {
     setIsLoading(true);
-    switchNetwork(+parameters.CHAIN_ID);
+    switchNetwork(expected.id);
   }
 
   function handleIncorrectNetwork() {
     if (!activeChain) return;
-    if (activeChain.id !== +parameters.CHAIN_ID) {
+    if (activeChain.id !== expected.id) {
       // Since the mainnet launch a wallet can easily sit on the TESTNET
       // entry (46630) which is also named "Robinhood" — so name the chain id
       // and make the click trigger the switch/add prompt directly instead of
       // routing through the modal (kept as fallback for wallets that don't
       // support programmatic switching).
       toast.warn(
-        `Wrong network: click here to switch to ${designatedChain} (chain ${parameters.CHAIN_ID})`,
+        `Wrong network: click here to switch to ${designatedChain} (chain ${expected.id})`,
         {
           toastId: 'networkChange',
           autoClose: false,
@@ -50,7 +55,7 @@ export default function useWatchNetwork() {
       toast.update('networkChange', {
         type: 'success',
         autoClose: 3000,
-        render: `Switched to ${String(parameters.NETWORK_NAME)}`,
+        render: `Switched to ${designatedChain}`,
       });
       closeNetworkModal();
     }
@@ -59,7 +64,7 @@ export default function useWatchNetwork() {
   //handle user on incorrect network
   useEffect(() => {
     handleIncorrectNetwork();
-  }, [activeChain?.id]);
+  }, [activeChain?.id, expected.id]);
 
   return { isNetworkModalOpen, closeNetworkModal, switchToCorrectNetwork, isLoading };
 }

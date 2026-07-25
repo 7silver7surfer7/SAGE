@@ -3,6 +3,8 @@ import { SiweMessage } from 'siwe';
 import { useSignInMutation } from '@/store/usersReducer';
 import { useEffect, useRef, useState } from 'react';
 import { useAccount, useNetwork, useSignMessage, useSwitchNetwork } from 'wagmi';
+import { useRouter } from 'next/router';
+import { expectedChainForPath } from '@/components/Agent/trade';
 import { parameters } from '@/constants/config';
 
 //This hook is dependent on a certain mounted component, and prompts a
@@ -18,6 +20,7 @@ import { parameters } from '@/constants/config';
  */
 export default function useSignIn(autoPrompt: boolean) {
   const { chain: activeChain } = useNetwork();
+  const { pathname } = useRouter();
   const { address, isConnected } = useAccount();
   const { signMessageAsync, isLoading: isSigningMessage } = useSignMessage();
   const { switchNetworkAsync } = useSwitchNetwork();
@@ -38,13 +41,15 @@ export default function useSignIn(autoPrompt: boolean) {
       // Switch first (one extra wallet prompt, and wagmi adds the chain if
       // the wallet lacks it); if the wallet can't or the user declines, say
       // exactly what to do instead of proceeding into a broken state.
-      const chainId = Number(parameters.CHAIN_ID);
-      if (activeChain && activeChain.id !== chainId) {
+      // Per-route: /agent trades mainnet from every build, so signing in
+      // there must not drag the wallet back to the build's chain.
+      const expected = expectedChainForPath(pathname);
+      if (activeChain && activeChain.id !== expected.id) {
         try {
-          await switchNetworkAsync?.(chainId);
+          await switchNetworkAsync?.(expected.id);
         } catch {
           setError(
-            `Switch your wallet to ${parameters.NETWORK_NAME} (chain ${chainId}) and try again.`
+            `Switch your wallet to ${expected.name} (chain ${expected.id}) and try again.`
           );
           return;
         }
@@ -57,7 +62,7 @@ export default function useSignIn(autoPrompt: boolean) {
         statement: 'I accept the SAGE Terms of Service and Privacy Policy.',
         uri: window.location.origin,
         version: '1',
-        chainId,
+        chainId: expected.id,
         nonce,
         issuedAt,
       });

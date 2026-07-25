@@ -1,4 +1,6 @@
-import { Chain } from 'wagmi';
+// type-only: this module is reached from the agent API route, and a value
+// import would drag the whole wagmi client bundle into the server.
+import type { Chain } from 'wagmi';
 
 export const robinhood: Chain = {
   id: 4663,
