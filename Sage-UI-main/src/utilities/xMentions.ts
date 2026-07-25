@@ -160,7 +160,7 @@ export async function recordOutcome(
   outcome: MentionOutcome,
   extra: {
     walletAddress?: string;
-    intent?: 'critique' | 'generate';
+    intent?: 'critique' | 'generate' | 'chat';
     creditsSpent?: number;
     replyTweetId?: string;
   } = {}
@@ -184,7 +184,7 @@ export async function recordOutcome(
  * which tool set runs. This is a fixed lexicon over the tweet's shape, and it
  * fails closed: anything unrecognised is ignored rather than guessed at.
  */
-export type MentionIntent = 'critique' | 'generate' | null;
+export type MentionIntent = 'critique' | 'generate' | 'chat' | null;
 
 const GENERATE_VERBS =
   /\b(mint|make|generate|create|draw|paint|render|imagine)\b/i;
@@ -213,9 +213,16 @@ export function routeMention(m: IncomingMention): MentionIntent {
   if (CRITIQUE_VERBS.test(text)) return 'critique';
 
   // Feedback and questions about the bot are never a commission, whatever
-  // verbs they happen to contain. Silence beats spending someone's credits
-  // rendering their bug report.
-  if (NOT_A_COMMISSION.test(text)) return null;
+  // verbs they happen to contain — they get answered, not rendered.
+  if (NOT_A_COMMISSION.test(text)) return 'chat';
+
+  // A QUESTION is never a commission, even when it names an art verb.
+  // "how do I mint?" is someone asking how minting works, not ordering a
+  // picture — and answering it costs a fraction of rendering one.
+  const said = text.replace(/@\w+/g, ' ').trim();
+  if (/^(how|what|why|when|where|who|which|do|does|did|is|are|should|would|could|will|can)\b/i.test(said)) {
+    return 'chat';
+  }
 
   if (GENERATE_VERBS.test(text)) {
     // A commission needs a SUBJECT. After the request framing is stripped,
@@ -230,8 +237,12 @@ export function routeMention(m: IncomingMention): MentionIntent {
       .replace(/[^a-zA-Z0-9 ]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    if (subject.length < 3) return null;
+    if (subject.length < 3) return 'chat';
     return 'generate';
   }
-  return null;
+
+  // Anything else addressed to us is conversation. Empty mentions (a bare
+  // @handle, or only a link) still get nothing — there is no question there.
+  const remainder = said.replace(/https?:\/\/\S+/g, ' ').trim();
+  return remainder.length >= 4 ? 'chat' : null;
 }

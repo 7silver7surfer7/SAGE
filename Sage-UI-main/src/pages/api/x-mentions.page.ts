@@ -12,6 +12,10 @@ import { generateImage } from '@/utilities/krea';
 import { imagePriceFor, creditsForImage, DEFAULT_IMAGE_MODEL_ID } from '@/constants/modelPricing';
 import { debitCredits } from '@/utilities/credits';
 import { pinImageAndMetadata } from '@/utilities/pinArt';
+import { chatReply, critiqueReply } from '@/utilities/mentionBrain';
+import { resolveSubject, subjectImage } from '@/utilities/critique';
+import { getDropsPageData } from '@/prisma/functions';
+import { getSagePriceUsd } from '@/utilities/sagePrice';
 import { PUBLIC_SITE_URL, parameters } from '@/constants/config';
 
 /**
@@ -77,6 +81,39 @@ function artPrompt(tweetText: string): string {
     'No picture frame, no canvas edge, no border, no matting, no wall, no easel, no desk. ' +
     'Not a photograph of a painting: the painting itself, cropped to the frame.'
   );
+}
+
+/**
+ * The only facts a chat reply may state, gathered by CODE.
+ *
+ * Passed in as text rather than reached through tools: a tweet cannot steer a
+ * query it never gets to make, and this keeps the conversational path free of
+ * anything that touches money.
+ */
+async function liveContext(): Promise<string> {
+  const parts: string[] = ['SAGE is an AI-native NFT platform on Robinhood Chain (mainnet).'];
+  try {
+    const drops = await getDropsPageData(prisma);
+    if (drops?.length) {
+      parts.push(
+        'Current drops: ' +
+          drops.slice(0, 8).map((d: any) => String(d.name)).filter(Boolean).join(', ') +
+          '.'
+      );
+    }
+  } catch {
+    /* context is best-effort; a missing figure means the reply says so */
+  }
+  try {
+    const usd = await getSagePriceUsd();
+    if (usd > 0) parts.push(`SAGE token price: $${usd.toPrecision(3)}.`);
+  } catch {
+    /* as above */
+  }
+  parts.push(
+    'The bot can generate art from a mention and critique SAGE drops. Buying, selling and minting are signed by the user on sageart.xyz — never from a tweet.'
+  );
+  return parts.join(' ');
 }
 
 /** Compose the reply. Deterministic shell; the model only fills the middle. */
@@ -229,14 +266,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             });
           }
           counts.answered++;
+        } else if (intent === 'critique') {
+          const subject = await resolveSubject(raw.text);
+          const img = subject ? await subjectImage(subject) : null;
+          if (!subject || !img) {
+            // Nothing to look at. Answer as conversation rather than
+            // critiquing a title — a critique without the work is invention.
+            const { text, credits } = await chatReply(raw.text, await liveContext());
+            await debitCredits(gate.walletAddress!, credits);
+            spent = credits;
+            const posted = await postReply(creds, m.tweetId, replyText(m.authorHandle, text, ''));
+            await recordOutcome(m.tweetId, 'answered', {
+              walletAddress: gate.walletAddress, intent: 'chat',
+              creditsSpent: credits, replyTweetId: posted.id,
+            });
+            counts.answered++;
+          } else {
+            const facts = Object.entries(subject.facts)
+              .map(([k, v]) => `${k}: ${v}`)
+              .join('; ');
+            const { text, credits } = await critiqueReply(
+              subject.title, subject.artist, facts,
+              img.bytes.toString('base64'), img.mime
+            );
+            await debitCredits(gate.walletAddress!, credits);
+            spent = credits;
+            const posted = await postReply(creds, m.tweetId, replyText(m.authorHandle, text, ''));
+            await recordOutcome(m.tweetId, 'answered', {
+              walletAddress: gate.walletAddress, intent,
+              creditsSpent: credits, replyTweetId: posted.id,
+            });
+            counts.answered++;
+          }
         } else {
-          // Critique is not built yet — record the demand rather than
-          // pretending. This is what tells us whether to build it.
-          await recordOutcome(m.tweetId, 'failed', {
-            walletAddress: gate.walletAddress,
-            intent,
+          // chat — a question, a remark, or feedback. Tool-free by design.
+          const { text, credits } = await chatReply(raw.text, await liveContext());
+          await debitCredits(gate.walletAddress!, credits);
+          spent = credits;
+          const posted = await postReply(creds, m.tweetId, replyText(m.authorHandle, text, ''));
+          await recordOutcome(m.tweetId, 'answered', {
+            walletAddress: gate.walletAddress, intent,
+            creditsSpent: credits, replyTweetId: posted.id,
           });
-          counts.failed++;
+          counts.answered++;
         }
       } catch (e: any) {
         console.error('mention failed', m.tweetId, e?.message);
