@@ -21,17 +21,18 @@ import { parameters, PIXELS_TOKEN_ADDRESS } from '@/constants/config';
 
 // Pixel economics for the CURRENT accrual token.
 //
-//   2,000,000 whole tokens -> 25,000 pixels/day  (the cap)
-//   rate = 25 / 2000 = 0.0125 pixels per whole token per day
+//   25,000,000 whole tokens -> 25,000 pixels/day  (the cap)
+//   rate = 25 / 25000 = 0.001 pixels per whole token per day
 //
-// The old token ran 25/100 with a 100,000 cap, which is the same 25,000/day
-// ceiling reached with 20x fewer tokens. Reaching the cap now costs about
-// $0.47 against $1.07 before, so a sybil is ~2.3x cheaper to run — the cap is
-// what bounds one, and this is a deliberate product choice, not an accident of
-// the supply change. Supply parity would have been a 10,000,000 cap.
+// The old token ran 25/100 with a 100,000 cap — the same 25,000/day ceiling,
+// reached with 250x fewer tokens. At spot, maxing a wallet now costs about
+// $5.88 against $1.07 on the old token, so a sybil is ~5.5x DEARER to run and
+// the cap is a materially stronger bound than it was. It is also above supply
+// parity (which would have been a 10,000,000 cap, ~$2.35): 25M of a 100bn
+// supply is 0.025% per wallet.
 export const RATE_SCALED = BigInt(25);
-export const RATE_DIVISOR = BigInt(2000);
-export const CAP_SAGE = BigInt(2000000);
+export const RATE_DIVISOR = BigInt(25000);
+export const CAP_SAGE = BigInt(25000000);
 const DAY = BigInt(86400);
 
 export function pixelsSource(): 'chain' | 'db' {
@@ -68,8 +69,10 @@ const STREAM_UNIT = RATE_DIVISOR * DAY;
  * The division truncates, and `dbBank` advances lastSync unconditionally — so
  * any interval whose stream floors to zero is DESTROYED, not deferred. The
  * threshold is held >= RATE_DIVISOR * 86400 / (RATE_SCALED * elapsed): at a
- * 10-minute keeper cadence that is 11,520 whole tokens, and a holder below it
- * would earn nothing, forever, while the ledger looked healthy.
+ * 10-minute keeper cadence that is 144,000 whole tokens, and a holder below it
+ * would earn nothing, forever, while the ledger looked healthy. That floor
+ * rises with the divisor, so it is 250x higher than the old token's 576 —
+ * without the carry below, most real holders would silently earn zero.
  *
  * Carrying the remainder makes accrual exact at every balance instead: the
  * numerator is preserved across banks and only the whole pixels are paid out.
