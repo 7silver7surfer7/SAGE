@@ -63,10 +63,17 @@ export const TRADE_NFT_LAUNCHER_ADDRESS = '0xFb409D31eaEB48e47F57134CC0e83b871eb
 // on a localhost build that is http://localhost:3005/, and a reply carrying it
 // would be a dead link for everyone who reads it. Same reasoning as the trade
 // constants above — the audience is the public internet, not this build.
-// testnet.sageart.xyz, not sageart.xyz: the agent has never been deployed to
-// production and /agent 404s there. A public reply carrying a dead claim link
-// is worse than no reply. Point this at the apex the day /agent ships there.
-export const PUBLIC_SITE_URL = 'https://testnet.sageart.xyz/';
+// Now the APEX. This pointed at testnet.sageart.xyz while /agent 404'd on
+// production — the note said to move it the day /agent shipped there, and
+// 2026-07-25 is that day: /agent serves 200 and ANTHROPIC_API_KEY finally
+// reached the production runtime.
+//
+// Leaving it on testnet became actively wrong the moment the mention bot moved
+// to Cloud Scheduler, because the claim row is written to whatever database the
+// POLLER talked to. The poller now runs on production, so a testnet link sends
+// the reader to a site that does not have their claim — a dead link under the
+// brand's own byline, which is the exact failure this constant exists to stop.
+export const PUBLIC_SITE_URL = 'https://sageart.xyz/';
 
 // -- Uniswap v4 on Robinhood mainnet ---------------------------------------
 // Every venue above speaks v2 (getPair/getReserves). v4 has neither: pools are
