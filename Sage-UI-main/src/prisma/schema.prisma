@@ -1132,6 +1132,14 @@ model XMention {
   intent        String?  @db.VarChar(16) // critique | generate
   creditsSpent  Int      @default(0)
   replyTweetId  String?  @db.VarChar(24)
+  // The generated art, PINNED at reply time rather than at claim time. Krea's
+  // URLs expire, so a claim link pointing at one would rot before it was
+  // clicked — the point of the link is that it still works later.
+  imageUri      String?  @db.VarChar(300)
+  tokenUri      String?  @db.VarChar(300)
+  prompt        String?  @db.VarChar(500)
+  /// set once the edition is deployed from the claim
+  claimedTxHash String?  @db.Char(66)
   createdAt     DateTime @default(now())
 
   @@index([authorXUserId, createdAt])

@@ -11,6 +11,8 @@ import { xCreds, isLive, selfId, fetchMentions, postReply, uploadMedia } from '@
 import { generateImage } from '@/utilities/krea';
 import { imagePriceFor, creditsForImage, DEFAULT_IMAGE_MODEL_ID } from '@/constants/modelPricing';
 import { debitCredits } from '@/utilities/credits';
+import { pinImageAndMetadata } from '@/utilities/pinArt';
+import { PUBLIC_SITE_URL } from '@/constants/config';
 
 /**
  * One poll cycle of @SAGEARTXYZ mentions.
@@ -129,6 +131,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const cost = creditsForImage(model.id);
           await debitCredits(gate.walletAddress!, cost);
 
+          // Pin NOW, not at claim time. Krea's URLs expire, so a claim link
+          // pointing at one would rot before it was clicked — and the whole
+          // value of the link is that it still works tomorrow.
+          const title = (raw.text.replace(/@\w+/g, '').trim().slice(0, 40) || 'Untitled');
+          let pinned: { tokenUri: string; imageUri: string } | null = null;
+          try {
+            pinned = await pinImageAndMetadata(job.urls[0], title, `Made for @${m.authorHandle} on X.`);
+          } catch (e) {
+            console.error('pin failed', e);
+          }
+
           let mediaIds: string[] = [];
           try {
             const img = await fetch(job.urls[0]);
@@ -138,10 +151,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             console.error('x media attach failed', e);
           }
 
+          // The claim is keyed by TWEET ID and authorised against the X account
+          // that sent it — see /api/x-claim. A link alone is not a capability:
+          // the reply is public, so anyone can read it.
+          const claimUrl = pinned
+            ? `${PUBLIC_SITE_URL}agent?claim=${m.tweetId}`
+            : `${PUBLIC_SITE_URL}agent`;
+
           const posted = await postReply(
             creds,
             m.tweetId,
-            replyText(m.authorHandle, 'Made for you. Mint it at', ` sageart.xyz/agent — ${cost} credits`),
+            replyText(
+              m.authorHandle,
+              pinned ? 'Made for you. Mint it here —' : 'Made for you.',
+              pinned ? ` ${claimUrl}` : ''
+            ),
             mediaIds
           );
           await recordOutcome(m.tweetId, 'answered', {
@@ -150,6 +174,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             creditsSpent: cost,
             replyTweetId: posted.id,
           });
+          if (pinned) {
+            await prisma.xMention.update({
+              where: { tweetId: m.tweetId },
+              data: { imageUri: pinned.imageUri, tokenUri: pinned.tokenUri, prompt: title },
+            });
+          }
           counts.answered++;
         } else {
           // Critique is not built yet — record the demand rather than

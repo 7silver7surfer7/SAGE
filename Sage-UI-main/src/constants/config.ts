@@ -59,6 +59,12 @@ export const TRADE_DEX_FACTORY_ADDRESS = '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517
 // the edition never deployed and the receipt carried no event.
 export const TRADE_NFT_LAUNCHER_ADDRESS = '0xFb409D31eaEB48e47F57134CC0e83b871eb7819e';
 
+// Where a claim link in a PUBLIC tweet must point. Never `parameters.APP_URL`:
+// on a localhost build that is http://localhost:3005/, and a reply carrying it
+// would be a dead link for everyone who reads it. Same reasoning as the trade
+// constants above — the audience is the public internet, not this build.
+export const PUBLIC_SITE_URL = 'https://sageart.xyz/';
+
 // -- Uniswap v4 on Robinhood mainnet ---------------------------------------
 // Every venue above speaks v2 (getPair/getReserves). v4 has neither: pools are
 // singleton state inside a PoolManager, keyed by a PoolKey. So a v4 token reads

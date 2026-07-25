@@ -186,10 +186,11 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     servedToday: number;
   } | null>(null);
 
-  const [links, setLinks] = useState<BotLink[]>([
-    { handle: '@collector_eth', wallet: '0x7F3a…9C21', perTweet: 0.5, daily: 2.0, spent: 0.35, scopes: 'BUY · MINT · SWAP' },
-    { handle: '@nulldelta', wallet: '0x2Ba1…8fD0', perTweet: 0.1, daily: 0.4, spent: 0.0, scopes: 'BUY ONLY' },
-  ]);
+  // No seeded links. These were two invented handles carrying invented wallet
+  // authority (0.50 ETH/tweet, 0.35 of 2.00 spent today) — none of it real,
+  // none of it enforced. The only link that exists is the OAuth-verified one
+  // in `xLink`, and its limits are credits and mentions/day, not ETH.
+  const [links, setLinks] = useState<BotLink[]>([]);
 
   /**
    * The authoritative balance comes from the server, per wallet. Refetched on
@@ -316,6 +317,83 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
       if (el) el.scrollTop = el.scrollHeight;
     });
   }, []);
+
+  /**
+   * An artwork the bot made on X, claimed here.
+   *
+   * The tweet id arrives in the URL, but it authorises nothing — the server
+   * checks the signed-in wallet owns the X account that sent the mention. All
+   * this does is turn an approved claim into the same pending-mint card the
+   * console uses, so it signs through exactly one path.
+   */
+  const claimFromX = useCallback(async (tweetId: string) => {
+    try {
+      const r = await fetch(`/api/x-claim/?tweet=${encodeURIComponent(tweetId)}`);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setError((d?.error || 'that claim could not be opened').toUpperCase());
+        return;
+      }
+      if (d.alreadyMinted) {
+        setError('THAT ARTWORK IS ALREADY MINTED');
+        return;
+      }
+      const id = nextId();
+      setMsgs((prev) =>
+        prev.concat([
+          {
+            id: nextId(),
+            who: 'SAGE AGENT',
+            isUser: false,
+            text: `This is the piece I made for @${d.handle} on X. It is pinned to IPFS already — signing deploys the edition.`,
+            steps: ['CLAIMED FROM X'],
+            cards: [
+              {
+                id,
+                kind: 'tx',
+                status: 'UNSIGNED ORDER',
+                byline: 'ROBINHOOD CHAIN · YOU SIGN',
+                title: `Mint "${d.prompt || 'Untitled'}" as a 1/1`,
+                image: d.imageUri,
+                pending: true,
+                cta: 'sign & mint',
+                rows: [
+                  { k: 'FROM', v: `@${d.handle} on X` },
+                  { k: 'SUPPLY', v: '1 of 1' },
+                  { k: 'STORAGE', v: 'IPFS · PERMANENT' },
+                ],
+                confirm: () =>
+                  confirmIntentRef.current(id, {
+                    action: 'mint_edition',
+                    tokenUri: d.tokenUri,
+                    imageUrl: d.imageUri,
+                    name: (d.prompt || 'Untitled').slice(0, 40),
+                    symbol: (d.prompt || 'ART').replace(/[^a-zA-Z]/g, '').slice(0, 6).toUpperCase() || 'ART',
+                    maxSupply: 1,
+                    priceEth: 0,
+                    claimTweetId: tweetId,
+                  }),
+                cancel: () => discardIntentRef.current(id),
+              } as any,
+            ],
+          } as Message,
+        ])
+      );
+      scrollToEnd();
+    } catch {
+      setError('THAT CLAIM COULD NOT BE OPENED');
+    }
+  }, [scrollToEnd]);
+
+  // ?claim=<tweetId> in the URL, once the wallet is connected
+  useEffect(() => {
+    if (!wallet.connected || typeof window === 'undefined') return;
+    const t = new URLSearchParams(window.location.search).get('claim');
+    if (!t) return;
+    claimFromX(t);
+    // drop the param so a refresh does not re-offer it
+    window.history.replaceState({}, '', window.location.pathname);
+  }, [wallet.connected, claimFromX]);
 
   /** Replace the last message (the in-flight assistant turn). */
   const patchLast = useCallback((fn: (m: Message) => void) => {
@@ -693,6 +771,15 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
             listed = rec.ok;
           } catch {
             /* on-chain is the source of truth; a failed listing is cosmetic */
+          }
+
+          if (intent.claimTweetId) {
+            // Close the claim so the same artwork cannot be offered twice.
+            fetch('/api/x-claim/', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ tweet: intent.claimTweetId, txHash }),
+            }).catch(() => {});
           }
 
           settle({
