@@ -3,11 +3,12 @@ import useSAGEAccount from '@/hooks/useSAGEAccount';
 import ReactTooltip from 'react-tooltip';
 
 export default function Balances() {
-  const { pointsBalanceDisplay, ashBalance, ashBalanceDisplay } = useSAGEAccount();
+  const { pointsBalanceDisplay, ashBalanceDisplay, pixelEarningBalance } = useSAGEAccount();
   // if (!pointsBalanceDisplay || !ashBalanceDisplay) {
   //   return null;
   // }
-  const pixelRate = getPixelRate(ashBalance);
+  // the balance that EARNS, not the legacy one the header still shows
+  const pixelRate = getPixelRate(pixelEarningBalance);
   const tooltip = `You are currently earning ${pixelRate} pixels per day`;
   return (
     <div className='profile-page__balances'>
