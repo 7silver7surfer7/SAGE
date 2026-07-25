@@ -133,6 +133,8 @@ export interface XMentionRaw {
   conversationId: string;
   /** photo URLs attached to the mention itself */
   photos: string[];
+  /** the post this one replies to or quotes — where the artwork usually is */
+  referencedTweetId?: string;
 }
 
 /** The bot's own numeric id, needed for the mentions endpoint. */
@@ -157,7 +159,10 @@ export async function fetchMentions(
 ): Promise<XMentionRaw[]> {
   const query: Record<string, string> = {
     max_results: String(Math.max(5, Math.min(100, max))),
-    'tweet.fields': 'author_id,conversation_id,attachments',
+    // referenced_tweets is a FIELD, not an expansion, so it costs nothing
+    // extra — it just tells us which post to fetch later, and only for the
+    // mentions that survive the gate.
+    'tweet.fields': 'author_id,conversation_id,attachments,referenced_tweets',
     expansions: 'author_id,attachments.media_keys',
     'user.fields': 'username',
     'media.fields': 'url,type',
@@ -182,7 +187,29 @@ export async function fetchMentions(
       .map((k: string) => media.get(String(k)))
       .filter((m: any) => m && m.type === 'photo' && m.url)
       .map((m: any) => String(m.url)),
+    referencedTweetId: (t.referenced_tweets || [])
+      .filter((r: any) => r?.type === 'replied_to' || r?.type === 'quoted')
+      .map((r: any) => String(r.id))[0],
   }));
+}
+
+/**
+ * Photos on ONE tweet.
+ *
+ * Deliberately a separate call rather than an expansion on the polling
+ * request: expansions bill per referenced resource, and most mentions are
+ * replies, so expanding during polling pays for every piece of spam before
+ * any gate runs. This is only ever called for a mention already cleared to be
+ * served, so the cost lands on work we are actually doing.
+ */
+export async function fetchTweetPhotos(creds: XCreds, tweetId: string): Promise<string[]> {
+  const d = await call(creds, 'GET', `${API}/2/tweets/${encodeURIComponent(tweetId)}`, {
+    expansions: 'attachments.media_keys',
+    'media.fields': 'url,type',
+  });
+  return (d?.includes?.media || [])
+    .filter((m: any) => m?.type === 'photo' && m.url)
+    .map((m: any) => String(m.url));
 }
 
 /** Upload image bytes, returning a media id usable on a reply. */

@@ -7,7 +7,7 @@ import {
   routeMention,
   type IncomingMention,
 } from '@/utilities/xMentions';
-import { xCreds, isLive, selfId, fetchMentions, postReply, uploadMedia } from '@/utilities/xClient';
+import { xCreds, isLive, selfId, fetchMentions, postReply, uploadMedia, fetchTweetPhotos } from '@/utilities/xClient';
 import { generateImage } from '@/utilities/krea';
 import { imagePriceFor, creditsForImage, DEFAULT_IMAGE_MODEL_ID } from '@/constants/modelPricing';
 import { debitCredits } from '@/utilities/credits';
@@ -114,6 +114,29 @@ async function liveContext(): Promise<string> {
     'The bot can generate art from a mention and critique SAGE drops. Buying, selling and minting are signed by the user on sageart.xyz — never from a tweet.'
   );
   return parts.join(' ');
+}
+
+/**
+ * Pull an image posted on X so it can be looked at.
+ *
+ * Pinned to X's own media host. The URL comes from the API rather than from
+ * tweet text, but restricting the host anyway means a future change that lets
+ * a URL in from somewhere else cannot turn this into a general fetcher.
+ */
+async function xPhotoBytes(url: string): Promise<{ base64: string; mime: string } | null> {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || !/^(pbs|pbs-video)\.twimg\.com$/.test(u.hostname)) return null;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const mime = r.headers.get('content-type') || 'image/jpeg';
+    if (!/^image\/(jpeg|jpg|png|gif|webp)$/i.test(mime)) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > 5 * 1024 * 1024) return null;
+    return { base64: buf.toString('base64'), mime };
+  } catch {
+    return null;
+  }
 }
 
 /** Compose the reply. Deterministic shell; the model only fills the middle. */
@@ -267,6 +290,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
           counts.answered++;
         } else if (intent === 'critique') {
+          // The artwork is usually in the post being REPLIED TO, not attached
+          // to the mention — "critique this" points at something upthread.
+          // Only fetched for mentions already cleared by the gate.
+          let photo = raw.photos[0] || null;
+          if (!photo && raw.referencedTweetId) {
+            photo = (await fetchTweetPhotos(creds, raw.referencedTweetId).catch(() => []))[0] || null;
+          }
+          const onX = photo ? await xPhotoBytes(photo) : null;
+
+          if (onX) {
+            // An image from X carries no platform facts — so the critique
+            // states none. It reads the picture and nothing else.
+            const { text, credits } = await critiqueReply(
+              'this work', 'an artist not listed on SAGE', 'none — state no facts about this work',
+              onX.base64, onX.mime
+            );
+            await debitCredits(gate.walletAddress!, credits);
+            spent = credits;
+            const posted = await postReply(creds, m.tweetId, replyText(m.authorHandle, text, ''));
+            await recordOutcome(m.tweetId, 'answered', {
+              walletAddress: gate.walletAddress, intent,
+              creditsSpent: credits, replyTweetId: posted.id,
+            });
+            counts.answered++;
+            continue;
+          }
+
           const subject = await resolveSubject(raw.text);
           const img = subject ? await subjectImage(subject) : null;
           if (!subject || !img) {
