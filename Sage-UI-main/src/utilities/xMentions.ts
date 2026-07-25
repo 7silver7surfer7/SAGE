@@ -256,7 +256,12 @@ export function routeMention(m: IncomingMention): MentionIntent {
   // "how do I mint?" is someone asking how minting works, not ordering a
   // picture — and answering it costs a fraction of rendering one.
   const said = text.replace(/@\w+/g, ' ').trim();
-  if (/^(how|what|why|when|where|who|which|do|does|did|is|are|should|would|could|will|can)\b/i.test(said)) {
+  // NB: can/could/would/will are deliberately absent. "can you paint me a
+  // quiet harbour" is a polite commission, and treating it as a question sent
+  // it to chat. The genuine questions those words open ("can I mint?") fall
+  // through to the subject test below and land on chat anyway, because
+  // stripping the framing leaves nothing to draw.
+  if (/^(how|what|why|when|where|who|which|do|does|did|is|are|should)\b/i.test(said)) {
     return 'chat';
   }
 
@@ -279,8 +284,12 @@ export function routeMention(m: IncomingMention): MentionIntent {
 
   // Anything else addressed to us is conversation. Empty mentions (a bare
   // @handle, or only a link) still get nothing — there is no question there.
+  // Two characters is enough for "gm" — someone typed our handle on purpose.
+  // The floor is that SOMETHING was said: punctuation and a lone emoji are not
+  // a message, and answering them spends a credit on noise.
   const remainder = said.replace(/https?:\/\/\S+/g, ' ').trim();
-  return remainder.length >= 4 ? 'chat' : null;
+  const hasWords = /[a-z0-9]{2}/i.test(remainder);
+  return hasWords ? 'chat' : null;
 }
 
 /**
