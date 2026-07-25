@@ -614,13 +614,11 @@ export async function sellAnyToken(
   }
 
   if (resolved.venue === 'v4') {
-    // Quoting v4 sells works; EXECUTING one needs a permit2 approval flow the
-    // buy path does not (the router must pull tokens, not just wrapped ETH).
-    // Refusing is correct until that is built — routing it through the v2
-    // router instead would revert after the user had already signed.
-    throw new Error(
-      'selling this token is not supported yet — it trades on Uniswap v4 and the sell path is still being built'
-    );
+    // Handles the Permit2 chain itself, so the wallet may prompt up to three
+    // times on a first sale (ERC20 approve, Permit2 approve, then the swap).
+    const { sellV4 } = await import('@/utilities/uniswapV4');
+    const { hash } = await sellV4(tokenAddress, amount, minEthOut, signer);
+    return { hash, venue: resolved.venue, quoted: resolved.quoted };
   }
 
   if (resolved.venue === 'dex') {

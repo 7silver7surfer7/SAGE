@@ -235,3 +235,138 @@ export const V4_ADDRESSES = {
   stateView: V4_STATE_VIEW,
   universalRouter: V4_UNIVERSAL_ROUTER,
 };
+
+// ── selling ─────────────────────────────────────────────────────────────────
+/**
+ * Selling needs an approval chain the buy does not.
+ *
+ * A buy hands the router native ETH, which it wraps itself. A sell requires
+ * the router to PULL tokens from the wallet, and UniversalRouter pulls through
+ * Permit2 — so two approvals stand between a holder and a sale:
+ *
+ *   1. ERC20 approve(PERMIT2, amount) on the token itself
+ *   2. Permit2.approve(token, router, amount, expiration)
+ *
+ * Both are checked and only requested when short, so a repeat seller signs
+ * once and then only the swap.
+ *
+ * The command and action bytes below are not inferred from documentation —
+ * they were read off successful v4 sells on this chain: commands 0x10 0x0c
+ * (V4_SWAP then UNWRAP_WETH, to return native ETH) with actions 0x06 0x0c 0x0f.
+ */
+const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+const PERMIT2_ABI = [
+  'function allowance(address owner,address token,address spender) view returns (uint160 amount,uint48 expiration,uint48 nonce)',
+  'function approve(address token,address spender,uint160 amount,uint48 expiration)',
+];
+const ERC20_MIN_ABI = [
+  'function allowance(address owner,address spender) view returns (uint256)',
+  'function approve(address spender,uint256 amount) returns (bool)',
+];
+const CMD_UNWRAP_WETH = 0x0c;
+/** Permit2 amounts are uint160; its "infinite" is that type's max. */
+const PERMIT2_MAX = ethers.BigNumber.from(2).pow(160).sub(1);
+const PERMIT2_EXPIRY_MAX = 281474976710655; // uint48 max
+
+/** Ensure both approvals exist. Returns the tx hashes of any it had to send. */
+export async function ensureV4SellApprovals(
+  tokenAddress: string,
+  amount: ethers.BigNumber,
+  signer: Signer
+): Promise<string[]> {
+  const owner = await signer.getAddress();
+  const sent: string[] = [];
+
+  const token = new ethers.Contract(tokenAddress, ERC20_MIN_ABI, signer);
+  const toPermit2: ethers.BigNumber = await token.allowance(owner, PERMIT2);
+  if (toPermit2.lt(amount)) {
+    const tx = await token.approve(PERMIT2, ethers.constants.MaxUint256);
+    await tx.wait(1);
+    sent.push(tx.hash);
+  }
+
+  const permit2 = new ethers.Contract(PERMIT2, PERMIT2_ABI, signer);
+  const [allowed, expiration] = await permit2.allowance(owner, tokenAddress, V4_UNIVERSAL_ROUTER);
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (ethers.BigNumber.from(allowed).lt(amount) || Number(expiration) <= nowSec) {
+    const tx = await permit2.approve(
+      tokenAddress,
+      V4_UNIVERSAL_ROUTER,
+      PERMIT2_MAX,
+      PERMIT2_EXPIRY_MAX
+    );
+    await tx.wait(1);
+    sent.push(tx.hash);
+  }
+  return sent;
+}
+
+/** Calldata for a token -> native ETH v4 sell. Separated so it can be simulated. */
+export function encodeV4Sell(
+  key: PoolKey,
+  zeroForOne: boolean,
+  amountIn: ethers.BigNumber,
+  minOut: ethers.BigNumber,
+  recipient: string
+): { commands: string; inputs: string[] } {
+  const abi = ethers.utils.defaultAbiCoder;
+  const currencyIn = zeroForOne ? key.currency0 : key.currency1;
+  const currencyOut = zeroForOne ? key.currency1 : key.currency0;
+
+  const actions = ethers.utils.solidityPack(
+    ['uint8', 'uint8', 'uint8'],
+    [ACT_SWAP_EXACT_IN_SINGLE, ACT_SETTLE_ALL, ACT_TAKE_ALL]
+  );
+  const swapParams = abi.encode(
+    ['((address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
+    [
+      [
+        [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks],
+        zeroForOne,
+        amountIn,
+        minOut,
+        '0x',
+      ],
+    ]
+  );
+  const settle = abi.encode(['address', 'uint256'], [currencyIn, amountIn]);
+  const take = abi.encode(['address', 'uint256'], [currencyOut, minOut]);
+
+  return {
+    // V4_SWAP, then unwrap the WETH proceeds back to native ETH for the seller
+    commands: ethers.utils.solidityPack(['uint8', 'uint8'], [CMD_V4_SWAP, CMD_UNWRAP_WETH]),
+    inputs: [
+      abi.encode(['bytes', 'bytes[]'], [actions, [swapParams, settle, take]]),
+      abi.encode(['address', 'uint256'], [recipient, minOut]),
+    ],
+  };
+}
+
+/**
+ * Sell a v4 token for ETH. Handles the approval chain, then simulates before
+ * asking for the swap signature.
+ */
+export async function sellV4(
+  tokenAddress: string,
+  tokenAmount: ethers.BigNumber,
+  minEthOut: ethers.BigNumber,
+  signer: Signer
+): Promise<{ hash: string; approvals: string[] }> {
+  const key = poolKeyFor(tokenAddress);
+  if (!key) throw new Error('no v4 pool known for that token');
+
+  const approvals = await ensureV4SellApprovals(tokenAddress, tokenAmount, signer);
+
+  const owner = await signer.getAddress();
+  // selling the token = swapping it IN, so the direction is the buy's inverse
+  const zeroForOne = !tokenIsCurrency1(key, tokenAddress);
+  const { commands, inputs } = encodeV4Sell(key, zeroForOne, tokenAmount, minEthOut, owner);
+
+  const router = new ethers.Contract(V4_UNIVERSAL_ROUTER, UNIVERSAL_ROUTER_ABI, signer);
+  const deadline = Math.floor(Date.now() / 1000) + 900;
+
+  await router.callStatic.execute(commands, inputs, deadline);
+  const tx = await router.execute(commands, inputs, deadline);
+  await tx.wait(1);
+  return { hash: tx.hash, approvals };
+}
