@@ -62,6 +62,8 @@ TRANSACTIONS: you cannot execute anything. prepare_buy builds an UNSIGNED order 
 - NEVER convert between dollars and ETH yourself. You do not know the ETH price and any figure you produce will be wrong. If the user names a dollar amount, pass usd_amount and let the server price it; if they name ETH, pass eth_amount. Never state an ETH/USD rate that a tool did not return.
 - It returns the quote it priced. Quotes move, so call the figure approximate. If prepare_buy returns an error, relay the reason in plain words and do not offer an order.
 - If a token is not listed on SAGE, say so before the user signs. You have no opinion on its merit.
+- Do NOT refuse an order because a name looks unfamiliar, and do not pre-emptively list the roster instead of acting. Pass the user's wording straight to prepare_buy / prepare_sell — the server matches it against the listed tokens and picks the nearest, or tells you when it is genuinely ambiguous. Only then ask which one they meant.
+- When the tool returns an "interpreted" field, state the interpretation in one short sentence ("Reading that as Pixel Cat") so they can correct you before signing. Do not apologise for it or belabour it.
 - You CAN sell too: prepare_sell builds an unsigned sell order. Never tell the user to go to another exchange — selling works here. Selling needs a token approval first, so warn them their wallet may prompt twice.
 
 NEWCOMERS: explain wallets, minting, gas and Pixels plainly, without condescension.`;
@@ -160,6 +162,64 @@ interface TradableToken {
   name: string;
   /** launched through SAGE (registry-known) rather than merely quotable */
   verified: boolean;
+  /** set when the user's wording did not match exactly and we resolved it */
+  matchedFrom?: string;
+}
+
+const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** Levenshtein distance — small inputs (tickers and short names) only. */
+function editDistance(a: string, b: string): number {
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(
+        prev[j] + 1,
+        row[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * 0..1 similarity between a user's wording and a token's symbol or name.
+ *
+ * Three signals, strongest first. Whole-word overlap matters most and edit
+ * distance alone misses it: "cash cat" against "Pixel Cat" is 0.43 on raw
+ * distance — below any sane threshold — even though both are plainly about a
+ * cat. Half-remembered names are the entire reason this function exists, so a
+ * shared word of three or more characters counts for more than the letters
+ * around it happening to differ.
+ */
+function similarity(rawA: string, rawB: string): number {
+  const a = normalize(rawA);
+  const b = normalize(rawB);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+
+  const long = a.length >= b.length ? a : b;
+  const short = a.length >= b.length ? b : a;
+  if (long.includes(short)) return 0.75 + 0.25 * (short.length / long.length);
+
+  // A meaningful word from either side appearing in the other — this catches
+  // "cash cat"/"cashcat" -> "Pixel Cat" via the shared "cat".
+  let wordScore = 0;
+  const words = [...rawA.split(/[^a-zA-Z0-9]+/), ...rawB.split(/[^a-zA-Z0-9]+/)]
+    .map(normalize)
+    .filter((w) => w.length >= 3);
+  for (const w of words) {
+    if (a.includes(w) && b.includes(w)) {
+      wordScore = Math.max(wordScore, 0.5 + 0.3 * (w.length / long.length));
+    }
+  }
+
+  return Math.max(wordScore, 1 - editDistance(a, b) / long.length);
 }
 
 /**
@@ -214,9 +274,46 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
   }
 
   if (!isAddress) {
-    throw new Error(
-      `no token called "${q}" is listed on SAGE. Use list_tokens to see what can be bought, or give a contract address.`
-    );
+    // No exact hit. Find the nearest listed token rather than refusing: people
+    // half-remember names ("cash cat" for Pixel Cat), and making them retype it
+    // is worse UX for no safety gain — the order card names the token it
+    // resolved to and the user still signs it, which is the real gate.
+    //
+    // Matching stays INSIDE the registry. It never invents an address, and a
+    // genuinely ambiguous result asks rather than guesses, so this cannot
+    // quietly substitute one token for another.
+    const listed = await prisma.socialTokenLaunch.findMany({
+      select: { tokenAddress: true, symbol: true, name: true },
+      orderBy: { id: 'desc' },
+      take: 200,
+    });
+    const pool = [
+      { tokenAddress: BUILTIN_TOKENS.SAGE, symbol: 'SAGE', name: 'SAGE' },
+      ...listed,
+    ];
+    const scored = pool
+      .map((t) => ({ t, score: Math.max(similarity(q, t.symbol), similarity(q, t.name)) }))
+      .sort((a, b) => b.score - a.score);
+
+    const best = scored[0];
+    const runnerUp = scored[1];
+    // Too weak to be a match, or two candidates are effectively tied — ask.
+    if (!best || best.score < 0.45 || (runnerUp && best.score - runnerUp.score < 0.06)) {
+      const names = scored
+        .slice(0, 6)
+        .map((s) => `${s.t.symbol} (${s.t.name})`)
+        .join(', ');
+      throw new Error(
+        `nothing on SAGE clearly matches "${q}". The closest are: ${names}. Ask the user which they mean.`
+      );
+    }
+    return {
+      address: best.t.tokenAddress,
+      symbol: best.t.symbol,
+      name: best.t.name,
+      verified: true,
+      matchedFrom: q,
+    };
   }
 
   // Unlisted address: read its own metadata so the card names what it is
@@ -443,6 +540,12 @@ async function runTool(
         ...(ethUsd > 0 ? [{ k: 'ETH RATE', v: `$${ethUsd.toFixed(2)}` }] : []),
         { k: 'VENUE', v: venue.venue === 'pool' ? 'POOL' : 'BONDING CURVE' },
         { k: 'CHAIN', v: TRADE_CHAIN_NAME.toUpperCase() },
+        // If we interpreted the wording, say so ON the card — this is the last
+        // thing shown before a signature, so the interpretation has to be
+        // visible there and not only in the prose above it.
+        ...(token.matchedFrom
+          ? [{ k: 'MATCHED', v: `"${token.matchedFrom}" → ${token.name}` }]
+          : []),
         ...(token.verified ? [] : [{ k: 'WARNING', v: 'UNVERIFIED TOKEN' }]),
       ],
     });
@@ -451,7 +554,11 @@ async function runTool(
       eth_amount: eth,
       ...(usd > 0 ? { usd_amount: usd, eth_usd_rate: Number(ethUsd.toFixed(2)) } : {}),
       token: label,
+      token_name: token.name,
       token_address: token.address,
+      ...(token.matchedFrom
+        ? { interpreted: `"${token.matchedFrom}" resolved to ${token.symbol} (${token.name})` }
+        : {}),
       expected_out: `${expected} ${label}`,
       venue: venue.venue,
       listed_on_sage: token.verified,
@@ -567,6 +674,9 @@ async function runTool(
         },
         { k: 'VENUE', v: venue.venue === 'pool' ? 'POOL' : 'BONDING CURVE' },
         { k: 'CHAIN', v: TRADE_CHAIN_NAME.toUpperCase() },
+        ...(token.matchedFrom
+          ? [{ k: 'MATCHED', v: `"${token.matchedFrom}" → ${token.name}` }]
+          : []),
         ...(capped >= held ? [{ k: 'NOTE', v: 'ENTIRE HOLDING' }] : []),
       ],
     });
