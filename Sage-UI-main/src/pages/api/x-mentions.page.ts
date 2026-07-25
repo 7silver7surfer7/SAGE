@@ -12,7 +12,7 @@ import { generateImage } from '@/utilities/krea';
 import { imagePriceFor, creditsForImage, DEFAULT_IMAGE_MODEL_ID } from '@/constants/modelPricing';
 import { debitCredits } from '@/utilities/credits';
 import { pinImageAndMetadata } from '@/utilities/pinArt';
-import { chatReply, critiqueReply } from '@/utilities/mentionBrain';
+import { chatReply, critiqueReply, restylePrompt } from '@/utilities/mentionBrain';
 import { resolveSubject, subjectImage } from '@/utilities/critique';
 import { getDropsPageData } from '@/prisma/functions';
 import { getSagePriceUsd } from '@/utilities/sagePrice';
@@ -306,6 +306,83 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               data: { imageUri: pinned.imageUri, tokenUri: pinned.tokenUri, prompt: title },
             });
           }
+          counts.answered++;
+        } else if (intent === 'restyle') {
+          // Find the picture: attached here, or in the post being replied to.
+          let photo = raw.photos[0] || null;
+          if (!photo && raw.referencedTweetId) {
+            photo = (await fetchTweetPhotos(creds, raw.referencedTweetId).catch(() => []))[0] || null;
+          }
+          const src = photo ? await xPhotoBytes(photo) : null;
+          if (!src) {
+            const { text, credits } = await chatReply(raw.text, await liveContext());
+            await debitCredits(gate.walletAddress!, credits);
+            spent = credits;
+            const posted = await postReply(creds, m.tweetId, replyText(m.authorHandle, text, ''));
+            await recordOutcome(m.tweetId, 'answered', {
+              walletAddress: gate.walletAddress, intent: 'chat',
+              creditsSpent: credits, replyTweetId: posted.id,
+            });
+            counts.answered++;
+            continue;
+          }
+
+          // Vision writes the prompt: Krea takes text, not pictures, so the
+          // image has to be READ before it can be re-rendered. Describing it
+          // first is also what keeps the output anchored to the source.
+          const { prompt, credits: readCost } = await restylePrompt(
+            src.base64, src.mime, raw.text.replace(/@\w+/g, ' ').trim()
+          );
+          const model = imagePriceFor('krea-2-turbo');
+          const job = await generateImage({
+            prompt,
+            aspectRatio: '4:5',
+            model: model.id,
+            timeoutMs: 60_000,
+          });
+          if (job.status !== 'completed' || !job.urls.length) {
+            throw new Error(job.error || `generation ${job.status}`);
+          }
+
+          const cost = readCost + creditsForImage(model.id);
+          await debitCredits(gate.walletAddress!, cost);
+
+          const title = 'Restyled';
+          let pinned: { tokenUri: string; imageUri: string } | null = null;
+          try {
+            pinned = await pinImageAndMetadata(job.urls[0], title, `Restyled for @${m.authorHandle} on X.`);
+          } catch (e) {
+            console.error('pin failed', e);
+          }
+          if (pinned) {
+            await prisma.xMention.update({
+              where: { tweetId: m.tweetId },
+              data: { imageUri: pinned.imageUri, tokenUri: pinned.tokenUri, prompt },
+            });
+          }
+          spent = cost;
+
+          let mediaIds: string[] = [];
+          try {
+            const img = await fetch(job.urls[0]);
+            const buf = Buffer.from(await img.arrayBuffer());
+            mediaIds = [await uploadMedia(creds, buf, img.headers.get('content-type') || 'image/png')];
+          } catch (e) {
+            console.error('x media attach failed', e);
+          }
+
+          const isPublic = String(parameters.APP_URL || '').startsWith('https://');
+          const claim = pinned && isPublic ? ` ${PUBLIC_SITE_URL}agent?claim=${m.tweetId}` : '';
+          const posted = await postReply(
+            creds,
+            m.tweetId,
+            replyText(m.authorHandle, claim ? 'Reworked. Mint it here —' : 'Reworked.', claim),
+            mediaIds
+          );
+          await recordOutcome(m.tweetId, 'answered', {
+            walletAddress: gate.walletAddress, intent,
+            creditsSpent: cost, replyTweetId: posted.id,
+          });
           counts.answered++;
         } else if (intent === 'critique') {
           // The artwork is usually in the post being REPLIED TO, not attached

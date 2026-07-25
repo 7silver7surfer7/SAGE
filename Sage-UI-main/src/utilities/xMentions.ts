@@ -160,7 +160,7 @@ export async function recordOutcome(
   outcome: MentionOutcome,
   extra: {
     walletAddress?: string;
-    intent?: 'critique' | 'generate' | 'chat';
+    intent?: 'critique' | 'generate' | 'restyle' | 'chat';
     creditsSpent?: number;
     replyTweetId?: string;
   } = {}
@@ -184,10 +184,19 @@ export async function recordOutcome(
  * which tool set runs. This is a fixed lexicon over the tweet's shape, and it
  * fails closed: anything unrecognised is ignored rather than guessed at.
  */
-export type MentionIntent = 'critique' | 'generate' | 'chat' | null;
+export type MentionIntent = 'critique' | 'generate' | 'restyle' | 'chat' | null;
 
 const GENERATE_VERBS =
   /\b(mint|make|generate|create|draw|paint|render|imagine)\b/i;
+/**
+ * Asking for the picture AGAIN, changed. Checked before critique, because a
+ * mention with an image attached is otherwise read as "tell me about this" —
+ * and "regenerate this in my style" is a commission, not a request for an
+ * opinion.
+ */
+const RESTYLE_VERBS =
+  /\b(regenerate|re-?generate|redo|remake|restyle|re-?imagine|redraw|repaint|reinterpret|another version|new version|version of this|in (my|your|another|a different) style|in the style of)\b/i;
+
 const CRITIQUE_VERBS =
   /\b(critique|criticism|critic|review|analy[sz]e|interpret|evaluate|thoughts on|what do you think)\b/i;
 
@@ -206,10 +215,15 @@ export function routeMention(m: IncomingMention): MentionIntent {
   const text = m.text || '';
   const hasMedia = !!m.mediaUrls?.length;
 
+  // Media plus a restyle verb is a commission from that image.
+  if (hasMedia && RESTYLE_VERBS.test(text)) return 'restyle';
+
   // Media present -> criticism, unconditionally. Cheap, reversible, touches no
   // key. It wins even over a generate verb: "make something of this" alongside
   // an image should read the image, not spend a render guessing at it.
   if (hasMedia) return 'critique';
+  // Upthread images are not known at routing time; the worker resolves them.
+  if (RESTYLE_VERBS.test(text)) return 'restyle';
   if (CRITIQUE_VERBS.test(text)) return 'critique';
 
   // Feedback and questions about the bot are never a commission, whatever
