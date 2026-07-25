@@ -358,21 +358,30 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
       orderBy: { liquidityEth: 'desc' },
       take: 5,
     });
-    // Symbols are NOT unique on a permissionless chain — thirty-seven distinct
-    // tokens here are called CASHCAT. Depth is the only signal separating the
-    // real one from the squatters, and it is a heuristic an attacker can beat
-    // by funding a pool, so it decides only when it decides CLEARLY: the top
-    // pool must hold well more than the runner-up. Otherwise show the user the
-    // candidates and let them choose, rather than picking their token for them.
-    if (onChain.length > 1 && onChain[0].liquidityEth <= onChain[1].liquidityEth * 3) {
+    // Symbols are NOT unique on a permissionless chain, and depth CANNOT
+    // break the tie. Thirty-seven tokens here are called CASHCAT; the deepest
+    // pool holds 1.797 ETH and is NOT the real one — the token users mean sits
+    // second at 0.037 ETH, 48x shallower. An earlier version of this resolved
+    // on a 3x depth margin and would have bought the impostor with confidence,
+    // which is the whole attack: fund a pool, capture the ticker.
+    //
+    // So a duplicated symbol is never auto-resolved. Depth only ORDERS the
+    // options; the user picks the contract. The address is the only
+    // unambiguous identifier on this chain and the only thing worth signing.
+    const distinct = new Set(onChain.map((t) => t.baseToken.toLowerCase()));
+    if (distinct.size > 1) {
       const options = onChain
         .slice(0, 4)
-        .map((t) => `${t.baseSymbol} (${t.baseName}) ${t.baseToken} — ${t.liquidityEth.toFixed(4)} ETH liquidity`)
+        .map(
+          (t) =>
+            `${t.baseSymbol} (${t.baseName}) ${t.baseToken} — ${t.liquidityEth.toFixed(4)} ETH liquidity`
+        )
         .join('; ');
       throw new Error(
-        `${onChain.length}+ different tokens on Robinhood Chain use the name "${q}" — anyone can mint a ticker, so this cannot be resolved safely. Show the user these and ask which contract they mean: ${options}`
+        `${distinct.size} different tokens on Robinhood Chain use the name "${q}", and the one with the most liquidity is NOT reliably the real one — anyone can mint a ticker and fund a pool. Show the user these and ask which contract address they mean; do not choose for them: ${options}`
       );
     }
+
     if (onChain.length) {
       const hit = onChain[0];
       return {
