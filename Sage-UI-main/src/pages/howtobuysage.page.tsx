@@ -1,6 +1,9 @@
-import { useRouter } from 'next/router';
 import Logotype from '@/components/Logotype';
-import { SAGE_V2_TOKEN_ADDRESS } from '@/constants/config';
+import {
+  SAGE_V2_TOKEN_ADDRESS,
+  PIXELS_LEGACY_TOKEN_ADDRESS,
+  PIXELS_MIGRATION_ENDS_AT,
+} from '@/constants/config';
 import { toast } from 'react-toastify';
 
 // The CURRENT SAGE token. The original (0x1456…) was a bonding-curve launch
@@ -13,6 +16,16 @@ import { toast } from 'react-toastify';
 // before holders have migrated would strand the 284 holders who hold it.
 const SAGE_TOKEN_ADDRESS = SAGE_V2_TOKEN_ADDRESS;
 
+// Shown on the page because the migration window is the thing a holder of the
+// old token most needs to know, and this is the page they read to buy.
+const LEGACY_SAGE_SHORT = `${PIXELS_LEGACY_TOKEN_ADDRESS.slice(0, 6)}…${PIXELS_LEGACY_TOKEN_ADDRESS.slice(-4)}`;
+const MIGRATION_ENDS_LABEL = PIXELS_MIGRATION_ENDS_AT.toLocaleDateString('en-GB', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+
 // NOT /social/token/<address>. That page is registry-backed — getTokenDetail
 // does socialTokenLaunch.findUnique — and this token was launched through
 // Doppler, not SocialTokenFactory, so it has no row and the page 404s. Linking
@@ -21,7 +34,6 @@ const SAGE_TOKEN_ADDRESS = SAGE_V2_TOKEN_ADDRESS;
 const SAGE_TOKEN_PAGE = `https://robinhoodchain.blockscout.com/token/${SAGE_TOKEN_ADDRESS}`;
 
 export default function howtobuysage() {
-  const router = useRouter();
   async function handleImportSAGE() {
     try {
       // wasAdded is a boolean. Like any RPC method, an error may be thrown.
@@ -51,12 +63,14 @@ export default function howtobuysage() {
       <Logotype></Logotype>
       <div className='howtobuyash-header'>How to buy SAGE </div>
       <div className='howtobuyash-text'>
-        <button
-          onClick={() => router.push(SAGE_TOKEN_PAGE)}
+        <a
+          href={SAGE_TOKEN_PAGE}
+          target='_blank'
+          rel='noreferrer'
           className='howtobuyash__import-button'
         >
           BUY SAGE
-        </button>
+        </a>
         <button onClick={handleImportSAGE} className='howtobuyash__import-button'>
           IMPORT SAGE TO WALLET
         </button>
@@ -70,15 +84,13 @@ export default function howtobuysage() {
             Go to the{' '}
             <a
               href={SAGE_TOKEN_PAGE}
-              onClick={(e) => {
-                e.preventDefault();
-                router.push(SAGE_TOKEN_PAGE);
-              }}
+              target='_blank'
+              rel='noreferrer'
               className='howtobuyash-text-link'
             >
               SAGE token page
             </a>{' '}
-            — SAGE trades on its own bonding curve there, not a Uniswap listing.
+            — SAGE trades in a Uniswap v4 pool on Robinhood Chain.
           </p>
         </div>
         <div className='howtobuyash__group'>
@@ -94,8 +106,14 @@ export default function howtobuysage() {
       <div className='howtobuyash-header'>Earning Pixels </div>
       <p className='howtobuyash__earning-pixels-info'>
         When connecting to the platform, you immediately start earning pixels if you have SAGE
-        tokens. You will earn 0.25 Pixels a day per SAGE. This reward is capped at 100,000 SAGE
-        and will earn you 25,000 Pixels a day.
+        tokens. You will earn 0.001 Pixels a day per SAGE. This reward is capped at 25,000,000
+        SAGE and will earn you 25,000 Pixels a day.
+      </p>
+      <p className='howtobuyash__earning-pixels-info'>
+        Holding the previous SAGE token ({LEGACY_SAGE_SHORT}) still earns until{' '}
+        {MIGRATION_ENDS_LABEL}, at the rate it always did — 0.25 Pixels a day per token, capped
+        at 100,000. Holding both does not earn twice: whichever token would earn you more is the
+        one that counts. After that date only the token above earns.
       </p>
     </div>
   );
