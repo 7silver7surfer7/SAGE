@@ -129,6 +129,41 @@ async function oneWalletWhole(address: string): Promise<bigint> {
  * throwing — the sweep must not stall the whole book over one row.
  */
 async function liveSageWhole(address: string): Promise<bigint> {
+  /**
+   * A wallet that is linked INTO another account earns NOTHING on its own.
+   *
+   * Its balance now belongs to the account it feeds, so leaving it accruing
+   * here too pays the same tokens twice. That was live and trivially
+   * exploitable: sign in as a throwaway, link a 25,000,000-token wallet to it
+   * with one dust transfer, and the whale keeps earning its capped 25,000/day
+   * while the throwaway earns another 25,000/day off the identical balance.
+   * The LinkedWallet primary key bounds it to 2x per wallet, but it scales
+   * linearly — split across N wallets, link each to its own throwaway, and it
+   * is 2x forever. The fabricated stream banks into `settled` with an ordinary
+   * kind:'bank' journal row, so after the fact it is indistinguishable from
+   * real accrual and immediately spendable.
+   *
+   * Case-insensitive on purpose: LinkedWallet.address is stored checksummed,
+   * while callers pass PixelAccount.walletAddress, and those need not agree on
+   * case. An exact match would silently fail open — which is the same as no
+   * check at all.
+   */
+  try {
+    const linkedElsewhere = await prisma.linkedWallet.findFirst({
+      where: { address: { equals: address, mode: 'insensitive' } },
+      select: { walletAddress: true },
+    });
+    if (
+      linkedElsewhere &&
+      linkedElsewhere.walletAddress.toLowerCase() !== address.toLowerCase()
+    ) {
+      return BigInt(0);
+    }
+  } catch {
+    /* a lookup failure must not silently open the double-credit; fall through
+       to the normal path, which is the pre-link behaviour */
+  }
+
   let extra: string[] = [];
   try {
     extra = (
