@@ -3,6 +3,7 @@ import { Role, Prisma } from '@prisma/client';
 import { ethers } from 'ethers';
 import { createHash } from 'crypto';
 import { requireRole, getRequester } from '@/utilities/apiAuth';
+import { isUserWalletCode } from '@/utilities/accountKind';
 import { extractFirstUrl, fetchLinkPreview } from '@/utilities/linkPreview';
 import prisma from '@/prisma/client';
 import {
@@ -3995,8 +3996,13 @@ async function syncTransferees(token: string): Promise<void> {
         const code = await provider.getCode(a).catch(() => null);
         // null = RPC hiccup: skip WITHOUT inserting — an unknown address must
         // not be misclassified; it'll be re-checked because the cursor only
-        // advances past it once, but skipDuplicates makes a re-scan free
-        if (code === '0x') rows.push({ tokenAddress: token, address: a });
+        // advances past it once, but skipDuplicates makes a re-scan free.
+        //
+        // isUserWalletCode, not `code === '0x'`: an EIP-7702 delegated wallet
+        // is a person whose key still signs, but it carries a 23-byte
+        // designator, so the old test filed it as a contract and dropped it.
+        // On the new SAGE token that is 98.89% of user-held supply.
+        if (isUserWalletCode(code)) rows.push({ tokenAddress: token, address: a });
       }
       if (rows.length) {
         await prisma.socialTokenTransferee.createMany({ data: rows, skipDuplicates: true });
