@@ -604,6 +604,7 @@ const PAIR_ENUM_ABI = new ethers.utils.Interface([
   'function name() view returns (string)',
   'function symbol() view returns (string)',
   'function decimals() view returns (uint8)',
+  'function getReserves() view returns (uint112,uint112,uint32)',
 ]);
 
 async function multicall(
@@ -679,6 +680,16 @@ export async function backfillPairsByEnumeration(
     }
   };
 
+  // Reserves in the SAME pass. Without them every row lands at liquidity 0,
+  // and on a permissionless chain that matters: 37 distinct tokens here are
+  // called CASHCAT, so depth is the only signal separating the real one from
+  // three dozen squatters. Ranking on a column of zeroes ranks nothing.
+  const reserveCalls = wethPairs.map((p) => ({
+    target: p.pairAddress,
+    callData: PAIR_ENUM_ABI.encodeFunctionData('getReserves', []),
+  }));
+  const reserves = await multicall(provider, reserveCalls);
+
   let inserted = 0;
   const rows = wethPairs.map((p, i) => ({
     chainId: chain.chainId,
@@ -691,6 +702,25 @@ export async function backfillPairsByEnumeration(
     baseDecimals: Number(decode(metas[i * 3 + 2], 'decimals', 18)) || 18,
     createdAtBlock: head,
     createdAt: new Date(),
+    ...(() => {
+      const d = reserves[i];
+      if (!d) return { liquidityEth: 0, priceEth: 0 };
+      try {
+        const r = PAIR_ENUM_ABI.decodeFunctionResult('getReserves', d);
+        const eth = p.baseIsToken0 ? r[1] : r[0];
+        const base = p.baseIsToken0 ? r[0] : r[1];
+        const ethF = Number(ethers.utils.formatEther(eth));
+        const baseF = Number(
+          ethers.utils.formatUnits(base, Number(decode(metas[i * 3 + 2], 'decimals', 18)) || 18)
+        );
+        return {
+          liquidityEth: ethF,
+          priceEth: baseF > 0 ? (ethF / baseF) * 1_000_000 : 0,
+        };
+      } catch {
+        return { liquidityEth: 0, priceEth: 0 };
+      }
+    })(),
   }));
 
   for (let i = 0; i < rows.length; i += 500) {

@@ -341,15 +341,13 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
     // search the CHAIN-WIDE pair index — SAGE launched a few dozen tokens, the
     // chain carries ~21.7k pairs, and the thing the user means is far more
     // likely to be one of those than a near-spelling of one of ours.
-    // The pair index is populated from `parameters` — i.e. the chain THIS
-    // BUILD targets — while the agent always trades mainnet. On a localhost or
-    // staging build those differ, and consulting it there would offer a
-    // testnet token as though it were real. Skip it unless the index and the
-    // trading venue are the same chain; address resolution still works.
-    const indexIsTradingChain = Number(parameters.CHAIN_ID) === TRADE_CHAIN_ID;
-    const onChain = indexIsTradingChain
-      ? await prisma.dexPair.findMany({
+    // Scoped to the TRADING chain, not the build's. Rows carry chainId now,
+    // so a staging or localhost build can read mainnet pairs safely — before
+    // that discriminator existed this had to be skipped entirely, or it would
+    // have offered a testnet token as though it were real.
+    const onChain = await prisma.dexPair.findMany({
       where: {
+        chainId: TRADE_CHAIN_ID,
         OR: [
           { baseSymbol: { equals: q, mode: 'insensitive' } },
           { baseName: { equals: q, mode: 'insensitive' } },
@@ -358,9 +356,23 @@ async function resolveTradableToken(raw: any): Promise<TradableToken> {
       },
       select: { baseToken: true, baseSymbol: true, baseName: true, liquidityEth: true },
       orderBy: { liquidityEth: 'desc' },
-          take: 2,
-        })
-      : [];
+      take: 5,
+    });
+    // Symbols are NOT unique on a permissionless chain — thirty-seven distinct
+    // tokens here are called CASHCAT. Depth is the only signal separating the
+    // real one from the squatters, and it is a heuristic an attacker can beat
+    // by funding a pool, so it decides only when it decides CLEARLY: the top
+    // pool must hold well more than the runner-up. Otherwise show the user the
+    // candidates and let them choose, rather than picking their token for them.
+    if (onChain.length > 1 && onChain[0].liquidityEth <= onChain[1].liquidityEth * 3) {
+      const options = onChain
+        .slice(0, 4)
+        .map((t) => `${t.baseSymbol} (${t.baseName}) ${t.baseToken} — ${t.liquidityEth.toFixed(4)} ETH liquidity`)
+        .join('; ');
+      throw new Error(
+        `${onChain.length}+ different tokens on Robinhood Chain use the name "${q}" — anyone can mint a ticker, so this cannot be resolved safely. Show the user these and ask which contract they mean: ${options}`
+      );
+    }
     if (onChain.length) {
       const hit = onChain[0];
       return {

@@ -10,6 +10,9 @@ export interface Props {
   txCount: number;
   botStatus: string;
   threads: Thread[];
+  onNewSession: () => void;
+  showArchived: boolean;
+  onToggleArchived: () => void;
   creditsLabel: string;
   /** CSS width for the meter fill, e.g. "64%" */
   creditsPct: string;
@@ -85,6 +88,9 @@ export default function AgentRail({
   txCount,
   botStatus,
   threads,
+  onNewSession,
+  showArchived,
+  onToggleArchived,
   creditsLabel,
   creditsPct,
   creditsPctLabel,
@@ -271,9 +277,62 @@ export default function AgentRail({
       </div>
 
       <div style={{ flex: 'none', padding: '18px 12px' }}>
-        <div style={{ ...label(9.5, C.ink3, '0.22em'), padding: '0 10px 12px' }}>SESSIONS</div>
-        {threads.map((t, i) => {
-          const key = `${i}-${t.title}`;
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 10px 12px',
+            gap: '8px',
+          }}
+        >
+          <span style={label(9.5, C.ink3, '0.22em')}>
+            {showArchived ? 'ARCHIVED' : 'SESSIONS'}
+          </span>
+          <span style={{ display: 'flex', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={onToggleArchived}
+              title={showArchived ? 'Show open sessions' : 'Show archived sessions'}
+              style={{
+                ...label(9, hovered === 'arch' ? C.accent : C.ink3, '0.14em'),
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+              }}
+              {...hoverProps('arch')}
+            >
+              {showArchived ? 'OPEN' : 'ARCHIVE'}
+            </button>
+            <button
+              type="button"
+              onClick={onNewSession}
+              title="Start a new session"
+              style={{
+                ...label(9, hovered === 'new' ? C.accent : C.ink3, '0.14em'),
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+              }}
+              {...hoverProps('new')}
+            >
+              + NEW
+            </button>
+          </span>
+        </div>
+
+        {/* Empty is a real state now that these are stored threads, not three
+            hardcoded strings — say so rather than rendering nothing. */}
+        {threads.length === 0 ? (
+          <div style={{ ...label(9.5, C.ink3, '0.14em'), padding: '4px 10px', lineHeight: 1.6 }}>
+            {showArchived ? 'NOTHING ARCHIVED' : 'NO SESSIONS YET'}
+          </div>
+        ) : null}
+
+        {threads.map((t) => {
+          const key = t.id;
           return (
             <div
               key={key}
@@ -282,23 +341,48 @@ export default function AgentRail({
               style={{
                 padding: '11px 10px',
                 cursor: 'pointer',
-                borderLeft: `1px solid ${hovered === key ? C.accent : C.line}`,
-                background: hovered === key ? C.raised : 'transparent',
+                borderLeft: `1px solid ${hovered === key || t.active ? C.accent : C.line}`,
+                background: hovered === key || t.active ? C.raised : 'transparent',
                 marginBottom: '2px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '8px',
               }}
             >
-              <div
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: '13px',
+                    color: C.ink,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {t.title}
+                </div>
+                <div style={{ ...label(9.5, C.ink3, '0.14em'), marginTop: '5px' }}>{t.when}</div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  // the row itself opens the thread; this must not do both
+                  e.stopPropagation();
+                  t.archive();
+                }}
+                title={showArchived ? 'Restore' : 'Archive'}
                 style={{
-                  fontSize: '13px',
-                  color: C.ink,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
+                  ...label(9, hovered === key ? C.ink2 : 'transparent', '0.14em'),
+                  background: 'none',
+                  border: 'none',
+                  padding: '2px 0 0',
+                  cursor: 'pointer',
+                  flex: 'none',
                 }}
               >
-                {t.title}
-              </div>
-              <div style={{ ...label(9.5, C.ink3, '0.14em'), marginTop: '5px' }}>{t.when}</div>
+                {showArchived ? '↩' : '×'}
+              </button>
             </div>
           );
         })}

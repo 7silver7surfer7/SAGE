@@ -89,6 +89,9 @@ export default function AgentPage({ drops }: Props) {
             txCount={a.txCount}
             botStatus={a.botStatus}
             threads={a.threads}
+            onNewSession={a.newSession}
+            showArchived={a.showArchived}
+            onToggleArchived={a.toggleArchived}
             creditsLabel={a.creditsLabel}
             creditsPct={a.creditsPct}
             creditsPctLabel={a.creditsPctLabel}

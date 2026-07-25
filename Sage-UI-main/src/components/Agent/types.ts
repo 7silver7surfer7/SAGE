@@ -157,9 +157,14 @@ export interface ModelOption {
 }
 
 export interface Thread {
+  id: string;
   title: string;
   when: string;
+  /** the thread currently on screen */
+  active?: boolean;
   select: () => void;
+  /** archive, or restore when the rail is showing archived threads */
+  archive: () => void;
 }
 
 export interface Suggestion {

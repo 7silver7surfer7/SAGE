@@ -149,6 +149,15 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
   const [buying, setBuying] = useState(false);
   /** live ETH quote per tier id, from /api/credits */
   const [tierEth, setTierEth] = useState<Record<string, number>>({});
+
+  // ── sessions ──────────────────────────────────────────────────────────
+  // The rail's thread list shipped as three hardcoded strings. These hold the
+  // real ones: the open session, and the wallet's other threads.
+  const [sessionId, setSessionId] = useState<string>('');
+  const [sessionList, setSessionList] = useState<
+    { id: string; title: string; when: string }[]
+  >([]);
+  const [showArchived, setShowArchived] = useState(false);
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
   const [modelOpen, setModelOpen] = useState(false);
   const [imageModelId, setImageModelId] = useState(DEFAULT_IMAGE_MODEL_ID);
@@ -203,6 +212,63 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
       live = false;
     };
   }, [wallet.connected, wallet.address]);
+
+  /** Refresh the rail's thread list. */
+  const loadSessions = useCallback(
+    async (archived = showArchived) => {
+      if (!wallet.connected) {
+        setSessionList([]);
+        return;
+      }
+      try {
+        const r = await fetch(`/api/agent-sessions/?archived=${archived ? '1' : '0'}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        setSessionList(Array.isArray(d?.sessions) ? d.sessions : []);
+      } catch {
+        /* the rail simply stays as it was */
+      }
+    },
+    [wallet.connected, showArchived]
+  );
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  /**
+   * Persist one message. Creates the session on the FIRST message rather than
+   * on page load, so opening the agent and typing nothing leaves no empty
+   * thread in the rail.
+   */
+  const persist = useCallback(
+    async (role: 'user' | 'assistant', text: string, payload?: any) => {
+      if (!wallet.connected) return;
+      try {
+        let id = sessionId;
+        if (!id) {
+          const r = await fetch('/api/agent-sessions/', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title: role === 'user' ? text : 'New session' }),
+          });
+          if (!r.ok) return;
+          id = (await r.json())?.id || '';
+          if (!id) return;
+          setSessionId(id);
+        }
+        await fetch('/api/agent-sessions/', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, role, text, payload: payload ?? null }),
+        });
+        loadSessions();
+      } catch {
+        /* a failed write must never break the conversation on screen */
+      }
+    },
+    [wallet.connected, sessionId, loadSessions]
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // late-bound: respond() closes over these before confirmIntent is declared
@@ -451,6 +517,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
         ])
       );
       scrollToEnd();
+      persist('user', text);
 
       try {
         const { steps, cards, prose, usage } = await respond(text);
@@ -459,6 +526,10 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
         // here (token counts guessed from string lengths) could not agree with
         // what was actually charged. With no usage — the offline responder —
         // nothing was spent, so nothing is shown.
+        // Cards are stored WITHOUT their handlers — confirm/cancel are
+        // closures over a signer that will not exist on reload, so they are
+        // rebound when a thread is reopened.
+        persist('assistant', prose, { steps, cards: cards.map(({ confirm, cancel, ...c }: any) => c) });
         if (usage) {
           setCredits(usage.credits);
           patchLast((m) => {
@@ -633,6 +704,77 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     [wallet.signer]
   );
 
+  /** Start a fresh thread. The current one is already saved. */
+  const newSession = useCallback(() => {
+    setSessionId('');
+    setMsgs([]);
+    setError('');
+    seq.current = 0;
+    loadSessions();
+  }, [loadSessions]);
+
+  /** Reopen a stored thread. */
+  const openSession = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/agent-sessions/?id=${encodeURIComponent(id)}`);
+      if (!r.ok) {
+        setError('THAT SESSION COULD NOT BE OPENED');
+        return;
+      }
+      const d = await r.json();
+      setSessionId(d.id);
+      setError('');
+      seq.current = 0;
+      setMsgs(
+        (d.messages || []).map((m: any) => {
+          const id2 = ++seq.current;
+          const payload = m.payload || {};
+          return {
+            id: id2,
+            who: m.role === 'user' ? 'YOU' : 'SAGE AGENT',
+            isUser: m.role === 'user',
+            text: m.text,
+            steps: payload.steps || [],
+            // Rebind the signing gate to the CURRENT signer. A stored pending
+            // card whose buttons did nothing would be worse than none.
+            cards: (payload.cards || []).map((c: any) => {
+              const cid = ++seq.current;
+              return c.kind === 'tx' && c.pending
+                ? {
+                    ...c,
+                    id: cid,
+                    confirm: () => confirmIntentRef.current(cid, c.intent),
+                    cancel: () => discardIntentRef.current(cid),
+                  }
+                : { ...c, id: cid };
+            }),
+          };
+        })
+      );
+      scrollToEnd();
+    } catch {
+      setError('THAT SESSION COULD NOT BE OPENED');
+    }
+  }, [scrollToEnd]);
+
+  /** Archive (or restore) a thread — it leaves the rail but is not destroyed. */
+  const archiveSession = useCallback(
+    async (id: string, archived = true) => {
+      try {
+        await fetch('/api/agent-sessions/', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, archived }),
+        });
+        if (id === sessionId) newSession();
+        else loadSessions();
+      } catch {
+        setError('COULD NOT ARCHIVE THAT SESSION');
+      }
+    },
+    [sessionId, newSession, loadSessions]
+  );
+
   const discardIntent = useCallback((cardId: number) => {
     setMsgs((prev) =>
       prev.map((m) => ({
@@ -781,12 +923,16 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
   );
 
   const threads: Thread[] = useMemo(
-    () => [
-      { title: 'RMonet secondary floor', when: '2H AGO', select: () => {} },
-      { title: 'What are Pixels?', when: 'YESTERDAY', select: () => {} },
-      { title: 'Bridging to Robinhood Chain', when: '3 JUL', select: () => {} },
-    ],
-    []
+    () =>
+      sessionList.map((t) => ({
+        id: t.id,
+        title: t.title,
+        when: t.when,
+        active: t.id === sessionId,
+        select: () => openSession(t.id),
+        archive: () => archiveSession(t.id, !showArchived),
+      })),
+    [sessionList, sessionId, openSession, archiveSession, showArchived]
   );
 
   return {
@@ -853,6 +999,10 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     railCollapsed,
     toggleRail: () => setRailCollapsed((v) => !v),
     threads,
+    newSession,
+    showArchived,
+    toggleArchived: () => setShowArchived((v) => !v),
+    sessionsEmpty: sessionList.length === 0,
     portfolioTotal: owned.reduce((n, o) => n + o.cost, 0).toFixed(3) + ' ETH',
     txCount: txs.length,
     botStatus: botEnabled ? 'ACTIVE' : 'PAUSED',
