@@ -548,21 +548,19 @@ export async function buyToken(
 export async function sellToken(
   tokenAddress: string,
   amount: number,
-  signer: Signer
+  signer: Signer,
+  slippageBps: number = DEFAULT_SLIPPAGE_BPS
 ): Promise<string> {
-  const factory = factoryContract(signer, tokenAddress);
-  const token = new ethers.Contract(tokenAddress, ERC20StandardJson.abi, signer);
-  const wei = ethers.utils.parseEther(toDecimalString(amount));
-  const approve = await token.approve(factoryAddressForToken(tokenAddress), wei);
-  await approve.wait(1);
-  // SLIPPAGE: minEthOut is 0 here — same exposure as the buy paths had.
-  // Neither contract exposes a quoteSell, so this cannot use the
-  // quote-then-bound pattern above without reimplementing the curve math.
-  // Left as-is deliberately (the agent never sells); fix before any
-  // automated or agent-initiated sell ships.
-  const tx = await factory.sell(tokenAddress, wei, 0);
-  await tx.wait(1);
-  return tx.hash;
+  // Delegates to sellAnyToken, which prices the sale and bounds it. This used
+  // to pass minEthOut = 0 — an unprotected market order — because no venue
+  // exposes a quoteSell and the curve math had not been reimplemented. It has
+  // been now (resolveSellVenue), so the exemption no longer holds.
+  //
+  // Routing through the resolver also fixes the venue: the caller decided
+  // curve-vs-pool from its own read, and a token that graduated since would
+  // sell into a spent curve.
+  const { hash } = await sellAnyToken(tokenAddress, amount, signer, slippageBps);
+  return hash;
 }
 
 /** The signed-in wallet's balance of a creator coin (whole tokens). */
@@ -742,28 +740,17 @@ export async function buyOnPool(
 }
 
 /** Sell a GRADUATED token on its pool — approves the router if needed. */
-export async function sellOnPool(tokenAddress: string, tokenAmount: number, signer: Signer): Promise<string> {
-  const router = swapRouterContract(signer);
-  const owner = await signer.getAddress();
-  const token = new ethers.Contract(
-    tokenAddress,
-    ['function allowance(address,address) view returns (uint256)', 'function approve(address,uint256) returns (bool)'],
-    signer
-  );
-  const amount = ethers.utils.parseEther(toDecimalString(tokenAmount));
-  const allowance = await token.allowance(owner, router.address);
-  if (allowance.lt(amount)) {
-    const a = await token.approve(router.address, ethers.constants.MaxUint256);
-    await a.wait(1);
-  }
-  // SLIPPAGE: minEthOut is 0 here — same exposure as the buy paths had.
-  // Neither contract exposes a quoteSell, so this cannot use the
-  // quote-then-bound pattern above without reimplementing the curve math.
-  // Left as-is deliberately (the agent never sells); fix before any
-  // automated or agent-initiated sell ships.
-  const tx = await router.sell(tokenAddress, amount, 0);
-  await tx.wait(1);
-  return tx.hash;
+export async function sellOnPool(
+  tokenAddress: string,
+  tokenAmount: number,
+  signer: Signer,
+  slippageBps: number = DEFAULT_SLIPPAGE_BPS
+): Promise<string> {
+  // See sellToken: same unprotected-sell fix. This path additionally used to
+  // approve MaxUint256 to the router, which leaves a standing claim on the
+  // whole balance long after the sale; sellAnyToken approves the exact amount.
+  const { hash } = await sellAnyToken(tokenAddress, tokenAmount, signer, slippageBps);
+  return hash;
 }
 
 /** Creator revenue accrued on the router for this token (claimable + lifetime). */

@@ -667,8 +667,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         body: JSON.stringify({
           model: model.api,
           max_tokens: model.maxTokens,
-          system: SYSTEM,
-          tools: TOOLS,
+          // Cache the static prefix — the system prompt and every tool
+          // definition. It is identical on every request and re-sent on each
+          // round of the tool loop, so a five-round turn was paying full input
+          // price for it five times. Cached reads bill at a tenth.
+          system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
+          tools: TOOLS.map((t, i) =>
+            i === TOOLS.length - 1 ? { ...t, cache_control: { type: 'ephemeral' } } : t
+          ),
           messages,
         }),
       });
@@ -684,8 +690,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const data = await r.json();
       // Every round of the tool loop is billable — charging only the last one
       // would make tool-heavy turns, the expensive ones, effectively free.
-      inputTokens += Number(data?.usage?.input_tokens || 0);
-      outputTokens += Number(data?.usage?.output_tokens || 0);
+      //
+      // Cached tokens are reported separately and cost differently: a cache
+      // WRITE is 1.25x base input, a READ is 0.1x. Normalising them to
+      // base-input equivalents keeps one credit worth $0.002 of real spend and
+      // passes the caching saving to the customer rather than pocketing it.
+      const u = data?.usage || {};
+      inputTokens +=
+        Number(u.input_tokens || 0) +
+        Math.ceil(Number(u.cache_creation_input_tokens || 0) * 1.25) +
+        Math.ceil(Number(u.cache_read_input_tokens || 0) * 0.1);
+      outputTokens += Number(u.output_tokens || 0);
       const blocks = Array.isArray(data.content) ? data.content : [];
       finalText = blocks
         .filter((b: any) => b.type === 'text')
