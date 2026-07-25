@@ -1,0 +1,66 @@
+// SAGE Agent — the only styles that CANNOT be inline.
+//
+// The design (SAGE Agent.dc.html) styles every element inline, and the port
+// keeps that (see components/Agent/tokens.ts). What lands here is the residue
+// that has no inline equivalent: @font-face imports, a keyframe, scrollbar and
+// selection pseudo-elements, and hiding the marketing chrome for this route.
+
+// Space Grotesk + JetBrains Mono, as specified by the design.
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+// The live "thinking" dot in the header and the CONSULTING THE INDEX… line.
+@keyframes sagePulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+// /agent is a full-bleed 100vh application shell with its own rail, header and
+// composer. The site Nav/Footer/Motto would stack above and below it and break
+// the viewport math, so this route opts out of them — same approach /social
+// takes for its own shell (see layout/_footer.scss).
+.layout[data-agent='true'] {
+  .nav,
+  .footer,
+  .menu-toggle {
+    display: none;
+  }
+
+  // the shell manages its own scrolling; the page must not add a second one
+  overflow: hidden;
+}
+
+.agent-shell {
+  // Scoped rather than global: these would otherwise repaint scrollbars and
+  // selection colours across the whole marketplace.
+  ::selection {
+    background: #b8d8a8;
+    color: #101010;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #262626;
+  }
+
+  textarea {
+    font-family: inherit;
+  }
+
+  a {
+    color: #b8d8a8;
+    text-decoration: none;
+
+    &:hover {
+      color: #ecEAE5;
+    }
+  }
+}

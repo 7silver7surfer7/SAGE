@@ -84,6 +84,10 @@ export default function Layout({ children, router }: Props) {
         key={router.route}
         className='layout'
         data-social={router.pathname.startsWith('/social')}
+        // /agent is a full-bleed app shell with its own rail, header and
+        // composer — the marketing Nav/Footer are hidden for it in
+        // styles/pages/_agent.scss, the same opt-out /social uses.
+        data-agent={router.pathname.startsWith('/agent') && !router.pathname.startsWith('/agent-api')}
       >
         <Nav />
         <MenuToggle
@@ -100,6 +104,7 @@ export default function Layout({ children, router }: Props) {
       {!isCreatorsPage &&
         !isSingleDropsPage &&
         !router.pathname.startsWith('/social') &&
+        !router.pathname.startsWith('/agent') &&
         !router.pathname.startsWith('/invite') && <Motto />}
     </React.Fragment>
   );
