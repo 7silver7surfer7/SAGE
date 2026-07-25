@@ -19,6 +19,8 @@ const EMPTY = '—';
 
 export interface AgentWallet {
   connected: boolean;
+  /** ethers signer for executing an order the user has confirmed */
+  signer: any;
   /** shortened for display, e.g. 0x7F3a…9C21 */
   address: string;
   ethLabel: string;
@@ -34,7 +36,7 @@ function short(addr?: string) {
 }
 
 export function useAgentWallet(): AgentWallet {
-  const { isWalletConnected, walletAddress, ashBalanceDisplay, pointsBalanceDisplay } =
+  const { isWalletConnected, walletAddress, ashBalanceDisplay, pointsBalanceDisplay, signer } =
     useSAGEAccount();
   const { openConnectModal } = useConnectModal();
 
@@ -50,6 +52,7 @@ export function useAgentWallet(): AgentWallet {
 
   return {
     connected,
+    signer,
     address: connected ? short(walletAddress) : EMPTY,
     ethLabel: connected && !isNaN(eth) ? eth.toFixed(4) : EMPTY,
     sageLabel: connected && ashBalanceDisplay ? ashBalanceDisplay : EMPTY,

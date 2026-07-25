@@ -12,6 +12,10 @@ import type {
 } from './types';
 import { matchDrop, type AgentDrop } from './dropIndex';
 import type { AgentWallet } from './useAgentWallet';
+import { SAGE_PRICE_TOKEN_ADDRESS } from '@/constants/config';
+
+/** The SAGE token the agent buys — the bonding-curve token, pinned in config. */
+const SAGE_TOKEN = SAGE_PRICE_TOKEN_ADDRESS;
 
 /**
  * SAGE Agent — conversation engine.
@@ -117,6 +121,9 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
   ]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // late-bound: respond() closes over these before confirmIntent is declared
+  const confirmIntentRef = useRef<(id: number, intent: any) => void>(() => {});
+  const discardIntentRef = useRef<(id: number) => void>(() => {});
   const seq = useRef(0);
   const nextId = () => ++seq.current;
 
@@ -142,13 +149,72 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
     });
   }, []);
 
-  // ── the swappable seam ────────────────────────────────────────────────────
+  // ── the model call ────────────────────────────────────────────────────────
   /**
-   * Produce the assistant's steps, cards and prose for one user turn.
-   * Replace this body with a call to a server route to go live; the signature
-   * is already the async shape a network call needs.
+   * One assistant turn, via /api/agent.
+   *
+   * The route holds the API key and runs the tool loop server-side; nothing
+   * here ever sees it. Money actions come back as an unsigned INTENT on a
+   * pending tx card — the user signs those with their own wallet (see
+   * `confirmIntent`), so this client never receives a receipt for something it
+   * did not sign.
+   *
+   * Falls back to the local responder when the route is unavailable (no key
+   * configured, or signed out) so the page stays usable rather than erroring
+   * into a dead end — the fallback is clearly labelled as sample data.
    */
   const respond = useCallback(
+    async (text: string): Promise<{ steps: string[]; cards: Card[]; prose: string }> => {
+      try {
+        const history = msgs
+          .filter((m) => m.text)
+          .slice(-12)
+          .map((m) => ({ role: m.isUser ? 'user' : 'assistant', content: m.text }));
+        const r = await fetch('/api/agent/', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text, model: modelId, history }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          return {
+            steps: Array.isArray(d.steps) ? d.steps : [],
+            // ids are assigned client-side so cards stay keyable across turns
+            // ids are assigned here so cards stay keyable; a pending order
+            // gets its confirm/discard bound to the LOCAL signer — the server
+            // only ever described the order, it never carried a way to send it.
+            cards: (Array.isArray(d.cards) ? d.cards : []).map((c: any) => {
+              const id = nextId();
+              if (c.kind === 'tx' && c.pending) {
+                return {
+                  ...c,
+                  id,
+                  confirm: () => confirmIntentRef.current(id, c.intent),
+                  cancel: () => discardIntentRef.current(id),
+                };
+              }
+              return { ...c, id };
+            }),
+            prose: String(d.text || ''),
+          };
+        }
+        if (r.status === 401) {
+          return {
+            steps: [],
+            cards: [],
+            prose: 'Sign in with your wallet and I can answer from the live index.',
+          };
+        }
+      } catch {
+        /* fall through to the local responder below */
+      }
+      return localRespond(text);
+    },
+    [msgs, modelId, wallet, drops]
+  );
+
+  /** Deterministic offline answer — used only when /api/agent is unreachable. */
+  const localRespond = useCallback(
     async (text: string): Promise<{ steps: string[]; cards: Card[]; prose: string }> => {
       const q = text.toLowerCase();
       const steps: string[] = [];
@@ -324,6 +390,84 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
     wallet.connect();
   }, [wallet]);
 
+  /**
+   * Execute an order the user confirmed on a pending tx card.
+   *
+   * This is the ONLY place value moves, and it moves through the user's own
+   * signer — the server never signs. The order is re-derived from the card's
+   * intent here rather than trusting anything the model said in prose, and the
+   * underlying buy helpers now quote and bound slippage themselves.
+   */
+  const confirmIntent = useCallback(
+    async (cardId: number, intent: any) => {
+      if (!wallet.signer) {
+        setError('CONNECT A WALLET TO SIGN THIS ORDER');
+        return;
+      }
+      const settle = (patch: Record<string, any>) =>
+        setMsgs((prev) =>
+          prev.map((m) => ({
+            ...m,
+            cards: (m.cards || []).map((c) =>
+              c.id === cardId ? ({ ...c, pending: false, ...patch } as Card) : c
+            ),
+          }))
+        );
+      try {
+        if (intent?.action !== 'buy_sage') throw new Error('unsupported order');
+        setError('');
+        const { buyToken, buyOnPool, factoryContract } = await import('@/utilities/socialToken');
+        const token = SAGE_TOKEN;
+        // Same curve-vs-pool decision the token page makes.
+        let graduated = false;
+        try {
+          const curve = await factoryContract(wallet.signer, token).curves(token);
+          graduated = !!curve?.complete;
+        } catch {
+          /* unreadable curve state → take the curve path, which reverts safely */
+        }
+        const eth = Number(intent.ethAmount);
+        const txHash = graduated
+          ? await buyOnPool(token, eth, wallet.signer)
+          : await buyToken(token, eth, wallet.signer);
+        settle({ status: 'CONFIRMED', byline: 'SIGNED BY YOU', rows: [{ k: 'TX', v: txHash }] });
+        setTxs((prev) =>
+          [
+            {
+              title: `Buy SAGE with ${eth} ETH`,
+              venue: graduated ? 'POOL · ROBINHOOD CHAIN' : 'CURVE · ROBINHOOD CHAIN',
+              status: 'CONFIRMED',
+              hash: txHash,
+              amount: `${eth} ETH`,
+              via: 'AGENT',
+              when: 'JUST NOW',
+            },
+          ].concat(prev)
+        );
+      } catch (e: any) {
+        // A revert here is usually slippage protection doing its job.
+        settle({ status: 'FAILED', byline: (e?.message || 'rejected').slice(0, 80) });
+        setError('ORDER NOT SENT · ' + (e?.message || 'rejected').slice(0, 90));
+      }
+    },
+    [wallet.signer]
+  );
+
+  const discardIntent = useCallback((cardId: number) => {
+    setMsgs((prev) =>
+      prev.map((m) => ({
+        ...m,
+        cards: (m.cards || []).map((c) =>
+          c.id === cardId ? ({ ...c, pending: false, status: 'DISCARDED', byline: 'NOT BROADCAST' } as Card) : c
+        ),
+      }))
+    );
+  }, []);
+
+  // keep the late-bound refs pointed at the current closures
+  confirmIntentRef.current = confirmIntent;
+  discardIntentRef.current = discardIntent;
+
   const buyCredits = useCallback(
     (tierId: string) => {
       const t = TIERS.find((x) => x.id === tierId) || TIERS[1];
@@ -437,6 +581,8 @@ export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentE
     // wallet
     connected: wallet.connected,
     address: wallet.address,
+    confirmIntent,
+    discardIntent,
     connect,
 
     // credits + balances

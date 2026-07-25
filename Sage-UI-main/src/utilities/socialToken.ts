@@ -82,16 +82,44 @@ export async function graduateToken(tokenAddress: string, signer: Signer): Promi
   return tx.hash;
 }
 
+/**
+ * Default slippage tolerance for a market buy, in basis points (2%).
+ *
+ * SECURITY: both buy paths below used to pass minTokensOut = 0, which is not
+ * "no preference" — it is an instruction to accept ANY amount of tokens for
+ * your ETH. A sandwich bot can front-run the trade, move the price, and leave
+ * the buyer with dust; on a thin bonding curve that is a total loss of the
+ * spend. Quoting first and demanding at least (quote − tolerance) makes the
+ * trade revert instead of filling at an arbitrary price.
+ */
+const DEFAULT_SLIPPAGE_BPS = 200;
+
+/** quote → minOut, or throw. Never silently degrade to an unprotected buy. */
+function applySlippage(quoted: ethers.BigNumber, slippageBps: number): ethers.BigNumber {
+  const bps = Math.max(0, Math.min(5000, Math.floor(slippageBps)));
+  const minOut = quoted.mul(10000 - bps).div(10000);
+  if (minOut.lte(0)) {
+    throw new Error('quote returned zero — refusing to buy without price protection');
+  }
+  return minOut;
+}
+
 /** Buy a creator coin off the bonding curve with ETH (1% fee to the treasury). */
 export async function buyToken(
   tokenAddress: string,
   ethAmount: number,
-  signer: Signer
+  signer: Signer,
+  slippageBps: number = DEFAULT_SLIPPAGE_BPS
 ): Promise<string> {
   const factory = factoryContract(signer, tokenAddress);
-  const tx = await factory.buy(tokenAddress, 0, {
-    value: ethers.utils.parseEther(toDecimalString(ethAmount)),
-  });
+  const value = ethers.utils.parseEther(toDecimalString(ethAmount));
+  // The curve's quoteBuy expects the POST-fee amount, unlike the router's
+  // (which takes the gross). Read the fee off the contract rather than
+  // hardcoding it, so a fee-tier change can't silently skew the quote.
+  const feeBps = await factory.FEE_BPS();
+  const ethInAfterFee = value.sub(value.mul(feeBps).div(10000));
+  const quoted = await factory.quoteBuy(tokenAddress, ethInAfterFee);
+  const tx = await factory.buy(tokenAddress, applySlippage(quoted, slippageBps), { value });
   await tx.wait(1);
   return tx.hash;
 }
@@ -107,6 +135,11 @@ export async function sellToken(
   const wei = ethers.utils.parseEther(toDecimalString(amount));
   const approve = await token.approve(factoryAddressForToken(tokenAddress), wei);
   await approve.wait(1);
+  // SLIPPAGE: minEthOut is 0 here — same exposure as the buy paths had.
+  // Neither contract exposes a quoteSell, so this cannot use the
+  // quote-then-bound pattern above without reimplementing the curve math.
+  // Left as-is deliberately (the agent never sells); fix before any
+  // automated or agent-initiated sell ships.
   const tx = await factory.sell(tokenAddress, wei, 0);
   await tx.wait(1);
   return tx.hash;
@@ -273,9 +306,17 @@ export function swapRouterContract(signerOrProvider: Signer | ethers.providers.P
 }
 
 /** Buy a GRADUATED token on its Uniswap pool (0.25% router fee: 0.05% creator). */
-export async function buyOnPool(tokenAddress: string, ethAmount: number, signer: Signer): Promise<string> {
+export async function buyOnPool(
+  tokenAddress: string,
+  ethAmount: number,
+  signer: Signer,
+  slippageBps: number = DEFAULT_SLIPPAGE_BPS
+): Promise<string> {
   const router = swapRouterContract(signer);
-  const tx = await router.buy(tokenAddress, 0, { value: ethers.utils.parseEther(toDecimalString(ethAmount)) });
+  const value = ethers.utils.parseEther(toDecimalString(ethAmount));
+  // The router's quoteBuy takes the GROSS amount and nets the fee internally.
+  const quoted = await router.quoteBuy(tokenAddress, value);
+  const tx = await router.buy(tokenAddress, applySlippage(quoted, slippageBps), { value });
   await tx.wait(1);
   return tx.hash;
 }
@@ -295,6 +336,11 @@ export async function sellOnPool(tokenAddress: string, tokenAmount: number, sign
     const a = await token.approve(router.address, ethers.constants.MaxUint256);
     await a.wait(1);
   }
+  // SLIPPAGE: minEthOut is 0 here — same exposure as the buy paths had.
+  // Neither contract exposes a quoteSell, so this cannot use the
+  // quote-then-bound pattern above without reimplementing the curve math.
+  // Left as-is deliberately (the agent never sells); fix before any
+  // automated or agent-initiated sell ships.
   const tx = await router.sell(tokenAddress, amount, 0);
   await tx.wait(1);
   return tx.hash;
