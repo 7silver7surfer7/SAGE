@@ -92,10 +92,27 @@ function HoverRow({ style, hoverStyle, children }: { style: CSSProperties; hover
 }
 
 /**
- * The design's <image-slot> is a design-tool web component. Here it is a plain
- * placeholder box; the real artwork is wired in by whoever renders the card.
+ * Stands in for the design's <image-slot>. With real drops wired in we usually
+ * have actual artwork, so render it and keep the hint as the fallback for rows
+ * that have no banner yet. A plain <img> rather than next/image: the source is
+ * a stored S3/IPFS gateway URL whose host may not be in images.domains, and a
+ * card that fails to render is worse than one that skips optimisation.
  */
-function ImageSlot({ hint }: { hint?: string }) {
+function ImageSlot({ hint, url }: { hint?: string; url?: string | null }) {
+  // Real catalogues contain rows whose banner has moved, 404s, or sits behind a
+  // slow IPFS gateway. Falling back to the placeholder beats a broken-image
+  // glyph in the middle of an answer.
+  const [failed, setFailed] = useState(false);
+  if (url && !failed) {
+    return (
+      <img
+        src={url}
+        alt={hint || ''}
+        onError={() => setFailed(true)}
+        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+      />
+    );
+  }
   return (
     <div
       style={{
@@ -107,6 +124,7 @@ function ImageSlot({ hint }: { hint?: string }) {
         justifyContent: 'center',
         padding: '10px',
         textAlign: 'center',
+        overflow: 'hidden',
         ...label(9, C.ink3, '0.18em'),
       }}
     >
@@ -128,7 +146,7 @@ export default function AgentCard({ card, onConnect }: Props) {
             position: 'relative',
           }}
         >
-          <ImageSlot hint={card.imgHint} />
+          <ImageSlot hint={card.imgHint} url={card.imgUrl} />
         </div>
         <div
           style={{
@@ -172,7 +190,7 @@ export default function AgentCard({ card, onConnect }: Props) {
     return (
       <div style={{ padding: '22px', display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ width: '84px', height: '84px', flex: 'none' }}>
-          <ImageSlot hint={card.imgHint} />
+          <ImageSlot hint={card.imgHint} url={card.imgUrl} />
         </div>
         <div style={{ flex: 1, minWidth: '220px' }}>
           <div style={{ ...label(9, C.ink3), marginBottom: '9px' }}>ARTIST</div>

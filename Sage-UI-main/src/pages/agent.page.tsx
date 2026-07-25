@@ -6,7 +6,29 @@ import AgentChat from '@/components/Agent/AgentChat';
 import AgentComposer from '@/components/Agent/AgentComposer';
 import { BotModal, BuyModal, HistoryModal, PortfolioModal } from '@/components/Agent/AgentModals';
 import { useAgentEngine } from '@/components/Agent/useAgentEngine';
+import { useAgentWallet } from '@/components/Agent/useAgentWallet';
+import { toAgentDrops, type AgentDrop } from '@/components/Agent/dropIndex';
+import { getDropsPageData } from '@/prisma/functions';
+import prisma from '@/prisma/client';
 import { C, F } from '@/components/Agent/tokens';
+
+interface Props {
+  drops: AgentDrop[];
+}
+
+/**
+ * The agent answers from the SAME catalogue the /drops page renders — fetched
+ * with getDropsPageData so the two can never disagree about what exists. It is
+ * statically generated and revalidated on the /drops cadence; the agent does
+ * not need drop data fresher than the page a user would click through to.
+ */
+export async function getStaticProps() {
+  const drops = await getDropsPageData(prisma);
+  return {
+    props: { drops: toAgentDrops(JSON.parse(JSON.stringify(drops))) },
+    revalidate: 300,
+  };
+}
 
 /**
  * SAGE Agent — the conversational surface over the SAGE index.
@@ -17,8 +39,9 @@ import { C, F } from '@/components/Agent/tokens';
  *
  * All conversation state lives in useAgentEngine; this file is layout only.
  */
-export default function AgentPage() {
-  const a = useAgentEngine();
+export default function AgentPage({ drops }: Props) {
+  const wallet = useAgentWallet();
+  const a = useAgentEngine({ drops, wallet });
 
   // The design switches gutters, composer padding and the hero size at 900px.
   // Tracked in state rather than CSS because those values are passed to

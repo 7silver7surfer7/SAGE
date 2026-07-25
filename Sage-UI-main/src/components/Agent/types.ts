@@ -53,12 +53,15 @@ export interface DropCard extends CardBase {
   minted?: string;
   imgId?: string;
   imgHint?: string;
+  /** real artwork when we have it; falls back to imgHint */
+  imgUrl?: string | null;
 }
 
 export interface ArtistCard extends CardBase {
   kind: 'artist';
   imgId?: string;
   imgHint?: string;
+  imgUrl?: string | null;
   rows?: KV[];
 }
 

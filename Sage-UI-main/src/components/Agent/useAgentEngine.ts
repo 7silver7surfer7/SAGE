@@ -10,6 +10,8 @@ import type {
   Tier,
   TxRecord,
 } from './types';
+import { matchDrop, type AgentDrop } from './dropIndex';
+import type { AgentWallet } from './useAgentWallet';
 
 /**
  * SAGE Agent — conversation engine.
@@ -45,22 +47,9 @@ export const MODELS: ModelOption[] = [
   { id: 'claude-haiku-4-5', label: 'HAIKU 4.5', rate: 0.3, note: 'FAST · CHEAPEST' },
 ];
 
-/**
- * The one confirmed drop. The design's system prompt is emphatic that the
- * index holds exactly this and that no future drop may be implied — the
- * responder below honours that rather than inventing a roadmap.
- */
-const DROPS = [
-  {
-    slug: 'rmonet',
-    title: 'RMonet',
-    artist: 'Silver Surfer',
-    status: 'SOLD OUT · SECONDARY',
-    price: '0.14 ETH FLOOR',
-    editions: '1,000',
-    minted: '1,000',
-  },
-];
+// The drop catalogue is REAL — passed in from getStaticProps via the same
+// getDropsPageData() the /drops page uses, so the agent cannot describe a drop
+// the site does not show. See dropIndex.ts.
 
 const LISTINGS = [
   { edition: '#128', price: 0.14, seller: '0x2Ba1…8fD0', venue: 'SAGE' },
@@ -69,13 +58,8 @@ const LISTINGS = [
   { edition: '#877', price: 0.21, seller: '0xB1f4…09aE', venue: 'OPENSEA' },
 ];
 
-const WALLET = {
-  address: '0x7F3a…9C21',
-  eth: 64.2108,
-  sage: 128400,
-  usdg: 2480,
-  pixels: '8,120 PX',
-};
+// Wallet figures are REAL — supplied by useAgentWallet (wagmi + the app's own
+// useSAGEAccount). Nothing about a balance is mocked here.
 
 const TIERS: Tier[] = [
   { id: 'taste', title: 'Taste', credits: 500, cost: '0.006 ETH', note: 'A few sessions' },
@@ -85,12 +69,19 @@ const TIERS: Tier[] = [
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export function useAgentEngine(startingCredits = 1240) {
+export interface AgentEngineOptions {
+  /** the real drop catalogue, from getStaticProps */
+  drops: AgentDrop[];
+  /** real wallet figures — see useAgentWallet */
+  wallet: AgentWallet;
+  startingCredits?: number;
+}
+
+export function useAgentEngine({ drops, wallet, startingCredits = 1240 }: AgentEngineOptions) {
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [connected, setConnected] = useState(false);
   const [credits, setCredits] = useState(startingCredits);
   const [modelId, setModelId] = useState('claude-sonnet-5');
   const [modelOpen, setModelOpen] = useState(false);
@@ -169,7 +160,7 @@ export function useAgentEngine(startingCredits = 1240) {
       const wantsDrop = /drop|rmonet|edition|mint|art|collection/.test(q);
 
       if (wantsWallet) {
-        if (!connected) {
+        if (!wallet.connected) {
           cards.push({
             id: nextId(),
             kind: 'wallet',
@@ -180,18 +171,17 @@ export function useAgentEngine(startingCredits = 1240) {
             rows: [],
           });
         } else {
-          steps.push('READING WALLET · ' + WALLET.address);
+          steps.push('READING WALLET · ' + wallet.address);
           cards.push({
             id: nextId(),
             kind: 'wallet',
-            status: 'CONNECTED · ' + WALLET.address,
+            status: 'CONNECTED · ' + wallet.address,
             title: 'Holdings',
             body: 'Read-only snapshot at current block.',
             rows: [
-              { k: 'ETH', v: WALLET.eth.toFixed(4) + ' ETH' },
-              { k: 'SAGE', v: fmt(WALLET.sage) + ' SAGE' },
-              { k: 'USDG', v: fmt(WALLET.usdg) + ' USDG' },
-              { k: 'PIXELS', v: WALLET.pixels },
+              { k: 'ETH', v: wallet.ethLabel + ' ETH' },
+              { k: 'SAGE', v: wallet.sageLabel + ' SAGE' },
+              { k: 'PIXELS', v: wallet.pixels },
             ],
           });
         }
@@ -215,21 +205,35 @@ export function useAgentEngine(startingCredits = 1240) {
         });
       }
 
-      if (wantsDrop && !wantsListings) {
-        const d = DROPS[0];
-        steps.push('FETCHING DROP · ' + d.title.toUpperCase());
-        cards.push({
-          id: nextId(),
-          kind: 'drop',
-          status: d.status,
-          chain: 'ROBINHOOD CHAIN',
-          title: d.title,
-          byline: 'by ' + d.artist,
-          price: d.price,
-          editions: d.editions,
-          minted: d.minted,
-          imgHint: 'Drop artwork',
-        });
+      if (wantsDrop) {
+        // Prefer the drop the user actually named; otherwise show the most
+        // recent few. Both come from the real catalogue.
+        const named = matchDrop(drops, q);
+        const shown = named ? [named] : drops.slice(0, 3);
+        if (!shown.length) {
+          steps.push('READING DROP INDEX · EMPTY');
+        } else {
+          steps.push(
+            named
+              ? 'FETCHING DROP · ' + named.title.toUpperCase()
+              : 'READING DROP INDEX · ' + drops.length + ' LIVE'
+          );
+          shown.forEach((d) =>
+            cards.push({
+              id: nextId(),
+              kind: 'drop',
+              status: d.status,
+              chain: 'ROBINHOOD CHAIN',
+              title: d.title,
+              byline: 'by ' + d.artist,
+              price: d.price,
+              editions: d.editions,
+              minted: d.minted,
+              imgUrl: d.image,
+              imgHint: 'Drop artwork',
+            })
+          );
+        }
       }
 
       if (wantsListings) {
@@ -249,10 +253,10 @@ export function useAgentEngine(startingCredits = 1240) {
         });
       }
 
-      const prose = buildProse({ q, connected, wantsWallet, wantsListings, wantsToken, wantsDrop });
+      const prose = buildProse({ q, connected: wallet.connected, wantsWallet, wantsListings, wantsToken, wantsDrop });
       return { steps, cards, prose };
     },
-    [connected]
+    [drops, wallet]
   );
 
   const send = useCallback(
@@ -307,31 +311,18 @@ export function useAgentEngine(startingCredits = 1240) {
     [input, busy, credits, model, respond, patchLast, scrollToEnd]
   );
 
+  /**
+   * Hand off to RainbowKit. The design mutated the blocking wallet card in
+   * place on connect, filling in balances immediately — that worked because
+   * its wallet was a local constant. A real connection resolves
+   * asynchronously (modal, extension, chain switch, then an RPC read), so
+   * there is nothing truthful to write at this moment. Instead the card keeps
+   * its prompt and the live figures land in the rail as wagmi settles; asking
+   * again renders a card with real balances.
+   */
   const connect = useCallback(() => {
-    setConnected(true);
-    // upgrade any card that was blocking on a wallet
-    setMsgs((prev) =>
-      prev.map((m) => ({
-        ...m,
-        cards: (m.cards || []).map((c) =>
-          c.kind === 'wallet' && c.needsConnect
-            ? {
-                ...c,
-                needsConnect: false,
-                status: 'CONNECTED · ' + WALLET.address,
-                title: 'Wallet linked',
-                body: 'Ask again and I can read balances or build an order.',
-                rows: [
-                  { k: 'ADDRESS', v: WALLET.address },
-                  { k: 'ETH', v: WALLET.eth.toFixed(4) + ' ETH' },
-                  { k: 'SAGE', v: fmt(WALLET.sage) + ' SAGE' },
-                ],
-              }
-            : c
-        ),
-      }))
-    );
-  }, []);
+    wallet.connect();
+  }, [wallet]);
 
   const buyCredits = useCallback(
     (tierId: string) => {
@@ -382,7 +373,7 @@ export function useAgentEngine(startingCredits = 1240) {
       prev.concat([
         // New links start at the tightest caps — a freshly authorised X
         // account should not inherit a large spend allowance by default.
-        { handle, wallet: WALLET.address, perTweet: 0.25, daily: 1.0, spent: 0, scopes: 'BUY ONLY' },
+        { handle, wallet: wallet.address, perTweet: 0.25, daily: 1.0, spent: 0, scopes: 'BUY ONLY' },
       ])
     );
   }, []);
@@ -444,8 +435,8 @@ export function useAgentEngine(startingCredits = 1240) {
     },
 
     // wallet
-    connected,
-    address: WALLET.address,
+    connected: wallet.connected,
+    address: wallet.address,
     connect,
 
     // credits + balances
@@ -453,10 +444,10 @@ export function useAgentEngine(startingCredits = 1240) {
     creditsLabel: fmt(credits),
     creditsPct: creditsPctNum + '%',
     creditsPctLabel: creditsPctNum + '% OF 2,500',
-    ethLabel: WALLET.eth.toFixed(4),
-    sageLabel: fmt(WALLET.sage),
-    usdgLabel: fmt(WALLET.usdg),
-    pixels: WALLET.pixels,
+    ethLabel: wallet.ethLabel,
+    sageLabel: wallet.sageLabel,
+    usdgLabel: wallet.usdgLabel,
+    pixels: wallet.pixels,
 
     // rail
     railCollapsed,
@@ -484,13 +475,19 @@ export function useAgentEngine(startingCredits = 1240) {
     txRows: txs,
     /** editions held, for the portfolio's NFT list */
     nfts: owned,
-    /** token positions with their share of the book, for the portfolio bars */
+    /**
+     * Real token positions. The design showed a USD value and a share-of-book
+     * bar per row; there is no price oracle wired in here yet, so those read
+     * "—" and the bars stay empty rather than displaying a fabricated
+     * valuation. Wiring getSagePriceUsd() (utilities/sagePrice) plus an ETH
+     * feed is what fills them in.
+     */
     tokenHoldings: [
-      { sym: 'ETH', amount: WALLET.eth.toFixed(4), usd: '$216,743', pct: '97.6%', bar: '97.6%' },
-      { sym: 'SAGE', amount: fmt(WALLET.sage), usd: '$5,290', pct: '2.4%', bar: '2.4%' },
-      { sym: 'USDG', amount: fmt(WALLET.usdg), usd: '$2,480', pct: '1.1%', bar: '1.1%' },
+      { sym: 'ETH', amount: wallet.ethLabel, usd: '—', pct: '—', bar: '0%' },
+      { sym: 'SAGE', amount: wallet.sageLabel, usd: '—', pct: '—', bar: '0%' },
+      { sym: 'PIXELS', amount: wallet.pixels, usd: '—', pct: '—', bar: '0%' },
     ],
-    portfolioUsd: '$221,987',
+    portfolioUsd: '—',
 
     links,
     botEnabled,
@@ -520,12 +517,12 @@ export function useAgentEngine(startingCredits = 1240) {
       // the design prices SAGE 15% cheaper to push payment into the token
       { id: 'sage', label: 'SAGE · −15%' },
     ],
-    buyCta: connected ? 'confirm purchase' : 'connect wallet to buy',
+    buyCta: wallet.connected ? 'confirm purchase' : 'connect wallet to buy',
     buyFootnote:
       'Credits are non-transferable and never expire. Settled on Robinhood Chain. ' + FEED_NOTE,
 
     footerLeft:
-      (connected ? 'AGENT MAY ACT ON-CHAIN · YOU SIGN EVERY TX' : 'READ-ONLY · CONNECT A WALLET TO ACT') +
+      (wallet.connected ? 'AGENT MAY ACT ON-CHAIN · YOU SIGN EVERY TX' : 'READ-ONLY · CONNECT A WALLET TO ACT') +
       ' · METERED BY TOKENS · ' +
       FEED_NOTE,
   };
