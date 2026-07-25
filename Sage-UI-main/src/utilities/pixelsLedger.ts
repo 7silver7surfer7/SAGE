@@ -1,6 +1,12 @@
 import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
 import {
+  RATE_SCALED as SHARED_RATE_SCALED,
+  RATE_DIVISOR as SHARED_RATE_DIVISOR,
+  CAP_SAGE as SHARED_CAP_SAGE,
+  LEGACY_PIXEL_RATIO as SHARED_LEGACY_RATIO,
+} from '@/constants/pixels';
+import {
   parameters,
   PIXELS_TOKEN_ADDRESS,
   PIXELS_LEGACY_TOKEN_ADDRESS,
@@ -24,20 +30,20 @@ import {
  * Server-only (imports prisma) — never import from client code.
  */
 
-// Pixel economics for the CURRENT accrual token.
+// Pixel economics live in constants/pixels.ts so the UI can read the SAME
+// numbers — the profile page previously hardcoded its own copy and would have
+// shown a rate 250x too high after the repricing. BigInt here because accrual
+// is exact integer maths; the shared module is plain numbers for display.
 //
 //   25,000,000 whole tokens -> 25,000 pixels/day  (the cap)
 //   rate = 25 / 25000 = 0.001 pixels per whole token per day
 //
-// The old token ran 25/100 with a 100,000 cap — the same 25,000/day ceiling,
-// reached with 250x fewer tokens. At spot, maxing a wallet now costs about
-// $5.88 against $1.07 on the old token, so a sybil is ~5.5x DEARER to run and
-// the cap is a materially stronger bound than it was. It is also above supply
-// parity (which would have been a 10,000,000 cap, ~$2.35): 25M of a 100bn
-// supply is 0.025% per wallet.
-export const RATE_SCALED = BigInt(25);
-export const RATE_DIVISOR = BigInt(25000);
-export const CAP_SAGE = BigInt(25000000);
+// At spot, maxing a wallet costs ~$5.88 against $1.07 on the old token, so a
+// sybil is ~5.5x dearer to run. Above supply parity (10,000,000, ~$2.35):
+// 25M of a 100bn supply is 0.025% per wallet.
+export const RATE_SCALED = BigInt(SHARED_RATE_SCALED);
+export const RATE_DIVISOR = BigInt(SHARED_RATE_DIVISOR);
+export const CAP_SAGE = BigInt(SHARED_CAP_SAGE);
 const DAY = BigInt(86400);
 
 export function pixelsSource(): 'chain' | 'db' {
@@ -54,7 +60,7 @@ function ledgerProvider() {
  * 100,000 x 250 lands exactly on the new cap, so a legacy holder's ceiling is
  * unchanged — the conversion is a re-denomination, not a re-rate.
  */
-export const LEGACY_PIXEL_RATIO = BigInt(250);
+export const LEGACY_PIXEL_RATIO = BigInt(SHARED_LEGACY_RATIO);
 
 export function migrationWindowOpen(now: Date = new Date()): boolean {
   return now < PIXELS_MIGRATION_ENDS_AT;

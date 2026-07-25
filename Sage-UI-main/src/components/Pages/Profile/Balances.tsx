@@ -1,3 +1,4 @@
+import { pixelsPerDay } from '@/constants/pixels';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
 import ReactTooltip from 'react-tooltip';
 
@@ -37,12 +38,12 @@ export default function Balances() {
   );
 }
 
-// 0.25 pixels/day per SAGE, capped at 100,000 SAGE (= 25,000 pixels/day max)
-// — matches SagePoints.economics() on-chain (rateScaled=25, capSage=100_000).
+// Reads the SAME constants the accrual ledger uses. This used to hardcode
+// `Math.min(balance, 100000) * 0.25`, which was correct for the old token and
+// would have silently overstated the rate by 250x once accrual moved.
 function getPixelRate(sageBalance: number) {
   if (isNaN(sageBalance) || sageBalance == 0) {
     return 0;
   }
-  const capped = Math.min(sageBalance, 100000);
-  return (capped * 0.25).toFixed(1);
+  return pixelsPerDay(sageBalance).toFixed(1);
 }
