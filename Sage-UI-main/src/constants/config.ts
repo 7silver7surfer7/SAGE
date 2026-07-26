@@ -173,6 +173,7 @@ const configuration: Configuration = {
     MARKETPLACE_ADDRESS: '0x7315fa4dcAA74E1EFa7c121E0848f42c7D746dC1', // security fix: chainId binding + unchecked-transfer redeploy, 2026-07-14
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0xfCd2BC43D09e10a5f2C6f015533C607b5cd62D0D',
+    NFT_DEPLOYER_ADDRESS: '', // testnet: not deployed — falls back to the shared contract
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
@@ -202,6 +203,7 @@ const configuration: Configuration = {
     MARKETPLACE_ADDRESS: '0x7315fa4dcAA74E1EFa7c121E0848f42c7D746dC1', // security fix: chainId binding + unchecked-transfer redeploy, 2026-07-14
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0xfCd2BC43D09e10a5f2C6f015533C607b5cd62D0D',
+    NFT_DEPLOYER_ADDRESS: '', // testnet: not deployed — falls back to the shared contract
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
@@ -231,6 +233,7 @@ const configuration: Configuration = {
     MARKETPLACE_ADDRESS: '0x7315fa4dcAA74E1EFa7c121E0848f42c7D746dC1', // security fix: chainId binding + unchecked-transfer redeploy, 2026-07-14
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0xfCd2BC43D09e10a5f2C6f015533C607b5cd62D0D',
+    NFT_DEPLOYER_ADDRESS: '', // testnet: not deployed — falls back to the shared contract
     LOTTERY_ADDRESS: '0x7a7264BbDc1751C507f31cd5cec6e2b150F3725E',
     REWARDS_ADDRESS: '0x5349d0cdCA3954CEfaa69eD00A6C370E1c5818FC',
     AUCTION_ADDRESS: '0x2ee616D15f09eBB6d3D8c0Fe3F5eE42A461230bD',
@@ -262,6 +265,9 @@ const configuration: Configuration = {
     MARKETPLACE_ADDRESS: '0x5aC7DB61278fFd8F19f6d93957Cd47263C62c3Bf', // audit fix: royaltyInfo() reentrancy, 2026-07-15
     STORAGE_ADDRESS: '0x43E26D8B5c559DECb09d65F325e1405589775BA2',
     NFTFACTORY_ADDRESS: '0x2DEEe3E67ed5044e85c934979aAD9CC8fcc8F740', // audit fix round 3: SageNFT withdraw() reentrancy guard + constructor share bound, 2026-07-15
+    // allowedCaller = the platform key. Verified on mainnet: a SageNFT deployed
+    // through this hashes to 0x2dadca49…, matching trustedNftReference.
+    NFT_DEPLOYER_ADDRESS: '0xce955740293D251019cAF1A5f00751d465962A0f',
     LOTTERY_ADDRESS: '0xfF1dF77766c5dbc3C440a8d70782406B32C0Fb54', // same contract — UUPS-upgraded in place with audit fixes, 2026-07-15
     REWARDS_ADDRESS: '0x652595ffD447513DcA1B5e532618Af60C8791E60',
     AUCTION_ADDRESS: '0x83Eac0DCfd0bC5D52Edf4e631CdDb6C0e6438E03', // same contract — UUPS-upgraded in place with audit fixes, 2026-07-15

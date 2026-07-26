@@ -3,6 +3,7 @@ import prisma from '@/prisma/client';
 import { parameters, currencyAddressFor, isEthCurrency } from '@/constants/config';
 import { getServerSigner, deployWhitelistServerSide } from '@/utilities/serverWallet';
 import { publishMessage, PUBLISH_WINDOW_MS } from '@/constants/publish';
+import DedicatedNftDeployerJson from '@/constants/abis/NFT/DedicatedNftDeployer.sol/DedicatedNftDeployer.json';
 /**
  * THE REAL ABIs, from the build artifacts — never hand-written.
  *
@@ -130,15 +131,66 @@ export async function deployDropGamesServerSide(
   // BEFORE any gas is spent, and before the artist contract check, so a
   // forged request cannot even probe.
   verifyPublishSignature(dropId, drop.artistAddress, auth.issuedAt, auth.signature);
-  const nftContract = drop.NftContract?.contractAddress;
-  if (!nftContract) {
-    // The one thing the artist signs. Without it there is nothing to mint INTO,
-    // and the server deliberately does not deploy it on their behalf.
-    throw new Error('the artist has no NFT contract yet — that step is signed by the artist');
-  }
-
   const signer = getServerSigner();
   const txHashes: string[] = [];
+
+  /**
+   * EVERY DROP GETS ITS OWN CONTRACT, from here on.
+   *
+   * Artists used to share one SageNFT across all their drops, so external
+   * marketplaces titled every collection with the artist's contract name and a
+   * drop had no identity of its own. A fresh contract per drop makes each drop
+   * its own collection, named after the drop.
+   *
+   * WHY A SEPARATE DEPLOYER AND NOT THE FACTORY: NFTFactory.createNFTContract
+   * hard-requires `artistContracts[artist] == address(0)` — one per artist,
+   * forever, so it can never mint a second. And no artifact in either repo
+   * reproduces the factory's embedded SageNFT compilation: the Solidity repo's
+   * runtime hashes to 0xc94c3015… and the UI repo's is a different length
+   * again, while every genuine deployment is 0x2dadca49…. Deploying from
+   * either would produce a contract the games REFUSE, because _isTrustedNft
+   * compares runtime codehashes.
+   *
+   * DedicatedNftDeployer is the contract SageCollection already uses for
+   * exactly this, and it carries its own SageNFT compilation — verified on
+   * mainnet before this shipped: a contract deployed through it hashes to
+   * 0x2dadca49…, matching trustedNftReference exactly.
+   *
+   * Existing drops keep their shared contract: nftContractAddress is null for
+   * them, and their games hold the old address on-chain regardless.
+   */
+  let nftContract = drop.nftContractAddress;
+  if (!nftContract) {
+    if (!parameters.NFT_DEPLOYER_ADDRESS) {
+      throw new Error('no dedicated NFT deployer configured for this environment');
+    }
+    const deployer = new ethers.Contract(
+      parameters.NFT_DEPLOYER_ADDRESS,
+      DedicatedNftDeployerJson.abi,
+      signer
+    );
+    const symbol =
+      (drop.nftSymbol || drop.name).replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'SAGE';
+    // The royalty goes in the CONSTRUCTOR. setDefaultRoyalty is
+    // onlyAdminOrMultisig, which is why a self-serve artist's chosen
+    // percentage never applied on the shared contract — here it is set at
+    // birth, so it needs no follow-up transaction and cannot be skipped.
+    const royaltyBps = Math.round((drop.royaltyPercentage ?? 12) * 100);
+    const addr = await deployer.callStatic.deploy(
+      drop.name.slice(0, 60), symbol, parameters.STORAGE_ADDRESS,
+      drop.artistAddress, 8333, royaltyBps
+    );
+    const dtx = await deployer.deploy(
+      drop.name.slice(0, 60), symbol, parameters.STORAGE_ADDRESS,
+      drop.artistAddress, 8333, royaltyBps
+    );
+    await dtx.wait(1);
+    txHashes.push(dtx.hash);
+    nftContract = addr;
+    await prisma.drop.update({ where: { id: dropId }, data: { nftContractAddress: addr } });
+    console.log(`drop ${dropId} :: dedicated NFT contract ${addr} ("${drop.name}" / ${symbol})`);
+  }
+
   const unsupported: string[] = [];
   if (drop.Lotteries.length) unsupported.push(`${drop.Lotteries.length} lottery(ies)`);
   if (drop.CollectionMints.length) unsupported.push(`${drop.CollectionMints.length} collection mint(s)`);
@@ -163,35 +215,12 @@ export async function deployDropGamesServerSide(
   }
 
   /**
-   * THE DROP'S ROYALTY, stamped before any game so every token minted for it
-   * carries the chosen figure.
-   *
-   * setDefaultRoyalty is onlyAdminOrMultisig, so a self-serve artist could
-   * never set it. The client detected that and skipped with a note — correct,
-   * but it meant every self-serve drop silently kept the contract default
-   * (12%) instead of the percentage the artist picked. The server holds
-   * role.admin, so here it actually applies.
-   *
-   * Best-effort: a LEGACY artist contract predates the setter entirely and has
-   * a fixed pooled royalty. That is a real, known state, not a failure, and it
-   * must not stop the drop.
+   * NO setDefaultRoyalty STEP. The per-drop contract takes its royalty in the
+   * CONSTRUCTOR, so it is correct from birth. That also fixes the old silent
+   * failure: setDefaultRoyalty is onlyAdminOrMultisig, so a self-serve artist
+   * could never apply the percentage they chose and every self-serve drop
+   * quietly kept the 12% default.
    */
-  const royaltyBps = Math.round((drop.royaltyPercentage ?? 12) * 100);
-  try {
-    const nft = new ethers.Contract(
-      nftContract,
-      ['function setDefaultRoyalty(uint96)', 'function defaultRoyaltyBps() view returns (uint96)'],
-      signer
-    );
-    const current = Number(await nft.defaultRoyaltyBps());
-    if (current !== royaltyBps) {
-      const tx = await nft.setDefaultRoyalty(royaltyBps);
-      await tx.wait(1);
-      txHashes.push(tx.hash);
-    }
-  } catch (e: any) {
-    console.warn(`drop ${dropId}: royalty not applied (legacy contract?) — ${e?.message || e}`);
-  }
 
   // ── auctions ──────────────────────────────────────────────────────────────
   const auctionContract = new ethers.Contract(parameters.AUCTION_ADDRESS, AuctionJson.abi, signer);

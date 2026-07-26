@@ -738,7 +738,18 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   //await processSplitter(drop.PrimarySplitter, signer, fetchWithBQ);
   //await processSplitter(drop.SecondarySplitter, signer, fetchWithBQ);
   //await createNftCollection(drop, signer);
-  const artistNftContractAddress = await deployStep('artist NFT contract', () =>
+  /**
+   * The artist's SHARED contract is now only needed by the games still on the
+   * client path (lotteries, ZIP collections). Auctions and open editions get a
+   * fresh per-drop contract deployed server-side, so asking a self-serve artist
+   * to sign a contract deploy they will never mint into would be a wallet
+   * prompt for nothing.
+   */
+  const needsSharedContract =
+    (drop.Lotteries?.length ?? 0) > 0 || (drop.CollectionMints?.length ?? 0) > 0;
+  const artistNftContractAddress = !needsSharedContract
+    ? ethers.constants.AddressZero
+    : await deployStep('artist NFT contract', () =>
     // display name becomes the ERC-721 name of a NEW contract (external
     // marketplaces title the collection with it — never plain 'SAGE')
     fetchOrCreateNftContract(
@@ -747,9 +758,9 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
       fetchWithBQ,
       (drop as any).artistDisplayName || drop.NftContract?.Artist?.username,
       (drop as any).nftSymbol
-    )
-  );
-  if (artistNftContractAddress == ethers.constants.AddressZero) {
+        )
+      );
+  if (needsSharedContract && artistNftContractAddress == ethers.constants.AddressZero) {
     throw new Error('Unable to deploy a new artist NFT contract');
   }
   // trigger server-side task that optimizes NFT images

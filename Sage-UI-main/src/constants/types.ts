@@ -19,6 +19,11 @@ export interface Parameters {
   REWARDS_ADDRESS: string;
   ASHTOKEN_ADDRESS: string;
   NFTFACTORY_ADDRESS: string;
+  /** DedicatedNftDeployer whose allowedCaller is the platform key — deploys a
+   *  fresh, genuine-codehash SageNFT per drop. Empty string = per-drop
+   *  contracts are off for this environment and drops fall back to the
+   *  artist's shared contract. */
+  NFT_DEPLOYER_ADDRESS: string;
   MARKETPLACE_ADDRESS: string;
   STORAGE_ADDRESS: string;
   // SAGE Social collects: the platform SageNFT posts are minted into when

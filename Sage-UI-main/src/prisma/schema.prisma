@@ -75,6 +75,15 @@ model Drop {
   // per-wallet voucher at mint time and the minter redeems it themselves.
   // Zero platform gas. Default false = the classic whitelist path.
   voucherGating            Boolean              @default(false)
+  // The drop's OWN SageNFT, deployed fresh at publish so each drop is its own
+  // collection on external marketplaces (titled with the drop name rather than
+  // every drop by an artist sharing one contract called "SAGE").
+  //
+  // NULL = a drop published before this existed: it mints into the artist's
+  // shared contract via the NftContract relation below, and must keep doing so.
+  // Never backfill this — a live drop's games hold their nftContract on-chain,
+  // so changing the row would only make the DB disagree with the chain.
+  nftContractAddress       String?              @db.Char(42)
   NftContract              NftContract          @relation("ContractDrops", fields: [artistAddress], references: [artistAddress])
   ApprovedByUser           User?                @relation("Drop_approvedByToUser", fields: [approvedBy], references: [walletAddress])
   Auctions                 Auction[]
