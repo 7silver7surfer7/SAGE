@@ -315,6 +315,15 @@ model Nft {
   price             Float?
   ownerAddress      String?      @db.Char(42)
   artistAddress     String?      @db.Char(42)
+  // Which ERC-721 this token actually lives in. Null on rows minted before
+  // per-drop contracts, which all belong to the artist's shared contract.
+  //
+  // Without it a token has no identity of its own: tokenId restarts at 1 in
+  // every new contract, so {tokenId, artistAddress} — the key mint
+  // registration deduped on — collides across an artist's drops. Token #1 of
+  // SUPERRARE was silently mistaken for token #1 of an earlier drop and never
+  // recorded, while its owner watched it exist on-chain and nowhere else.
+  contractAddress   String?      @db.Char(42)
   // Snapshot of the parent Drop's artistDisplayName (if any) at the moment
   // this Nft was created — frozen per-NFT for the same reason Drop's own
   // field is frozen: a later profile rename or a different drop by the same
@@ -327,6 +336,9 @@ model Nft {
   Lottery           Lottery?     @relation(fields: [lotteryId], references: [id])
   NftContract       NftContract? @relation(fields: [artistAddress], references: [artistAddress])
   Offers            Offer[]
+
+  // the mint-registration dedup lookup: one token is (contract, tokenId)
+  @@index([contractAddress, tokenId])
 }
 
 model NftContract {

@@ -30,6 +30,8 @@
 /** The relations a caller must load for this to answer correctly. Spread it
  *  into a prisma `include` so no call site has to remember the shape. */
 export const NFT_CONTRACT_INCLUDE = {
+  // contractAddress is a scalar and comes back by default; listed here only so
+  // the shape below and the include stay obviously in sync.
   NftContract: true,
   Auction: { select: { Drop: { select: { nftContractAddress: true } } } },
   OpenEdition: { select: { Drop: { select: { nftContractAddress: true } } } },
@@ -37,6 +39,8 @@ export const NFT_CONTRACT_INCLUDE = {
 } as const;
 
 type WithContracts = {
+  /** stamped at mint time; authoritative when present */
+  contractAddress?: string | null;
   NftContract?: { contractAddress: string | null } | null;
   Auction?: { Drop?: { nftContractAddress: string | null } | null } | null;
   OpenEdition?: { Drop?: { nftContractAddress: string | null } | null } | null;
@@ -54,6 +58,9 @@ type WithContracts = {
 export function nftContractFor(nft: WithContracts | null | undefined): string | null {
   if (!nft) return null;
   return (
+    // Stamped on the row at mint: the only source that cannot be wrong, since
+    // it records where the token was actually minted rather than deducing it.
+    nft.contractAddress ||
     nft.OpenEdition?.Drop?.nftContractAddress ||
     nft.Auction?.Drop?.nftContractAddress ||
     nft.Lottery?.Drop?.nftContractAddress ||

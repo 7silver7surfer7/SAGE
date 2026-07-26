@@ -755,9 +755,26 @@ async function registerOpenEditionMint(
         console.error(`Failed to sync mintCount for openEdition ${openEdition.id}`, e);
       }
     }
-    // idempotent: a retried registration for the same token must not create a duplicate row
+    /**
+     * Idempotent: a retried registration for the same token must not create a
+     * duplicate row. But a token is (contract, tokenId) — NOT (artist, tokenId).
+     *
+     * Deduping on the artist meant every per-drop contract, each of which
+     * starts numbering at 1 again, collided with that artist's earlier drops.
+     * SUPERRARE token #1 matched a token #1 minted from an entirely different
+     * drop, so registration returned that row and created nothing: the NFT was
+     * on-chain, owned, and absent from its owner's collection, while token #2
+     * of the same contract — no earlier token #2 to collide with — registered
+     * fine. A dedup key that is too broad does not error, it just silently
+     * decides two different things are the same thing.
+     *
+     * Rows written before per-drop contracts have no contractAddress and all
+     * belong to the artist's shared contract, so they keep the old key.
+     */
     const existing = await prisma.nft.findFirst({
-      where: { tokenId, artistAddress: openEdition.Drop.artistAddress },
+      where: nftContractAddress
+        ? { tokenId, contractAddress: { equals: nftContractAddress, mode: 'insensitive' } }
+        : { tokenId, artistAddress: openEdition.Drop.artistAddress, contractAddress: null },
     });
     if (existing) {
       response.json({ nftId: existing.id });
@@ -778,6 +795,9 @@ async function registerOpenEditionMint(
         ownerAddress: requester.walletAddress,
         artistAddress: openEdition.Drop.artistAddress,
         artistDisplayName: openEdition.Drop.artistDisplayName,
+        // Stamped at mint so the token knows where it lives without inferring
+        // it from its artist — which is what went wrong above.
+        contractAddress: nftContractAddress,
       },
     });
     response.json({ nftId: record.id });
@@ -1212,9 +1232,13 @@ async function registerCollectionMint(
         console.error(`Failed to sync mintCount for collection ${cm.id}`, e);
       }
     }
-    // idempotent: a retried registration must not create a duplicate row
+    // Idempotent, and keyed on (contract, tokenId) for the reason spelled out
+    // in registerOpenEditionMint: collections get their own per-drop contract
+    // from createCollectionWithNewNft, so their token ids restart at 1 too.
     const existing = await prisma.nft.findFirst({
-      where: { tokenId, artistAddress: cm.Drop.artistAddress },
+      where: nftContractAddress
+        ? { tokenId, contractAddress: { equals: nftContractAddress, mode: 'insensitive' } }
+        : { tokenId, artistAddress: cm.Drop.artistAddress, contractAddress: null },
     });
     if (existing) {
       response.json({ nftId: existing.id });
@@ -1242,6 +1266,7 @@ async function registerCollectionMint(
         numberOfEditions: 1,
         ownerAddress: requester.walletAddress,
         artistAddress: cm.Drop.artistAddress,
+        contractAddress: nftContractAddress,
         artistDisplayName: cm.Drop.artistDisplayName,
       },
     });
