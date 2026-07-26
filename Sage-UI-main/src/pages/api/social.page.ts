@@ -430,6 +430,47 @@ async function refundPixels(
 }
 
 /**
+ * Refund, and if the refund itself fails, RECORD THE DEBT.
+ *
+ * Every call site was `refundPixels(...).catch(() => {})` — not even a
+ * console.error. And this refund fails routinely, not exceptionally: it moves
+ * pixels back OUT of the seller, so it throws 'insufficient pixels' whenever
+ * the seller's balance has moved on, which for an active seller is most of the
+ * time. The buyer was left out of pocket with nothing anywhere recording it,
+ * and because the collect row is deleted on the same path, a later audit
+ * cannot tell the debit from an ordinary spend.
+ *
+ * A failed refund must never be silent in a financial ledger. The journal row
+ * is the durable artefact — kind fits VarChar(20) — so the debt is
+ * reconcilable later even though the transfer could not settle now.
+ */
+async function refundPixelsOrRecordDebt(
+  collector: string,
+  seller: string,
+  postId: number,
+  amount: bigint
+): Promise<void> {
+  try {
+    await refundPixels(collector, seller, postId, amount);
+  } catch (e: any) {
+    console.error(
+      `REFUND FAILED — ${amount} pixels owed to ${collector} for post ${postId} ` +
+        `(seller ${seller}): ${e?.message || e}`
+    );
+    await prisma.pixelJournal
+      .create({
+        data: {
+          walletAddress: collector,
+          delta: BigInt(0),
+          kind: 'refund-owed',
+          reason: `refund:${postId} failed — ${amount} owed from ${seller}`,
+        },
+      })
+      .catch((je: any) => console.error('could not even record the refund debt', je?.message || je));
+  }
+}
+
+/**
  * Media/art URLs must point at OUR bucket — a loose *.amazonaws.com match
  * would accept anyone's bucket with a /social/ folder.
  */
@@ -1801,7 +1842,18 @@ async function collectPost(
       ethTxHash = txHash;
     }
     if (parameters.SOCIAL_COLLECT_MINTER_ADDRESS) {
-      return issueVoucher({ amount, currency, payTxHash: ethTxHash, pointsSpent: null });
+      // No refund to make here — the buyer paid in ETH on-chain, and payTxHash
+      // is already stamped on the claim, so a retry resumes rather than being
+      // told "already collected". Still needs the catch: an unhandled throw
+      // becomes an opaque 500 with no log naming the signer as the cause.
+      try {
+        return await issueVoucher({ amount, currency, payTxHash: ethTxHash, pointsSpent: null });
+      } catch (e: any) {
+        console.error('issueVoucher failed after ETH payment', e?.message || e);
+        return res
+          .status(500)
+          .json({ error: 'payment received but the voucher could not be issued — retry to resume' });
+      }
     }
     const tokenUriEth = `${siteUrl()}/api/social/?action=GetPostMetadata&id=${id}`;
     let mintEth: Awaited<ReturnType<typeof mintSocialCollectServerSide>>;
@@ -1858,10 +1910,39 @@ async function collectPost(
         .json({ error: e?.message === 'pixels-conflict' ? 'pixels are busy — try again' : e.message });
     }
     pointsSpent = pointsPrice;
+    /**
+     * Stamp the payment onto the claim row IMMEDIATELY.
+     *
+     * The resume gate below reads `payTxHash !== null || pointsSpent !== null
+     * || collectPrice === 0`. If issueVoucher throws after the debit, all
+     * three are false, so the placeholder row survives looking unpaid and
+     * every retry answers "already collected" — forever, with the pixels gone
+     * and manual DB surgery the only way out. The ETH branch never had this
+     * problem because it stamps payTxHash before minting; the pixels branch
+     * had nothing equivalent.
+     */
+    await prisma.socialCollect
+      .update({ where: { id: claim.id }, data: { pointsSpent } })
+      .catch((e: any) => console.error('could not stamp pointsSpent on the claim', e?.message || e));
   }
 
   if (parameters.SOCIAL_COLLECT_MINTER_ADDRESS) {
-    return issueVoucher({ amount, currency: 'POINTS', payTxHash: null, pointsSpent });
+    /**
+     * issueVoucher signs and writes; either half can throw (a misconfigured
+     * signer throws for EVERY collect, not one). Unguarded, that lost the
+     * buyer's pixels AND stranded the claim. requestCollectVoucher already
+     * refunds around the same call — this branch simply never did.
+     */
+    try {
+      return await issueVoucher({ amount, currency: 'POINTS', payTxHash: null, pointsSpent });
+    } catch (e: any) {
+      console.error('issueVoucher failed after the pixels debit', e?.message || e);
+      if (pointsSpent !== null) {
+        await refundPixelsOrRecordDebt(r.walletAddress, post.authorAddress, id, pointsSpent);
+      }
+      await releaseClaim();
+      return res.status(500).json({ error: 'could not issue the collect voucher — try again' });
+    }
   }
 
   // server-mints the post NFT to the collector (platform holds role.minter)
@@ -1871,7 +1952,7 @@ async function collectPost(
     mint = await mintSocialCollectServerSide(r.walletAddress, tokenUri);
   } catch (e: any) {
     // the debit already happened — put the pixels back before failing
-    if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id, pointsSpent).catch(() => {});
+    if (pointsSpent !== null) await refundPixelsOrRecordDebt(r.walletAddress, post.authorAddress, id, pointsSpent);
     await releaseClaim();
     return res.status(500).json({ error: `mint failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
   }
@@ -3414,28 +3495,50 @@ async function requestCollectVoucher(
     signature = await signCollectVoucher(minterAddress, chainId, id, r.walletAddress, uri);
   } catch (e: any) {
     // debit already happened — put the pixels back before failing
-    if (pointsSpent !== null) await refundPixels(r.walletAddress, post.authorAddress, id, pointsSpent).catch(() => {});
+    if (pointsSpent !== null) await refundPixelsOrRecordDebt(r.walletAddress, post.authorAddress, id, pointsSpent);
     return res.status(500).json({ error: `voucher signing failed: ${e?.message?.slice(0, 100) || 'unknown'}` });
   }
 
   // record the collect NOW (payment already settled); the on-chain mint the
   // collector then submits is idempotent (minter rejects a second redeem)
-  await prisma.$transaction([
-    prisma.socialCollect.create({
-      data: {
-        postId: id,
-        collectorAddress: r.walletAddress,
-        amount,
-        currency,
-        pointsSpent,
-        payTxHash,
-        mintTxHash: 'voucher', // buyer submits the mint; tx not known server-side
-        contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
-        tokenId: 0, // assigned on-chain when the collector redeems
-      },
-    }),
-    prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
-  ]);
+  //
+  // The "already collected" check at the top of this function is a READ, and
+  // this create is the write — with a debit and an IPFS round-trip in between,
+  // so a double-click puts two requests through the gap. collectPost was
+  // hardened for exactly this (it creates a placeholder claim FIRST); this
+  // path was not. The loser's P2002 used to escape as an unhandled 500, and
+  // the only refund here was wired to the signing failure above — so the
+  // loser's pixels were simply gone: buyer −2×price, author +2×price, one
+  // collect.
+  try {
+    await prisma.$transaction([
+      prisma.socialCollect.create({
+        data: {
+          postId: id,
+          collectorAddress: r.walletAddress,
+          amount,
+          currency,
+          pointsSpent,
+          payTxHash,
+          mintTxHash: 'voucher', // buyer submits the mint; tx not known server-side
+          contractAddress: parameters.SOCIAL_COLLECTS_ADDRESS,
+          tokenId: 0, // assigned on-chain when the collector redeems
+        },
+      }),
+      prisma.socialPost.update({ where: { id }, data: { collectCount: { increment: 1 } } }),
+    ]);
+  } catch (e: any) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      if (pointsSpent !== null) {
+        await refundPixelsOrRecordDebt(r.walletAddress, post.authorAddress, id, pointsSpent);
+      }
+      // an ETH payer keeps their on-chain payment; payTxHash is globally
+      // unique so the duplicate check above already rejects a re-use, and the
+      // winning row carries the collect
+      return res.status(400).json({ error: 'already collected' });
+    }
+    throw e;
+  }
 
   res.json({ ok: true, minter: minterAddress, postId: id, uri, signature });
 }
