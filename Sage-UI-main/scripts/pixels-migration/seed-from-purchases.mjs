@@ -372,6 +372,37 @@ async function main() {
   // the true figure. (The same difference also absorbs any balance the
   // read-modify-write race refunded, which errs toward paying less — reported
   // per account below so it is visible rather than assumed.)
+  /**
+   * REFUSE TO RECONCILE AGAINST A LEDGER THAT ISN'T THERE.
+   *
+   * The shortfall is `entitlement - alreadyCredited`, and alreadyCredited is
+   * read from the database this process happens to be pointed at. Point it at
+   * an empty one — a local dev DB, a fresh branch database, a mistyped
+   * DATABASE_CONNECTION_POOL_URL — and every account reads as never credited,
+   * so the "shortfall" silently becomes the GROSS entitlement and the run pays
+   * everyone their entire lifetime accrual on top of what they already hold.
+   *
+   * This is not hypothetical: the first full dry run of this script did
+   * exactly that against localhost and reported 30,793,684 pixels owed across
+   * 1,582 accounts, with every single alreadyCredited reading 0. The numbers
+   * look completely plausible — there is nothing in the output that says "you
+   * are reading the wrong database".
+   *
+   * A live pixels ledger always has accounts. Zero of them means the
+   * connection is wrong, not that nobody has ever earned.
+   */
+  const ledgerSize = await prisma.pixelAccount.count();
+  console.log(`\nledger has ${ledgerSize.toLocaleString()} existing PixelAccount rows`);
+  if (ledgerSize === 0) {
+    const msg =
+      'the connected database has NO PixelAccount rows. Every account would read as ' +
+      'never-credited, so the shortfall would silently equal the gross entitlement and ' +
+      'this run would pay everyone twice. Check DATABASE_CONNECTION_POOL_URL points at ' +
+      'the live ledger.';
+    if (COMMIT) throw new Error(msg);
+    console.warn(`\nWARNING: ${msg}\nThe SHORTFALL column below is meaningless — it is the gross entitlement.`);
+  }
+
   const accounts = [...earned.keys()].filter((a) => (earned.get(a) ?? 0n) > 0n);
   const rows = [];
   for (const acct of accounts) {
