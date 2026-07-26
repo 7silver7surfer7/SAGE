@@ -120,11 +120,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === 'DELETE') {
     const target = String(req.query.address || '');
     if (!ethers.utils.isAddress(target)) return res.status(400).json({ error: 'bad address' });
-    // scoped to THIS account: deleteMany with both keys, so a crafted request
-    // cannot unlink somebody else's wallet
+    /**
+     * Either END of the link may cut it.
+     *
+     * This was scoped to the link's OWNER only, so a wallet that had been
+     * linked into someone else's account could not remove itself — and since
+     * being linked stops it accruing entirely, "only the other party can undo
+     * it" meant a mistaken or hostile link was permanent without manual
+     * database surgery. Both clauses are still keyed on the SESSION wallet, so
+     * a crafted request still cannot touch a link it is not part of.
+     */
+    const targetAddress = ethers.utils.getAddress(target);
     await prisma.linkedWallet.deleteMany({
-      where: { address: ethers.utils.getAddress(target), walletAddress: address },
+      where: {
+        OR: [
+          // I own this link: unlink the wallet I added
+          { address: targetAddress, walletAddress: address },
+          // I AM this link's linked wallet: cut myself loose from that account
+          { address: address, walletAddress: targetAddress },
+        ],
+      },
     });
+    // whichever side was cut, the freed wallet needs its checkpoint rebuilt
+    // before the sweep would otherwise reach it — same reasoning as linking
+    await dbResync(address).catch(() => {});
     return res.json({ unlinked: true });
   }
 
@@ -225,6 +244,67 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         : res.status(409).json({ error: 'that wallet is already linked to another account' });
     }
 
+    /**
+     * LINKING IS NOT A NEUTRAL ACT FOR THE WALLET BEING LINKED.
+     *
+     * liveSageWhole returns 0 for any address that appears as a
+     * LinkedWallet.address — it has to, or the same tokens accrue twice. So
+     * linking somebody's ACCOUNT into yours does not just borrow their
+     * balance, it stops theirs: their next sweep banks at min(0, cp) = 0,
+     * writes checkpointSage = 0, and they earn nothing from then on, silently,
+     * with the UI showing nothing wrong.
+     *
+     * There was no check for this at all, and nothing in the app makes a
+     * victim emit a seller-chosen exact amount — but the app TRAINS people to
+     * do exactly that ("send exactly 0.00000734 SAGE to 0x…"), so it is
+     * on-pattern for a phishing prompt. Refusing an address that is itself an
+     * account closes it: every signed-in wallet has a User row.
+     */
+    const isOwnAccount = await prisma.user.findUnique({
+      where: { walletAddress: match.from },
+      select: { walletAddress: true },
+    });
+    if (isOwnAccount) {
+      return res.status(409).json({
+        error: 'that wallet has its own SAGE account',
+        hint: `${match.from} signs in here, so it earns pixels in its own right. Linking it would move its balance onto this account and stop it earning. Sign in as that wallet and link THIS one instead, if that is what you meant.`,
+      });
+    }
+
+    /**
+     * ONE HOP, NO CYCLES — the only shape liveSageWhole implements.
+     *
+     * It resolves `extra` one level deep and reads balances directly rather
+     * than recursing, and its linked-elsewhere guard runs BEFORE the sum. So
+     * a chain A->B->C drops C from every total (the user's rate goes DOWN
+     * after linking more of their own holdings), and a cycle A->B, B->A makes
+     * the guard fire for both, evaporating the rate on both sides while both
+     * links display as verified. Self-inflicted and undoable, but the error
+     * message is the only thing that makes it obvious.
+     */
+    const [fromOwnsLinks, requesterIsLinked] = await Promise.all([
+      prisma.linkedWallet.findFirst({
+        where: { walletAddress: { equals: match.from, mode: 'insensitive' } },
+        select: { address: true },
+      }),
+      prisma.linkedWallet.findFirst({
+        where: { address: { equals: address, mode: 'insensitive' } },
+        select: { walletAddress: true },
+      }),
+    ]);
+    if (fromOwnsLinks) {
+      return res.status(409).json({
+        error: 'that wallet already has wallets linked to it',
+        hint: `${match.from} is the hub of its own link, so linking it here would leave ${fromOwnsLinks.address} counted by nobody. Unlink it there first.`,
+      });
+    }
+    if (requesterIsLinked) {
+      return res.status(409).json({
+        error: 'this account is itself linked into another one',
+        hint: `Your wallet is linked into ${requesterIsLinked.walletAddress}, so it earns nothing on its own — anything you link here would be invisible too. Link the wallet to that account instead.`,
+      });
+    }
+
     await prisma.$transaction([
       prisma.linkedWallet.create({
         data: { address: match.from, walletAddress: address, proof: 'transfer' },
@@ -248,6 +328,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch (e: any) {
       console.error('pixels-link: linked but could not re-checkpoint', e?.message || e);
     }
+    // And the LINKED wallet, if it happens to have a PixelAccount of its own:
+    // liveSageWhole now returns 0 for it, so its checkpoint must be zeroed too
+    // or it keeps streaming against a stale one until a sweep reaches it —
+    // paying the same tokens to both accounts in the meantime.
+    await prisma.pixelAccount
+      .findUnique({ where: { walletAddress: match.from }, select: { walletAddress: true } })
+      .then((row) => (row ? dbResync(match.from) : null))
+      .catch((e: any) =>
+        console.error('pixels-link: could not zero the linked wallet checkpoint', e?.message || e)
+      );
 
     return res.json({ linked: true, address: match.from, proof: 'transfer', pixelsPerDay: rate });
   }
