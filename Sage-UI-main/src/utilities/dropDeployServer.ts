@@ -19,6 +19,7 @@ import DedicatedNftDeployerJson from '@/constants/abis/NFT/DedicatedNftDeployer.
  */
 import AuctionJson from '@/constants/abis/Auction/Auction.sol/Auction.json';
 import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SAGEOpenEdition.json';
+import LotteryJson from '@/constants/abis/Lottery/Lottery.sol/Lottery.json';
 
 /**
  * Create a drop's GAMES on-chain from the server, so the artist signs once.
@@ -63,6 +64,7 @@ const SOCIAL_ARTIST_SHARE_BPS = 9900;
 export interface ServerDeployResult {
   auctions: number;
   openEditions: number;
+  lotteries: number;
   whitelist: string | null;
   txHashes: string[];
   /** games this path deliberately does not handle, if any are present */
@@ -79,7 +81,7 @@ async function loadDrop(dropId: number) {
     include: {
       Auctions: { include: { Nft: true } },
       OpenEditions: { include: { Nft: true } },
-      Lotteries: { select: { id: true } },
+      Lotteries: { include: { Nfts: true } },
       CollectionMints: { select: { id: true } },
       NftContract: { select: { contractAddress: true } },
     },
@@ -192,7 +194,11 @@ export async function deployDropGamesServerSide(
   }
 
   const unsupported: string[] = [];
-  if (drop.Lotteries.length) unsupported.push(`${drop.Lotteries.length} lottery(ies)`);
+  // ZIP collections stay on the client path — not because they need the
+  // artist's wallet, but because SageCollection.createCollectionWithNewNft
+  // already deploys their per-drop contract itself, in the same transaction
+  // that registers the collection. Moving it here would duplicate a deploy
+  // that contract does better.
   if (drop.CollectionMints.length) unsupported.push(`${drop.CollectionMints.length} collection mint(s)`);
 
   /**
@@ -323,9 +329,95 @@ export async function deployDropGamesServerSide(
     }
   }
 
+  // ── lotteries ─────────────────────────────────────────────────────────────
+  /**
+   * Lotteries moved here for the same reason auctions and editions did, plus
+   * one of their own: on the client path they were the last game still minting
+   * into the artist's SHARED contract, whose ERC-721 name() is the artist's
+   * display name and is immutable. Marketplaces title a collection by that
+   * field, so a lottery drop called "Everyday No. 1" surfaced as whatever the
+   * artist had once named their contract, alongside every other drop they had
+   * ever made. Pointing nftContract at this drop's own contract is the whole
+   * fix — and it needs no on-chain admin work, because SageNFT.safeMint checks
+   * role.minter against the SHARED SageStorage rather than per contract, so a
+   * contract deployed a moment ago already accepts the Lottery singleton.
+   * Confirmed on mainnet: hasRole(role.minter, LOTTERY_ADDRESS) is true.
+   */
+  const lotteryContract = new ethers.Contract(parameters.LOTTERY_ADDRESS, LotteryJson.abi, signer);
+  const isVoucher = !!drop.voucherGating;
+  let lotteriesMade = 0;
+  const toCreate: any[] = [];
+  for (const l of drop.Lotteries) {
+    // Idempotent like the games above: ask the chain, not the DB row, so a run
+    // that created the lottery and then died before writing contractAddress
+    // resumes instead of reverting on "lottery already exists".
+    const existing = await lotteryContract.getLotteryInfo(l.id).catch(() => null);
+    if (existing && Number(existing.startTime) > 0) continue;
+    toCreate.push({
+      startTime: Math.floor(new Date(l.startTime).getTime() / 1000),
+      closeTime: Math.floor(new Date(l.endTime).getTime() / 1000),
+      participantsCount: 0,
+      maxTickets: l.maxTickets || 0,
+      maxTicketsPerUser: l.maxTicketsPerUser || 0,
+      numberOfTicketsSold: 0,
+      numberOfEditions: l.Nfts[0]?.numberOfEditions ?? 1,
+      status: 0, // Status.Created
+      nftContract,
+      lotteryID: l.id,
+      ticketCostPoints: l.costPerTicketPoints,
+      ticketCostTokens: ethers.utils.parseEther(String(l.costPerTicketTokens ?? 0)),
+    });
+  }
+  if (toCreate.length) {
+    if (isEthCurrency(drop.currency)) {
+      // No batch variant of createLotteryWithCurrency exists, so ETH drops
+      // stamp the native-currency sentinel one lottery at a time.
+      for (const p of toCreate) {
+        const tx = await lotteryContract.createLotteryWithCurrency(p, currencyAddressFor('ETH'));
+        await tx.wait(1);
+        txHashes.push(tx.hash);
+      }
+    } else {
+      const tx = await lotteryContract.createLotteryBatch(toCreate);
+      await tx.wait(1);
+      txHashes.push(tx.hash);
+    }
+    lotteriesMade = toCreate.length;
+    await prisma.lottery.updateMany({
+      where: { id: { in: toCreate.map((p) => p.lotteryID) } },
+      data: { contractAddress: parameters.LOTTERY_ADDRESS, voucherGated: isVoucher },
+    });
+  }
+
+  /**
+   * Gating is a separate pass on purpose: LotteryInfo carries no whitelist
+   * field, so it cannot be set at creation the way the other games do it.
+   * Iterating ALL of the drop's lotteries rather than only the freshly created
+   * ones is what makes an interrupted run recoverable — the create loop above
+   * skips lotteries that already exist on-chain, and those are exactly the ones
+   * a previous run may have failed to gate.
+   */
+  if (isVoucher) {
+    for (const l of drop.Lotteries) {
+      if (await lotteryContract.voucherGated(l.id).catch(() => false)) continue;
+      const tx = await lotteryContract.setVoucherGated(l.id, true);
+      await tx.wait(1);
+      txHashes.push(tx.hash);
+    }
+  } else if (whitelist !== ethers.constants.AddressZero) {
+    for (const l of drop.Lotteries) {
+      const current = await lotteryContract.getWhitelist(l.id).catch(() => null);
+      if (current?.toLowerCase() === whitelist.toLowerCase()) continue;
+      const tx = await lotteryContract.setWhitelist(l.id, whitelist);
+      await tx.wait(1);
+      txHashes.push(tx.hash);
+    }
+  }
+
   return {
     auctions: auctionsMade,
     openEditions: editionsMade,
+    lotteries: lotteriesMade,
     whitelist: whitelist === ethers.constants.AddressZero ? null : whitelist,
     txHashes,
     unsupported,

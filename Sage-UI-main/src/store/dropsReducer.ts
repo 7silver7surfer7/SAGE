@@ -17,7 +17,6 @@ import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.j
 import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
 import { parameters, currencyAddressFor, isEthCurrency } from '@/constants/config';
 import { chunk, ALLOWLIST_CHUNK_SIZE } from '@/utilities/allowlist';
-import { fetchOrCreateNftContract } from './nftsReducer';
 import { baseApi } from './baseReducer';
 import { Role } from '@prisma/client';
 import { createNftMetadataOnArweave, uploadFileToArweave } from '@/utilities/arweave-client';
@@ -745,24 +744,24 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
    * to sign a contract deploy they will never mint into would be a wallet
    * prompt for nothing.
    */
-  const needsSharedContract =
-    (drop.Lotteries?.length ?? 0) > 0 || (drop.CollectionMints?.length ?? 0) > 0;
-  const artistNftContractAddress = !needsSharedContract
-    ? ethers.constants.AddressZero
-    : await deployStep('artist NFT contract', () =>
-    // display name becomes the ERC-721 name of a NEW contract (external
-    // marketplaces title the collection with it — never plain 'SAGE')
-    fetchOrCreateNftContract(
-      drop.artistAddress,
-      signer,
-      fetchWithBQ,
-      (drop as any).artistDisplayName || drop.NftContract?.Artist?.username,
-      (drop as any).nftSymbol
-        )
-      );
-  if (needsSharedContract && artistNftContractAddress == ethers.constants.AddressZero) {
-    throw new Error('Unable to deploy a new artist NFT contract');
-  }
+  /**
+   * NO SHARED ARTIST CONTRACT. Every game now mints into a contract that
+   * belongs to this drop alone.
+   *
+   * The shared contract's ERC-721 name() is the artist's display name and is
+   * immutable, and marketplaces title a collection by exactly that field — so
+   * a drop had no identity of its own, and an artist's whole catalogue
+   * collapsed into one collection page named after them. Auctions and open
+   * editions moved to per-drop contracts first; lotteries followed (server-side
+   * now, alongside them); ZIP collections deploy their own inside
+   * createCollectionWithNewNft. That leaves nothing that needs this, so asking
+   * the artist to sign a contract deploy nobody mints into would be a wallet
+   * prompt for nothing.
+   *
+   * fetchOrCreateNftContract still exists for the artist-onboarding path; it is
+   * simply no longer part of publishing a drop. Existing drops are unaffected —
+   * their games hold the old address on-chain regardless of what happens here.
+   */
   // trigger server-side task that optimizes NFT images
   await fetchWithBQ(`drops?action=OptimizeDropImages&id=${dropId}`);
   // Stamp this drop's royalty on the artist contract BEFORE any game deploys,
@@ -819,17 +818,17 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
     );
   }
   dropProgress.note(
-    `Created ${(served as any).openEditions ?? 0} edition(s) and ${(served as any).auctions ?? 0} auction(s) — no signature needed.`
+    `Created ${(served as any).openEditions ?? 0} edition(s), ${(served as any).auctions ?? 0} auction(s) ` +
+      `and ${(served as any).lotteries ?? 0} lottery(ies) — no signature needed.`
   );
 
-  const stillMine = (drop.Lotteries?.length ?? 0) > 0 || (drop.CollectionMints?.length ?? 0) > 0;
+  // ZIP collections are the only game left on the client, and only because
+  // SageCollection deploys their per-drop contract itself, in the same
+  // transaction that registers the collection.
   const whitelistAddress = (served as any).whitelist || ethers.constants.AddressZero;
-  if (stillMine) {
-    await deployStep('lotteries', () =>
-      deployLotteries(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
-    );
+  if ((drop.CollectionMints?.length ?? 0) > 0) {
     await deployStep('collection mints', () =>
-      deployCollectionMints(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
+      deployCollectionMints(drop, signer, fetchWithBQ, whitelistAddress)
     );
   }
   // FINAL required step: flip approvedAt/isLive so the drop appears on the
@@ -1317,7 +1316,6 @@ async function runCollectionPipeline(
  */
 async function deployCollectionMints(
   drop: DropFull,
-  artistNftContractAddress: string,
   signer: Signer,
   fetchWithBQ: any,
   whitelistAddress: string
@@ -1827,88 +1825,6 @@ async function deployAuctions(
           console.warn(`deployAuctions() :: could not apply the social rate to auction ${auctionId} — it keeps the marketplace default`, e);
         }
       }
-    }
-  }
-}
-
-async function deployLotteries(
-  drop: DropFull,
-  artistNftContractAddress: string,
-  signer: Signer,
-  fetchWithBQ: any,
-  whitelistAddress: string = ethers.constants.AddressZero
-) {
-  const isVoucher = !!(drop as any).voucherGating;
-  const createParams = [];
-  for (const l of drop.Lotteries) {
-    if (l.contractAddress) {
-      console.log(`deployLotteries() :: ${l.id} has already been deployed to ${l.contractAddress}`);
-      continue;
-    }
-    const startTime = Math.floor(new Date(l.startTime).getTime() / 1000);
-    const endTime = Math.floor(new Date(l.endTime).getTime() / 1000);
-    const costPerTicketTokens = ethers.utils.parseEther(toDecimalString(l.costPerTicketTokens));
-    createParams.push({
-      lotteryID: l.id,
-      ticketCostPoints: l.costPerTicketPoints,
-      ticketCostTokens: costPerTicketTokens,
-      startTime,
-      closeTime: endTime,
-      nftContract: artistNftContractAddress,
-      maxTickets: l.maxTickets || 0,
-      maxTicketsPerUser: l.maxTicketsPerUser || 0,
-      numberOfEditions: l.Nfts[0].numberOfEditions,
-      participantsCount: 0,
-      numberOfTicketsSold: 0,
-      status: 0, // Status.Created
-    });
-  }
-  if (createParams.length > 0) {
-    console.log(`deployLotteries() :: Deploying batch of ${createParams.length}...`);
-    const lotteryContract = await getLotteryContract(signer);
-    if (isEthCurrency((drop as any).currency)) {
-      // ETH drops stamp the native-currency sentinel per lottery — no batch
-      // variant of createLotteryWithCurrency, so create one by one
-      for (const p of createParams) {
-        const tx = await lotteryContract.createLotteryWithCurrency(
-          p,
-          currencyAddressFor('ETH')
-        );
-        await tx.wait();
-      }
-    } else {
-      const tx = await lotteryContract.createLotteryBatch(createParams);
-      await tx.wait();
-    }
-    for (const { lotteryID } of createParams) {
-      const params = `id=${lotteryID}&address=${lotteryContract.address}&voucherGated=${isVoucher}`;
-      await fetchWithBQ(`drops?action=UpdateLotteryContractAddress&${params}`);
-    }
-  }
-  // Gate pass — separate from the create loop above on purpose: LotteryInfo has
-  // no whitelist field, so gating needs a per-lottery call. Iterate ALL of the
-  // drop's lotteries (not just freshly-created ones) and skip those already
-  // gated, so a re-run after an interruption wires lotteries the create loop
-  // skipped. Voucher-gating: setVoucherGated(id, true) instead of setWhitelist —
-  // the lottery becomes buyable ONLY via buyTicketsWithVoucher (zero server gas,
-  // no whitelist contract).
-  if (isVoucher) {
-    // cast: the refreshed runtime ABI has these, but typechain types lag
-    const lotteryContract = (await getLotteryContract(signer)) as any;
-    for (const l of drop.Lotteries) {
-      if (await lotteryContract.voucherGated(l.id)) continue;
-      console.log(`deployLotteries() :: setVoucherGated(${l.id}, true)`);
-      const vtx = await lotteryContract.setVoucherGated(l.id, true);
-      await vtx.wait();
-    }
-  } else if (whitelistAddress !== ethers.constants.AddressZero) {
-    const lotteryContract = await getLotteryContract(signer);
-    for (const l of drop.Lotteries) {
-      const current = await lotteryContract.getWhitelist(l.id);
-      if (current?.toLowerCase() === whitelistAddress.toLowerCase()) continue;
-      console.log(`deployLotteries() :: setWhitelist(${l.id}, ${whitelistAddress})`);
-      const wtx = await lotteryContract.setWhitelist(l.id, whitelistAddress);
-      await wtx.wait();
     }
   }
 }
