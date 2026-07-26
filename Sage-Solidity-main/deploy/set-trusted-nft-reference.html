@@ -46,7 +46,7 @@
   <div class="row"><span>role.admin</span><code id="isAdmin">—</code></div>
 
   <div class="card">
-    <div class="row"><span>Reference SageNFT (codehash source)</span><code>0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1</code></div>
+    <div class="row"><span>Reference SageNFT (codehash source)</span><code>0xA38f5a4a4414ccdd44C99e1AC69b4d4fF317b801</code></div>
     <div class="row"><span>OpenEdition</span><code id="oeCur">—</code></div>
     <div class="row"><span>Auction</span><code id="auCur">—</code></div>
     <button id="setBtn" disabled>set on both contracts</button>
@@ -58,9 +58,23 @@
   const STORAGE  = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
   const OE       = '0x78cA991872839Bfa6223A41039E3895ce8eefF5D';
   const AUCTION  = '0x83Eac0DCfd0bC5D52Edf4e631CdDb6C0e6438E03';
-  // A real SageNFT deployed BY THE CURRENT FACTORY (0x2DEEe3E6…), so its runtime
-  // code is byte-identical to anything deployByArtist mints from now on.
-  const REFERENCE = '0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1';
+  /**
+   * MUST be a SageNFT the CURRENT factory deployed — verified by codehash, not
+   * by reasoning.
+   *
+   * The first version of this page used 0xc1Ba1Db8…, chosen because
+   * factory.getContractAddress() returned it, which I took as proof the current
+   * factory had built it. It had not: that contract carries an older SageNFT
+   * (13,599 bytes, codehash 0xec00ecfe…) while the factory now emits 14,438
+   * bytes (0x2dadca49…). _isTrustedNft compares codehashes, so the reference
+   * matched nothing and artists stayed blocked after two signed transactions.
+   *
+   * 0xA38f5a4a… is a contract this factory deployed for a real artist, so its
+   * code IS what future deployByArtist calls produce. If the FACTORY is ever
+   * redeployed, this must be re-pointed at something it built — compare
+   * codehashes before trusting any address here.
+   */
+  const REFERENCE = '0xA38f5a4a4414ccdd44C99e1AC69b4d4fF317b801';
   // keccak256("role.admin"), computed with ethers and checked against this file
   // rather than typed from memory — the first draft of this page carried a
   // wrong hash, which makes hasRole return false and disables the button
@@ -73,11 +87,55 @@
   const $ = (id) => document.getElementById(id);
   let account = null;
 
+  /**
+   * APPEND-ONLY LOG. The first version of this page assigned to
+   * status.textContent at each step, so every "Signing…" wiped the previous
+   * transaction's result and a failed refresh() wiped both — then it printed
+   * "Done" unconditionally. It reported success for two transactions that had
+   * not landed. A status line that can erase evidence is worse than none.
+   */
+  const lines = [];
+  function log(msg) {
+    lines.push(msg);
+    $('status').textContent = lines.join('\n');
+  }
+
   const pad = (addr) => addr.toLowerCase().replace('0x', '').padStart(64, '0');
   const ZERO = '0x0000000000000000000000000000000000000000';
 
-  async function call(to, data) {
-    return await ethereum.request({ method: 'eth_call', params: [{ to, data }, 'latest'] });
+  /**
+   * READS GO STRAIGHT TO THE PUBLIC NODE, NOT THROUGH THE WALLET.
+   *
+   * This page made three eth_calls through ethereum.request the moment you
+   * connected, and the wallet's RPC rate-limited them — so the admin check and
+   * both current values came back unreadable, on a page whose entire job is to
+   * show you the before-and-after. The wallet is needed to SIGN; it is not
+   * needed to LOOK. Reading directly removes three of the four wallet round
+   * trips and makes the display independent of whatever RPC the wallet happens
+   * to be configured with.
+   */
+  const RPC_URL = 'https://rpc.mainnet.chain.robinhood.com';
+  async function call(to, data, attempts = 3) {
+    let last;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const r = await fetch(RPC_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0', id: 1, method: 'eth_call',
+            params: [{ to, data }, 'latest'],
+          }),
+        });
+        const j = await r.json();
+        if (j.error) throw new Error(j.error.message || 'rpc error');
+        return j.result;
+      } catch (e) {
+        last = e;
+        await new Promise((r) => setTimeout(r, 600 * (i + 1)));
+      }
+    }
+    throw last;
   }
 
   async function refresh() {
@@ -90,7 +148,9 @@
       $('oeCur').textContent = fmt(oe);
       $('auCur').textContent = fmt(au);
     } catch (e) {
-      $('status').textContent = 'Could not read the contracts: ' + (e.message || e);
+      $('oeCur').textContent = 'could not read';
+      $('auCur').textContent = 'could not read';
+      log('Could not read current values (' + (e.message || e) + ') — the rows above are unknown, not necessarily unset.');
     }
   }
 
@@ -104,15 +164,28 @@
       if (chain !== CHAIN_ID) {
         await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
       }
-      const res = await call(STORAGE, HASROLE_SEL + ADMIN_ROLE + pad(account));
-      const ok = /1$/.test(res);
-      $('isAdmin').textContent = ok ? 'yes' : 'NO — this wallet cannot set it';
-      $('isAdmin').className = ok ? 'ok' : 'err';
-      $('setBtn').disabled = !ok;
+      /**
+       * ADVISORY, NOT A GATE. SageStorage's onlyAdmin is the real authority —
+       * this read is a courtesy so you find out before signing rather than
+       * after. So a read that fails must not lock you out of your own admin
+       * action: the button stays enabled and the contract decides.
+       */
+      let ok = null;
+      try {
+        ok = /1$/.test(await call(STORAGE, HASROLE_SEL + ADMIN_ROLE + pad(account)));
+      } catch (e) {
+        ok = null;
+      }
+      $('isAdmin').textContent =
+        ok === null ? 'could not read — the contract will enforce it' : ok ? 'yes' : 'NO — this wallet cannot set it';
+      $('isAdmin').className = ok === null ? 'warn' : ok ? 'ok' : 'err';
+      $('setBtn').disabled = ok === false;
       await refresh();
-      $('status').textContent = ok
-        ? 'Ready. This sends TWO transactions — one per contract.'
-        : 'Connect a wallet holding role.admin on SageStorage.';
+      log(
+        ok === false
+          ? 'Connect a wallet holding role.admin on SageStorage.'
+          : 'Ready. This sends TWO transactions — one per contract, each needing its own signature.'
+      );
     } catch (e) {
       $('status').textContent = 'Connect failed: ' + (e.message || e);
     }
@@ -121,20 +194,28 @@
   $('setBtn').onclick = async () => {
     $('setBtn').disabled = true;
     const data = SET_SEL + pad(REFERENCE);
+    let sent = 0;
     for (const [name, to] of [['OpenEdition', OE], ['Auction', AUCTION]]) {
       try {
-        $('status').textContent = `Signing ${name}…`;
+        log(`${name}: requesting signature…`);
         const tx = await ethereum.request({
           method: 'eth_sendTransaction',
           params: [{ from: account, to, data }],
         });
-        $('status').textContent += `\n${name}: ${tx}`;
+        log(`${name}: SENT ${tx}`);
+        sent++;
       } catch (e) {
-        $('status').textContent += `\n${name} FAILED: ${(e.message || e)}`;
+        // Say what actually happened, per contract. A rate-limited or
+        // rejected request is not a completed one.
+        log(`${name}: FAILED — ${(e && e.message) || e}`);
       }
     }
     await refresh();
-    $('status').textContent += '\nDone — re-read above. Both should now show the reference address.';
+    log(
+      sent === 2
+        ? 'Both transactions sent. Wait for them to mine, then reload to confirm the rows above.'
+        : `Only ${sent} of 2 went through — the gate is NOT open. Re-click to retry the missing one (already-set contracts are harmless to re-set).`
+    );
     $('setBtn').disabled = false;
   };
 </script>

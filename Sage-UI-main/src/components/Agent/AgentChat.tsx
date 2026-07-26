@@ -97,7 +97,7 @@ export default function AgentChat({
                 <button
                   key={s.num}
                   type="button"
-                  onClick={() => onPick(s.text)}
+                  onClick={() => onPick(s.send ?? s.text)}
                   onMouseEnter={() => setHovered(i)}
                   onMouseLeave={() => setHovered(-1)}
                   style={{

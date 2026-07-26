@@ -1217,10 +1217,23 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
     () => [
       { num: '01', text: 'What has SAGE dropped so far?' },
       { num: '02', text: "I've never used a wallet. Walk me through minting." },
-      { num: '03', text: 'Show me the RMonet secondary floor.' },
+      {
+        num: '03',
+        // The one card that SPENDS, so the price is on it. The others cost a
+        // turn's tokens; this one commissions a render, and a click whose cost
+        // you have to find in the header reads as a trick the second time.
+        // Tracks the image-model picker rather than hardcoding a number.
+        text: `Make me an original artwork · ${creditsForImage(imageModelId)} CR`,
+        // The agent writes the actual prompt — its instructions tell it to
+        // expand a request into a full visual description rather than echo it,
+        // so this asks for a piece and leaves the subject to it.
+        send:
+          'Make an original artwork — choose the subject yourself, and surprise me. ' +
+          'Then ask whether I want it minted.',
+      },
       { num: '04', text: 'What is the SAGE token doing today?' },
     ],
-    []
+    [imageModelId]
   );
 
   const threads: Thread[] = useMemo(

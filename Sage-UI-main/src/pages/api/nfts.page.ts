@@ -88,13 +88,45 @@ async function deployContractMetadata(request: NextApiRequest, response: NextApi
   // balance on demand. Require an actual artist/admin role, and require the
   // caller to have a registered NFT contract (i.e. they really are a launched
   // artist, not just a wallet that signed in).
+  //
+  // THE PROOF IS THE FACTORY, NOT OUR OWN ROW.
+  //
+  // This used to require NftContract.contractAddress to be set — which a
+  // FIRST-TIME artist can never satisfy here, because the caller writes that
+  // row AFTER this call returns (createNftContract: deploy -> this -> then
+  // fetchOrCreateNftContract does UpdateNftContractAddress). So every
+  // non-admin's first deploy 403'd, and the client crashed on the 403 with
+  // "Cannot read properties of undefined (reading 'metadataURL')" — a chicken
+  // and egg that admins never hit, because the branch above skips them.
+  //
+  // Asking the FACTORY closes it without weakening anything. The check exists
+  // so a wallet cannot spend the platform's Arweave balance just by signing
+  // in; "the factory has deployed a contract for you, and it is the one you
+  // are claiming" proves exactly that, and unlike our own row it cannot be
+  // ahead of or behind the chain.
   if (requester.role !== Role.ADMIN) {
-    const contract = await prisma.nftContract.findUnique({
-      where: { artistAddress: requester.walletAddress },
-      select: { contractAddress: true },
-    });
-    if (!contract?.contractAddress) {
-      response.status(403).json({ error: 'no registered artist contract for this wallet' });
+    let onChain = '';
+    try {
+      const factory = new ethers.Contract(
+        parameters.NFTFACTORY_ADDRESS,
+        ['function getContractAddress(address) view returns (address)'],
+        new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL)
+      );
+      onChain = String(await factory.getContractAddress(requester.walletAddress));
+    } catch (e) {
+      console.error('deployContractMetadata: factory lookup failed', e);
+      response.status(503).json({ error: 'could not verify your artist contract — retry' });
+      return;
+    }
+    const claimed = String(contractAddress || '').toLowerCase();
+    if (
+      onChain === ethers.constants.AddressZero ||
+      onChain.toLowerCase() !== claimed ||
+      !claimed
+    ) {
+      response
+        .status(403)
+        .json({ error: 'no artist contract deployed for this wallet, or it is not the one claimed' });
       return;
     }
   }

@@ -178,7 +178,16 @@ export interface Thread {
 
 export interface Suggestion {
   num: string;
+  /** what the card reads */
   text: string;
+  /**
+   * What is actually sent, when that differs from the label.
+   *
+   * The art card is the reason this exists: its label has to carry the credit
+   * price so a one-click spend is never a surprise, while the agent needs a
+   * real instruction — sending it the string "· 15 CR" would be nonsense.
+   */
+  send?: string;
 }
 
 /** A wallet an X account is authorized to spend from, with its caps. */

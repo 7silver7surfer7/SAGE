@@ -148,16 +148,6 @@ export default function AgentPage({ drops }: Props) {
             onSend={() => a.send()}
             busy={a.busy}
             sendLabel={a.sendLabel}
-            /* The agent writes the actual prompt — its instructions tell it to
-               expand a request into a full visual description rather than echo
-               it, so this asks for a piece and leaves the subject to it. */
-            onMakeArt={() =>
-              a.send(
-                'Make an original artwork — choose the subject yourself, and surprise me. ' +
-                  'Then ask whether I want it minted.'
-              )
-            }
-            artCost={`${a.imageModelCost} CR`}
             footerLeft={a.footerLeft}
             composerPad={composerPad}
           />
