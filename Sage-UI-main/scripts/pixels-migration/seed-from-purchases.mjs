@@ -32,7 +32,28 @@
 import { ethers } from 'ethers';
 import { PrismaClient } from '@prisma/client';
 
-const TOKEN = '0xE21a2b120FAcF995bC8bF6b1843f409E568beBA3';
+// Which token's holders to replay. Defaults to the NEW token (the original
+// job: crediting people who migrated before accrual pointed at it).
+//
+// --token legacy replays the OLD one instead, which is what repays the holders
+// whose accrual was destroyed by the sustained-balance rule: selling before a
+// sweep banked them zeroed the whole unbanked interval, and while the sweep
+// rotation was broken that interval was DAYS. One confirmed case is owed
+// 110,178 pixels for 4.41 days held at the cap.
+//
+// Legacy balances are replayed in LEGACY units and converted with x250 at the
+// end (see LEGACY_RATIO) — the cap must be applied to the CONVERTED figure or
+// every legacy holder is capped 250x too low.
+const TOKENS = {
+  new: '0xE21a2b120FAcF995bC8bF6b1843f409E568beBA3',
+  legacy: '0x14561006002e8f76E68EC69e6A32527730bb73c8',
+};
+const tokenArg = process.argv.indexOf('--token');
+const TOKEN_KIND = tokenArg > -1 ? process.argv[tokenArg + 1] : 'new';
+const TOKEN = TOKENS[TOKEN_KIND];
+if (!TOKEN) throw new Error(`--token must be one of: ${Object.keys(TOKENS).join(', ')}`);
+/** One legacy token earns what 250 new ones do. 1 for the new token itself. */
+const LEGACY_RATIO = TOKEN_KIND === 'legacy' ? 250n : 1n;
 const RPC = 'https://rpc.mainnet.chain.robinhood.com';
 const CHAIN_ID = 4663;
 const EXPLORER = 'https://robinhoodchain.blockscout.com';
@@ -128,7 +149,10 @@ async function main() {
     // error compounds with the wrong sign: two receives of 1.5 count as 1+1=2
     // while one send of 3.0 counts as 3, so a wallet that never went short
     // ends the replay at -1 tokens. Observed on 0x505729ec… before this fix.
-    const held = (bal.get(who) ?? 0n) / WEI;
+    // Convert to NEW-token units BEFORE capping. Capping the raw legacy figure
+    // would cap a legacy holder at 25M legacy tokens — 250x too low — and
+    // silently under-credit exactly the people this run exists to repay.
+    const held = ((bal.get(who) ?? 0n) / WEI) * LEGACY_RATIO;
     const from = since.get(who);
     if (from === undefined || until <= from) return;
     if (held > 0n) {
