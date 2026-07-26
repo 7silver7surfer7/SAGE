@@ -47,6 +47,18 @@ export interface IncomingMention {
   inReplyToUserId?: string;
   selfUserId?: string;
   selfHandle?: string;
+  /** the thread this tweet belongs to (X's conversation_id) */
+  conversationId?: string;
+  /**
+   * Have we already spoken in this thread?
+   *
+   * This is the fact that separates a summons from an echo. X auto-prepends the
+   * handles of everyone upstream in a reply chain and HIDES them in the UI, so
+   * once we have answered once, every later reply in that thread arrives with
+   * our handle at the front whether or not the author typed it. Where we have
+   * not spoken, our handle in that block can only have been typed deliberately.
+   */
+  selfSpokeInThread?: boolean;
 }
 
 
@@ -151,6 +163,9 @@ export async function claimMention(m: IncomingMention): Promise<boolean> {
         tweetId: m.tweetId,
         authorXUserId: m.authorXUserId,
         authorHandle: m.authorHandle.slice(0, 40),
+        // Recorded on every mention, not just answered ones, so the
+        // "have we spoken here?" lookup below is a plain indexed read.
+        conversationId: m.conversationId || null,
         outcome: 'seen',
       },
     });
@@ -159,6 +174,26 @@ export async function claimMention(m: IncomingMention): Promise<boolean> {
     if (e?.code === 'P2002') return false; // already claimed
     throw e;
   }
+}
+
+/**
+ * Did we already reply in this thread?
+ *
+ * Only 'answered' counts — a mention we saw and ignored left no tweet for X to
+ * prepend our handle from, so it must not make us deaf to a later, genuine
+ * summons in the same thread.
+ *
+ * An unknown conversationId returns false, which keeps the old behaviour for
+ * rows written before this column existed rather than silently muting threads
+ * we cannot classify.
+ */
+export async function selfSpokeInThread(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+  const prior = await prisma.xMention.findFirst({
+    where: { conversationId, outcome: 'answered' },
+    select: { tweetId: true },
+  });
+  return !!prior;
 }
 
 export async function recordOutcome(
@@ -369,18 +404,24 @@ export function isAddressed(m: IncomingMention): boolean {
    * made this way had been dropped — generate/restyle/critique survived only
    * because the body check below rescues them.
    *
-   * RESIDUAL, accepted knowingly: X also auto-prepends us when we are further
-   * up a thread somebody else is replying to, and that shape is
-   * indistinguishable from a typed summons without fetching the parent tweet
-   * to see whether we are actually in it. Telling them apart costs a read per
-   * ambiguous mention. Not paying that yet, because the credit gate bounds the
-   * damage — only accounts linked to a funded wallet are ever answered, so an
-   * unwanted reply can only land in a thread involving someone who opted in.
-   * If it becomes a nuisance, the fix is to pass the parent's participants in
-   * here, not to go back to reading one handle.
+   * ...BUT ONLY WHERE WE HAVE NOT ALREADY SPOKEN.
+   *
+   * The paragraph above used to end by accepting a residual: X also
+   * auto-prepends us when we are further up a thread somebody else is replying
+   * to, which looks identical to a typed summons. I judged that acceptable
+   * because the credit gate bounds who can trigger it. That was the wrong call,
+   * and it showed up the way it always would — the bot answered a reply in a
+   * thread it had already spoken in, aimed at somebody else, and the person it
+   * interrupted had to say "you shouldn't be responding to me". The credit gate
+   * bounds the COST, not the rudeness, and rudeness was the actual failure.
+   *
+   * selfSpokeInThread settles it without the per-mention read I said it would
+   * cost. If we have answered in this conversation, our handle in the lead is
+   * X's doing and proves nothing, so the body has to carry the request. If we
+   * have not, nobody could have put us there but the author.
    */
   const leadHandles = (lead.match(/@(\w+)/g) || []).map((h) => h.slice(1).toLowerCase());
-  if (leadHandles.includes(handle)) return true;
+  if (leadHandles.includes(handle) && !m.selfSpokeInThread) return true;
 
   // Mentioned mid-thread, so the handle alone proves nothing. Let the BODY
   // decide: replying to an artwork and tagging us is the natural way to ask

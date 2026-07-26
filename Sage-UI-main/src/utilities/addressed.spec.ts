@@ -22,4 +22,29 @@ describe('xMentions :: isAddressed', () => {
   it('still ignores small talk that merely names us mid-thread', () => {
     expect(isAddressed(m('@someone yeah I saw it via @sageartxyz earlier'))).to.equal(false);
   });
+
+  /**
+   * The regression that made the bot interrupt a conversation it was not part
+   * of. Once we have replied in a thread, X prepends our handle to every later
+   * reply and hides it, so this text is what arrives when one human answers
+   * another human. Reading the lead block alone, it is identical to a summons.
+   */
+  it('ignores a reply between two other people once we have spoken in the thread', () => {
+    const text = '@_holonick_ @sageartxyz Part of it is, most of it is new. I kept the design.';
+    expect(isAddressed(m(text, { selfSpokeInThread: true }))).to.equal(false);
+  });
+  it('answers that same shape when we have NOT spoken in the thread', () => {
+    // nobody but the author could have put our handle there
+    const text = '@_holonick_ @sageartxyz what do you make of this?';
+    expect(isAddressed(m(text, { selfSpokeInThread: false }))).to.equal(true);
+  });
+  it('still answers a direct reply to us even inside a thread we are in', () => {
+    expect(
+      isAddressed(m('go on then', { selfSpokeInThread: true, inReplyToUserId: SELF.selfUserId }))
+    ).to.equal(true);
+  });
+  it('still answers a re-summons typed into the body of a thread we are in', () => {
+    const text = '@_holonick_ @sageartxyz generate a cyberpunk whale for me';
+    expect(isAddressed(m(text, { selfSpokeInThread: true }))).to.equal(true);
+  });
 });

@@ -1183,6 +1183,10 @@ model XMention {
   tweetId       String   @id @db.VarChar(24)
   authorXUserId String   @db.VarChar(24)
   authorHandle  String   @db.VarChar(40)
+  // X's thread id. Kept so we can ask "have we already replied here?" — once we
+  // have, X auto-prepends our handle to every later reply in the thread and
+  // hides it, so a leading @sageartxyz stops being evidence anyone summoned us.
+  conversationId String? @db.VarChar(24)
   // wallet resolved from the link, when there was one
   walletAddress String?  @db.Char(42)
   // seen | ignored_unlinked | ignored_no_credits | ignored_capped |
@@ -1203,6 +1207,8 @@ model XMention {
 
   @@index([authorXUserId, createdAt])
   @@index([outcome, createdAt])
+  // the "have we spoken in this thread?" lookup, run once per incoming mention
+  @@index([conversationId, outcome])
 }
 
 // Poller cursor + daily spend counters, one row per key.

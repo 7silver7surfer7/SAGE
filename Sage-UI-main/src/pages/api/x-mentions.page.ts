@@ -6,6 +6,7 @@ import {
   recordOutcome,
   routeMention,
   isAddressed,
+  selfSpokeInThread,
   type IncomingMention,
 } from '@/utilities/xMentions';
 import { xCreds, isLive, selfId, fetchMentions, postReply, uploadMedia, fetchTweetPhotos } from '@/utilities/xClient';
@@ -209,10 +210,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         inReplyToUserId: raw.inReplyToUserId,
         selfUserId: me.id,
         selfHandle: me.username,
+        conversationId: raw.conversationId,
       };
 
       // Claim first: two overlapping cycles must not both serve this.
       if (!(await claimMention(m))) continue;
+
+      // Once we have answered in a thread, X prepends our handle to every
+      // later reply in it and hides that from the reader — so the person
+      // replying to somebody else looks, to us, exactly like someone calling
+      // us. Knowing we already spoke here is what tells those apart.
+      m.selfSpokeInThread = await selfSpokeInThread(raw.conversationId);
 
       // Being in the thread is not being spoken to. X hides the handles it
       // prepends to a reply, so a message aimed at someone else still lands
