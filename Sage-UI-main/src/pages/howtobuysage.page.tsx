@@ -27,12 +27,20 @@ const MIGRATION_ENDS_LABEL = PIXELS_MIGRATION_ENDS_AT.toLocaleDateString('en-GB'
   timeZone: 'UTC',
 });
 
-// NOT /social/token/<address>. That page is registry-backed — getTokenDetail
-// does socialTokenLaunch.findUnique — and this token was launched through
-// Doppler, not SocialTokenFactory, so it has no row and the page 404s. Linking
-// there would look right and be broken. The explorer works today; the native
-// page can take over once it can read a v4 pool (see utilities/uniswapV4.ts).
-const SAGE_TOKEN_PAGE = `https://robinhoodchain.blockscout.com/token/${SAGE_TOKEN_ADDRESS}`;
+// Uniswap's own token page, where SAGE can actually be SWAPPED.
+//
+// NOT /social/token/<address>: that page is registry-backed — getTokenDetail
+// does socialTokenLaunch.findUnique — and this token launched through Doppler,
+// not SocialTokenFactory, so it has no row and 404s. Linking there would look
+// right and be broken.
+//
+// It previously pointed at the block explorer, which proves the token exists
+// but cannot buy it — a "BUY SAGE" button landing on a read-only contract page
+// is a dead end for the one thing this page is for.
+//
+// Lowercased deliberately: Uniswap's route is case-sensitive and a checksummed
+// address 404s there.
+const SAGE_SWAP_URL = `https://app.uniswap.org/explore/tokens/robinhood/${SAGE_TOKEN_ADDRESS.toLowerCase()}`;
 
 export default function howtobuysage() {
   async function handleImportSAGE() {
@@ -65,7 +73,7 @@ export default function howtobuysage() {
       <div className='howtobuyash-header'>How to buy SAGE </div>
       <div className='howtobuyash-text'>
         <a
-          href={SAGE_TOKEN_PAGE}
+          href={SAGE_SWAP_URL}
           target='_blank'
           rel='noreferrer'
           className='howtobuyash__import-button'
@@ -84,12 +92,12 @@ export default function howtobuysage() {
           <p>
             Go to the{' '}
             <a
-              href={SAGE_TOKEN_PAGE}
+              href={SAGE_SWAP_URL}
               target='_blank'
               rel='noreferrer'
               className='howtobuyash-text-link'
             >
-              SAGE token page
+              SAGE page on Uniswap
             </a>{' '}
             — SAGE trades in a Uniswap v4 pool on Robinhood Chain.
           </p>
