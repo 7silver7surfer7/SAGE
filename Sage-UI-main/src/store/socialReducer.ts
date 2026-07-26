@@ -285,6 +285,9 @@ export interface TokenDetail {
     creator: SocialUserCard;
   };
   priceEth: number;
+  /** real on-chain supply in whole tokens; 1e9 was hardcoded before Doppler
+   *  launches (SAGE new is 100B) made that assumption wrong. */
+  totalSupplyWhole?: number;
   ethUsd: number;
   athPriceEth: number;
   price24hAgoEth: number;

@@ -342,13 +342,18 @@ export default function TokenDetailPage() {
         {(() => {
           const ethUsd = data?.ethUsd || 0;
           const priceNow = livePrice ?? data?.priceEth ?? 0;
-          const mcap = priceNow * 1000 * ethUsd;
-          const mcapAgo = (data?.price24hAgoEth || 0) * 1000 * ethUsd;
+          // priceEth is ETH per 1,000,000 tokens, so the multiplier is
+          // supply/1M — NOT a hardcoded 1000, which silently assumed every
+          // token has a 1B supply. SAGE (new) has 100B and read 100x low.
+          const supplyWhole = data?.totalSupplyWhole || 1_000_000_000;
+          const supplyMillions = supplyWhole / 1_000_000;
+          const mcap = priceNow * supplyMillions * ethUsd;
+          const mcapAgo = (data?.price24hAgoEth || 0) * supplyMillions * ethUsd;
           const diff = mcap - mcapAgo;
           const pct = mcapAgo > 0 ? (diff / mcapAgo) * 100 : 0;
           // ATH holds the peak; the fill tracks the LIVE price so dumps show
           // instantly (the bar recedes from the record)
-          const ath = Math.max((data?.athPriceEth || 0) * 1000 * ethUsd, mcap);
+          const ath = Math.max((data?.athPriceEth || 0) * supplyMillions * ethUsd, mcap);
           const fmtUsd = (v: number) =>
             v >= 1e6
               ? `$${(v / 1e6).toFixed(2)}M`
@@ -565,7 +570,7 @@ export default function TokenDetailPage() {
                   <span className='token-page__bal'>
                     {fmt(h.balance)}
                     <small className='token-page__bal-pct'>
-                      {((h.balance / 1e9) * 100).toFixed(2)}%
+                      {((h.balance / (data?.totalSupplyWhole || 1e9)) * 100).toFixed(2)}%
                     </small>
                   </span>
                 </div>

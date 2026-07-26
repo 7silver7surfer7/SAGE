@@ -6,10 +6,13 @@ import { requireRole, getRequester } from '@/utilities/apiAuth';
 import { isUserWalletCode } from '@/utilities/accountKind';
 import { extractFirstUrl, fetchLinkPreview } from '@/utilities/linkPreview';
 import prisma from '@/prisma/client';
+import { poolKeyFor, quoteV4Buy } from '@/utilities/uniswapV4';
 import {
   parameters,
   SAGE_PRICE_TOKEN_ADDRESS,
   SAGE_PRICE_FACTORY_ADDRESS,
+  TRADE_RPC_URL,
+  TRADE_CHAIN_ID,
 } from '@/constants/config';
 import {
   verifySageTransfer,
@@ -3220,10 +3223,49 @@ async function getTokens(req: NextApiRequest, res: NextApiResponse) {
   const priceMap = new Map(lastTrades.map((t) => [t.tokenAddress.toLowerCase(), t.priceEth]));
   const ethUsd = await boostEthUsd().catch(() => 3500);
   const INITIAL_PRICE_ETH_PER_M = (2 * 1e6) / 1.073e9; // fresh curve spot
+
+  // Live v4 price for pool-launched tokens.
+  //
+  // The fallbacks below are both bonding-curve concepts: last-indexed-trade,
+  // then a FRESH CURVE spot price. Neither describes a Doppler token — with no
+  // trades indexed, SAGE (new) priced at the curve's opening spot, which is
+  // unrelated to its pool and produced a market cap ~15x the real one. And the
+  // token page quotes the pool live, so the list and the page disagreed.
+  //
+  // Only tokens actually in V4_POOLS are quoted, so this is a bounded number of
+  // calls (one today), not one per listed token.
+  const v4Prices = new Map<string, number>();
+  await Promise.all(
+    launches
+      .filter((l) => poolKeyFor(l.tokenAddress))
+      .map(async (l) => {
+        try {
+          const out = await quoteV4Buy(
+            l.tokenAddress,
+            ethers.utils.parseEther('0.001'),
+            new ethers.providers.StaticJsonRpcProvider(
+              { url: TRADE_RPC_URL, timeout: 15000 },
+              TRADE_CHAIN_ID
+            )
+          );
+          const tokensOut = Number(ethers.utils.formatUnits(out, 18));
+          if (tokensOut > 0) v4Prices.set(l.tokenAddress.toLowerCase(), (0.001 / tokensOut) * 1e6);
+        } catch {
+          /* fall through to the trade/curve price */
+        }
+      })
+  );
+
   const rows = launches
     .map((l) => {
-      const priceEthPerM = priceMap.get(l.tokenAddress.toLowerCase()) ?? INITIAL_PRICE_ETH_PER_M;
-      const mcapEth = priceEthPerM * 1000; // ×1B supply / 1M unit
+      const priceEthPerM =
+        v4Prices.get(l.tokenAddress.toLowerCase()) ??
+        priceMap.get(l.tokenAddress.toLowerCase()) ??
+        INITIAL_PRICE_ETH_PER_M;
+      // supply/1M, not a hardcoded 1000. Every factory launch mints 1B so the
+      // constant was right for them; a Doppler launch (SAGE new, 100B) read
+      // 100x low. NULL keeps the old assumption.
+      const mcapEth = priceEthPerM * ((l.totalSupplyWhole || 1_000_000_000) / 1_000_000);
       return {
         tokenAddress: l.tokenAddress,
         name: l.name,
@@ -3844,14 +3886,15 @@ async function getMyTokenHoldings(address: string, res: NextApiResponse) {
       const launch = launchMap.get(addrLower);
       if (!launch) return null;
       const priceEthPerM = priceMap.get(addrLower) ?? INITIAL_PRICE_ETH_PER_M;
-      const mcapUsd = priceEthPerM * 1000 * ethUsd;
+      const supplyWhole = launch.totalSupplyWhole || 1_000_000_000;
+      const mcapUsd = priceEthPerM * (supplyWhole / 1_000_000) * ethUsd;
       return {
         tokenAddress: launch.tokenAddress,
         name: launch.name,
         symbol: launch.symbol,
         imageUrl: launch.imageUrl,
         balance,
-        pctOfSupply: (balance / 1e9) * 100,
+        pctOfSupply: (balance / supplyWhole) * 100,
         valueUsd: (balance / 1e6) * priceEthPerM * ethUsd,
         mcapUsd,
       };
@@ -4545,6 +4588,58 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
   });
   if (!launch) return null;
 
+  // The token's REAL total supply, in whole tokens.
+  //
+  // The UI hardcoded 1e9 for both market cap and holder percentages, because
+  // every SocialTokenFactory launch mints exactly 1B. Doppler launches do not:
+  // SAGE (new) has 100B, so a holder of 5.24B rendered as "524.29% of supply"
+  // and the market cap came out 100x too small. Read it from the contract.
+  //
+  // Falls back to 1B on a failed read rather than 0 — a wrong-but-plausible
+  // number beats a page that renders every holder at Infinity%.
+  // Live price from the v4 pool, when the token has one. Quoting a small buy
+  // and dividing is the honest way to price a dynamic-fee pool: there is no
+  // constant-product formula to reproduce, and inventing one gives a confident
+  // wrong number (the same reason quoteV4Buy exists rather than local maths).
+  let v4PriceEth = 0;
+  try {
+    if (poolKeyFor(token)) {
+      const probe = ethers.utils.parseEther('0.001');
+      const out = await quoteV4Buy(
+        token,
+        probe,
+        new ethers.providers.StaticJsonRpcProvider(
+          { url: TRADE_RPC_URL, timeout: 15000 },
+          TRADE_CHAIN_ID
+        )
+      );
+      const tokensOut = Number(ethers.utils.formatUnits(out, 18));
+      if (tokensOut > 0) v4PriceEth = (0.001 / tokensOut) * 1_000_000;
+    }
+  } catch {
+    /* fall back to curve/trades below */
+  }
+
+  let totalSupplyWhole = launch.totalSupplyWhole || 1_000_000_000;
+  try {
+    const raw = await new ethers.Contract(
+      token,
+      ['function totalSupply() view returns (uint256)'],
+      // PINNED, not parameters.RPC_URL: that resolves to testnet on a
+      // localhost or staging build, and asking a testnet node for a mainnet
+      // token's supply returns nothing — the same (chain, address) mismatch
+      // that silently zeroed the pixels ledger.
+      new ethers.providers.StaticJsonRpcProvider(
+        { url: TRADE_RPC_URL, timeout: 15000 },
+        TRADE_CHAIN_ID
+      )
+    ).totalSupply();
+    const whole = Number(ethers.utils.formatUnits(raw, 18));
+    if (Number.isFinite(whole) && whole > 0) totalSupplyWhole = whole;
+  } catch {
+    /* keep the default */
+  }
+
   // live curve state for the bonding-curve progress bar + price
   let curve: { realTokenReserves: number; complete: boolean; priceEth: number; pair: string | null } | null = null;
   try {
@@ -4639,7 +4734,20 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
         verified: !!launch.Creator?.verifiedAt,
       },
     },
-    priceEth: curve?.priceEth ?? (trades.length ? trades[trades.length - 1].priceEth : 0),
+    // Price, in ETH per 1,000,000 tokens.
+    //
+    // A v4 pool is the authority when one exists: this token never had a
+    // bonding curve, so `curve` is absent/zero and the ?? chain fell through
+    // to the last recorded trade — or to 0 when none were indexed, which is
+    // how a token with a live pool and real volume rendered a $0 market cap.
+    // Note `??` does NOT rescue a curve that reports 0; it only catches
+    // null/undefined, so the fallback has to test for a positive number.
+    priceEth:
+      v4PriceEth > 0
+        ? v4PriceEth
+        : curve?.priceEth ||
+          (trades.length ? trades[trades.length - 1].priceEth : 0),
+    totalSupplyWhole,
     ethUsd,
     athPriceEth,
     price24hAgoEth,
