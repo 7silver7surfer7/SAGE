@@ -324,6 +324,34 @@ export async function dbDailyRate(address: string): Promise<bigint> {
 export async function dbBank(address: string, liveWhole: bigint): Promise<void> {
   const now = new Date();
   await prisma.$transaction(async (tx) => {
+    /**
+     * LOCK FIRST, AND NEVER WRITE `settled` AS A LITERAL.
+     *
+     * This used to open the transaction with a plain findUnique and then write
+     * `settled: acct.settled + stream` — a value computed in JS. Prisma emits
+     * that as `SET "settled" = $n`, a bound literal, not `settled = settled + n`.
+     * At READ COMMITTED (the default; no isolationLevel is set) a plain SELECT
+     * neither takes nor waits on a row lock, so dbTransferPixels' own
+     * SELECT..FOR UPDATE did not exclude this one: a spend could commit between
+     * the read here and the write here, and the stale literal then overwrote it.
+     * The spend's journal row survives, so `settled` silently disagrees with
+     * the journal and the pixels are back.
+     *
+     * Both sides of a collect can be one person's wallets, so a failed attempt
+     * costs nothing and can be retried indefinitely — which is what made this
+     * critical rather than a rare accident. Reachable from the sweep, which the
+     * unauthenticated SyncPixelBank poke can run concurrently with itself.
+     *
+     * The FOR UPDATE is still needed even with `increment`: the stream is
+     * computed from checkpointSage/lastSync/streamDust, and those three must be
+     * a consistent snapshot of the row being updated. The RPC read stays
+     * OUTSIDE the transaction (the caller passes liveWhole), as dbTransferPixels
+     * already arranges, so no network round-trip happens while a row is locked.
+     */
+    await tx.$queryRaw`
+      SELECT "walletAddress" FROM "PixelAccount"
+      WHERE "walletAddress" = ${address}
+      FOR UPDATE`;
     const acct = await tx.pixelAccount.findUnique({ where: { walletAddress: address } });
     const carried = acct
       ? streamWithDust(liveWhole, acct.checkpointSage, acct.lastSync, now.getTime(), acct.streamDust ?? BigInt(0))
@@ -333,7 +361,12 @@ export async function dbBank(address: string, liveWhole: bigint): Promise<void> 
       where: { walletAddress: address },
       create: { walletAddress: address, settled: BigInt(0), checkpointSage: liveWhole, lastSync: now },
       update: {
-        settled: (acct?.settled ?? BigInt(0)) + stream,
+        // `increment` so the write is a read-modify-write IN THE DATABASE. It
+        // also fixes the create-branch race: FOR UPDATE cannot lock a row that
+        // does not exist, so a row inserted concurrently lands in the ON
+        // CONFLICT branch — which under the old literal clamped it to 0 + 0,
+        // destroying whatever the other transaction had just credited.
+        settled: { increment: stream },
         checkpointSage: liveWhole,
         lastSync: now,
         // preserved, so a sub-threshold interval is deferred rather than lost
@@ -375,31 +408,63 @@ export async function dbTransferPixels(
       WHERE "walletAddress" IN (${from}, ${to})
       FOR UPDATE`;
     const acctFrom = await tx.pixelAccount.findUnique({ where: { walletAddress: from } });
-    const banked =
-      (acctFrom?.settled ?? BigInt(0)) +
-      (acctFrom ? streamOf(liveFrom, acctFrom.checkpointSage, acctFrom.lastSync, now.getTime()) : BigInt(0));
+    // streamWithDust, not streamOf: banking here ADVANCES lastSync, so it
+    // closes the interval — and a close that does not consume and re-carry the
+    // remainder throws away every sub-pixel of it. The balance check is also
+    // fractionally more correct for it.
+    const carriedFrom = acctFrom
+      ? streamWithDust(liveFrom, acctFrom.checkpointSage, acctFrom.lastSync, now.getTime(), acctFrom.streamDust ?? BigInt(0))
+      : { stream: BigInt(0), dust: BigInt(0) };
+    const banked = (acctFrom?.settled ?? BigInt(0)) + carriedFrom.stream;
     if (banked < amount) throw new Error('insufficient pixels');
     await tx.pixelAccount.upsert({
       where: { walletAddress: from },
       create: { walletAddress: from, settled: BigInt(0) - amount, checkpointSage: BigInt(0), lastSync: now },
-      update: { settled: banked - amount, lastSync: now },
+      // increment rather than a literal, matching dbBank — the row is locked
+      // above, but a literal would still clobber a row created concurrently
+      update: {
+        settled: { increment: carriedFrom.stream - amount },
+        lastSync: now,
+        streamDust: carriedFrom.dust,
+      },
     });
+    // `settled` moves by stream - amount, so the journal needs BOTH halves or
+    // it cannot reconstruct the balance it is the record of.
+    if (carriedFrom.stream > BigInt(0)) {
+      await tx.pixelJournal.create({
+        data: { walletAddress: from, delta: carriedFrom.stream, kind: 'bank', reason: 'accrual banked before spend' },
+      });
+    }
     const spend = await tx.pixelJournal.create({
       data: { walletAddress: from, delta: BigInt(0) - amount, kind: 'spend', reason },
     });
     if (to.toLowerCase() !== from.toLowerCase()) {
       const acctTo = await tx.pixelAccount.findUnique({ where: { walletAddress: to } });
-      const bankedTo =
-        (acctTo?.settled ?? BigInt(0)) +
-        (acctTo ? streamOf(liveTo, acctTo.checkpointSage, acctTo.lastSync, now.getTime()) : BigInt(0));
+      const carriedTo = acctTo
+        ? streamWithDust(liveTo, acctTo.checkpointSage, acctTo.lastSync, now.getTime(), acctTo.streamDust ?? BigInt(0))
+        : { stream: BigInt(0), dust: BigInt(0) };
       await tx.pixelAccount.upsert({
         where: { walletAddress: to },
         create: { walletAddress: to, settled: amount, checkpointSage: BigInt(0), lastSync: now },
-        update: { settled: bankedTo + amount, lastSync: now },
+        update: {
+          settled: { increment: carriedTo.stream + amount },
+          lastSync: now,
+          streamDust: carriedTo.dust,
+        },
       });
+      if (carriedTo.stream > BigInt(0)) {
+        await tx.pixelJournal.create({
+          data: { walletAddress: to, delta: carriedTo.stream, kind: 'bank', reason: 'accrual banked before credit' },
+        });
+      }
     } else {
-      // self-transfer nets to zero: put the debit back
-      await tx.pixelAccount.update({ where: { walletAddress: from }, data: { settled: banked } });
+      // self-transfer nets to zero: put the debit back. Under increment
+      // semantics that is +amount, undoing the -amount above and leaving the
+      // banked stream — the same end state the literal wrote.
+      await tx.pixelAccount.update({
+        where: { walletAddress: from },
+        data: { settled: { increment: amount } },
+      });
     }
     await tx.pixelJournal.create({
       data: { walletAddress: to, delta: amount, kind: 'credit', reason },
@@ -414,15 +479,33 @@ export async function dbCreditPixels(to: string, amount: bigint, reason: string)
   const now = new Date();
   const live = await liveSageWhole(to).catch(() => BigInt(0));
   const journalId = await prisma.$transaction(async (tx) => {
+    // Same lock + increment as dbBank, and for the same reason — this path had
+    // neither. See the note there.
+    await tx.$queryRaw`
+      SELECT "walletAddress" FROM "PixelAccount"
+      WHERE "walletAddress" = ${to}
+      FOR UPDATE`;
     const acct = await tx.pixelAccount.findUnique({ where: { walletAddress: to } });
-    const banked =
-      (acct?.settled ?? BigInt(0)) +
-      (acct ? streamOf(live, acct.checkpointSage, acct.lastSync, now.getTime()) : BigInt(0));
+    // Banking the stream CLOSES the interval (lastSync moves), so it must
+    // consume and re-carry the dust like dbBank does. Calling streamOf with no
+    // dust left the remainder stranded against an interval that had already
+    // been paid for.
+    const carried = acct
+      ? streamWithDust(live, acct.checkpointSage, acct.lastSync, now.getTime(), acct.streamDust ?? BigInt(0))
+      : { stream: BigInt(0), dust: BigInt(0) };
     await tx.pixelAccount.upsert({
       where: { walletAddress: to },
       create: { walletAddress: to, settled: amount, checkpointSage: BigInt(0), lastSync: now },
-      update: { settled: banked + amount, lastSync: now },
+      update: { settled: { increment: carried.stream + amount }, lastSync: now, streamDust: carried.dust },
     });
+    // The banked accrual gets its OWN row. Without it `settled` moved by
+    // stream + amount while the journal recorded only amount, so the journal
+    // could not reconstruct the balance it is supposed to be the record of.
+    if (carried.stream > BigInt(0)) {
+      await tx.pixelJournal.create({
+        data: { walletAddress: to, delta: carried.stream, kind: 'bank', reason: 'accrual banked before credit' },
+      });
+    }
     const row = await tx.pixelJournal.create({
       data: { walletAddress: to, delta: amount, kind: 'credit', reason },
     });
