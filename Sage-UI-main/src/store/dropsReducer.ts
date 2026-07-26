@@ -1,6 +1,7 @@
 import { ethers, Signer } from 'ethers';
 import { DropFull, Drop_include_GamesAndArtist, Splitter_include_Entries } from '@/prisma/types';
 import { toast } from 'react-toastify';
+import { publishMessage } from '@/constants/publish';
 import {
   assertSignerOnConfiguredChain,
   extractErrorMessage,
@@ -781,9 +782,25 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
    * pipelines, so they keep the client path rather than being half-ported.
    * The server reports them back as `unsupported` and this handles them.
    */
+  /**
+   * ONE PROMPT, and it is a SIGNATURE rather than a transaction.
+   *
+   * With the deploy server-side, an artist's second and later drops asked for
+   * nothing at all — which removed the only thing tying a human to the act of
+   * publishing, and left an endpoint that spent the platform's gas on request.
+   * This restores both at once: the server refuses to spend until it recovers
+   * this drop's artist from the signature.
+   *
+   * No gas, no confirmation wait. Its only job is to say "yes, publish it".
+   */
+  const issuedAt = new Date().toISOString();
+  dropProgress.note('Sign to publish — a signature, not a transaction. No gas.');
+  const signature = await signer.signMessage(publishMessage(dropId, issuedAt));
+
   const { data: served, error: serveErr } = await fetchWithBQ({
     url: `drops?action=DeployDropGames&id=${dropId}`,
     method: 'POST',
+    body: { issuedAt, signature },
   });
   if (serveErr || !served) {
     throw new Error(

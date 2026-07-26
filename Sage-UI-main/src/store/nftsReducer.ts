@@ -496,17 +496,22 @@ async function createNftContract(
   if (contractAddress == ethers.constants.AddressZero) {
     throw new Error('Unable to create a new NFT contract');
   }
-  console.log(`createNftContract() :: Deploying contract metadata file...`);
-  const { data: response } = await fetchWithBQ({
-    url: `nfts?action=DeployContractMetadata`,
-    method: 'POST',
-    body: { artistAddress, contractAddress, displayName: contractName },
-  });
-  const metadataURL = (response as any).metadataURL;
-  console.log(`createNftContract() :: Setting contract metadata to ${metadataURL}`);
-  const contract = await getNFTContract(contractAddress, signer);
-  tx = await contract.setContractMetadata(metadataURL);
-  await tx.wait();
+  /**
+   * NO SECOND SIGNATURE. This used to upload the collection metadata and then
+   * make the artist sign setContractMetadata — a second wallet prompt on their
+   * first drop, for a URI only external marketplaces read.
+   *
+   * It is deliberately gone rather than moved: setContractMetadata is
+   * `hasRole(DEFAULT_ADMIN) || (msg.sender == artist && metadata is empty)`,
+   * and the server key holds role.admin but NOT DEFAULT_ADMIN — verified by
+   * callStatic on mainnet. Granting it DEFAULT_ADMIN to save one prompt on
+   * first drops would widen a key that is already settlement, oracle and
+   * admin at once.
+   *
+   * Nothing in SAGE reads contractMetadata; drops.page.ts already calls it
+   * "display-sugar — its failure must not fail the deploy step". A background
+   * job or the multisig can set it later without the artist present.
+   */
   return contractAddress;
 }
 

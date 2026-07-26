@@ -2,6 +2,22 @@ import { ethers } from 'ethers';
 import prisma from '@/prisma/client';
 import { parameters, currencyAddressFor, isEthCurrency } from '@/constants/config';
 import { getServerSigner, deployWhitelistServerSide } from '@/utilities/serverWallet';
+import { publishMessage, PUBLISH_WINDOW_MS } from '@/constants/publish';
+/**
+ * THE REAL ABIs, from the build artifacts — never hand-written.
+ *
+ * The first version of this file spelled the auction tuple out by reading the
+ * CLIENT'S OBJECT LITERAL and guessing the signature from it. That produced a
+ * struct with 11 fields in the wrong order, uint256 where the contract uses
+ * uint32, and an invented `nftId` the contract does not have. ethers encodes
+ * strictly by ABI order, so every call was garbage calldata and reverted as
+ * "cannot estimate gas" — a message that says nothing about the real cause.
+ *
+ * An object literal shows the FIELD NAMES a caller happened to pass. It does
+ * not show order, width, or whether a field exists. Only the artifact does.
+ */
+import AuctionJson from '@/constants/abis/Auction/Auction.sol/Auction.json';
+import OpenEditionJson from '@/constants/abis/OpenEdition/SAGEOpenEdition.sol/SAGEOpenEdition.json';
 
 /**
  * Create a drop's GAMES on-chain from the server, so the artist signs once.
@@ -71,8 +87,49 @@ async function loadDrop(dropId: number) {
   return drop;
 }
 
-export async function deployDropGamesServerSide(dropId: number): Promise<ServerDeployResult> {
+/**
+ * Prove the DROP'S OWNER asked for this, before spending the platform's gas.
+ *
+ * Moving the deploy server-side removed every wallet prompt after an artist's
+ * first drop, which took away the one thing tying a human to the act of
+ * publishing — and left a path where anyone able to create a drop could make
+ * the platform spend gas by calling an endpoint. One signature restores both:
+ * it is the artist's authorisation AND the spend guard.
+ *
+ * Off-chain deliberately. An on-chain transaction would prove the same thing
+ * while costing the artist gas and a confirmation wait, for a step whose only
+ * job is to say "yes, publish it".
+ */
+export function verifyPublishSignature(
+  dropId: number,
+  artistAddress: string,
+  issuedAt: string,
+  signature: string
+): void {
+  const at = Date.parse(issuedAt);
+  if (!Number.isFinite(at)) throw new Error('publish signature has no valid timestamp');
+  if (Math.abs(Date.now() - at) > PUBLISH_WINDOW_MS) {
+    throw new Error('publish signature has expired — sign again');
+  }
+  let recovered: string;
+  try {
+    recovered = ethers.utils.verifyMessage(publishMessage(dropId, issuedAt), signature);
+  } catch {
+    throw new Error('publish signature could not be read');
+  }
+  if (recovered.toLowerCase() !== artistAddress.toLowerCase()) {
+    throw new Error('publish signature is not from this drop\'s artist');
+  }
+}
+
+export async function deployDropGamesServerSide(
+  dropId: number,
+  auth: { issuedAt: string; signature: string }
+): Promise<ServerDeployResult> {
   const drop = await loadDrop(dropId);
+  // BEFORE any gas is spent, and before the artist contract check, so a
+  // forged request cannot even probe.
+  verifyPublishSignature(dropId, drop.artistAddress, auth.issuedAt, auth.signature);
   const nftContract = drop.NftContract?.contractAddress;
   if (!nftContract) {
     // The one thing the artist signs. Without it there is nothing to mint INTO,
@@ -137,13 +194,7 @@ export async function deployDropGamesServerSide(dropId: number): Promise<ServerD
   }
 
   // ── auctions ──────────────────────────────────────────────────────────────
-  const auctionAbi = [
-    'function createAuction((uint256 auctionId,uint256 nftId,uint256 minimumPrice,uint256 startTime,uint256 endTime,uint256 duration,address nftContract,string nftUri,bool settled,uint256 highestBid,address highestBidder))',
-    'function createAuctionWithCurrency((uint256 auctionId,uint256 nftId,uint256 minimumPrice,uint256 startTime,uint256 endTime,uint256 duration,address nftContract,string nftUri,bool settled,uint256 highestBid,address highestBidder),address)',
-    'function setAuctionArtistShare(uint256,uint256)',
-    'function getAuction(uint256) view returns (tuple(uint256 auctionId,uint256 nftId,uint256 minimumPrice,uint256 startTime,uint256 endTime,uint256 duration,address nftContract,string nftUri,bool settled,uint256 highestBid,address highestBidder))',
-  ];
-  const auctionContract = new ethers.Contract(parameters.AUCTION_ADDRESS, auctionAbi, signer);
+  const auctionContract = new ethers.Contract(parameters.AUCTION_ADDRESS, AuctionJson.abi, signer);
   let auctionsMade = 0;
   for (const a of drop.Auctions) {
     // idempotent: a retry after a partial failure must not revert the whole run
@@ -171,6 +222,12 @@ export async function deployDropGamesServerSide(dropId: number): Promise<ServerD
     await tx.wait(1);
     txHashes.push(tx.hash);
     auctionsMade++;
+    // same reasoning as editionId below: the client path stamped this via
+    // UpdateAuctionContractAddress, so the server path must too
+    await prisma.auction.update({
+      where: { id: a.id },
+      data: { contractAddress: parameters.AUCTION_ADDRESS },
+    });
     if (drop.isSocial) {
       // best-effort: the auction exists either way, and a missing share leaves
       // the marketplace default rather than a broken game
@@ -185,12 +242,7 @@ export async function deployDropGamesServerSide(dropId: number): Promise<ServerD
   }
 
   // ── open editions ─────────────────────────────────────────────────────────
-  const oeAbi = [
-    'function createOpenEdition((uint32 startTime,uint32 closeTime,uint32 costPoints,uint32 limitPerUser,uint32 mintCount,string nftUri,address nftContract,address whitelist,uint256 costTokens,uint256 id,address currency))',
-    'function setEditionArtistShare(uint256,uint256)',
-    'function getOpenEdition(uint256) view returns (tuple(uint32 startTime,uint32 closeTime,uint32 costPoints,uint32 limitPerUser,uint32 mintCount,string nftUri,address nftContract,address whitelist,uint256 costTokens,uint256 id,address currency))',
-  ];
-  const oeContract = new ethers.Contract(parameters.OPENEDITION_ADDRESS, oeAbi, signer);
+  const oeContract = new ethers.Contract(parameters.OPENEDITION_ADDRESS, OpenEditionJson.abi, signer);
   let editionsMade = 0;
   for (const oe of drop.OpenEditions) {
     const existing = await oeContract.getOpenEdition(oe.id).catch(() => null);
@@ -211,6 +263,26 @@ export async function deployDropGamesServerSide(dropId: number): Promise<ServerD
     await tx.wait(1);
     txHashes.push(tx.hash);
     editionsMade++;
+    /**
+     * editionId IS THE MINT GATE. The client path wrote it via
+     * UpdateOpenEditionContractAddress and I did not port that when this moved
+     * server-side — I assumed marking the drop live was enough, because that
+     * sets contractAddress and isLive. It does not set editionId.
+     *
+     * MintOpenEditionModal gates on
+     *   Boolean(parameters.OPENEDITION_ADDRESS && openEdition.editionId != null)
+     * so a null here refuses every mint with "on-chain minting opens once the
+     * SAGE contracts are live" — a message about contracts, for a row that was
+     * missing one integer. The drop deploys, goes live, looks perfect, and
+     * cannot be minted.
+     *
+     * The on-chain struct id IS this row's DB id, which is why it can simply
+     * be copied.
+     */
+    await prisma.openEdition.update({
+      where: { id: oe.id },
+      data: { editionId: oe.id, contractAddress: parameters.OPENEDITION_ADDRESS },
+    });
     if (drop.isSocial) {
       try {
         const stx = await oeContract.setEditionArtistShare(oe.id, SOCIAL_ARTIST_SHARE_BPS);

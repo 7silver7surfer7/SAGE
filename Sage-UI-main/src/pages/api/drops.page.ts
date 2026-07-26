@@ -281,7 +281,7 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       await enableIpGate(Number(id), response);
       break;
     case 'DeployDropGames':
-      await deployDropGames(Number(id), response);
+      await deployDropGames(Number(id), request, response);
       break;
     case 'GetGameVoucher':
       await getGameVoucher(request, walletAddress, response);
@@ -305,12 +305,16 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
  * being idempotent per game id, so a retry loop cannot bill twice for the same
  * game. A per-wallet daily cap is still worth adding before this is loud.
  */
-async function deployDropGames(id: number, response: NextApiResponse) {
+async function deployDropGames(id: number, request: NextApiRequest, response: NextApiResponse) {
   if (!Number.isFinite(id) || id <= 0) {
     return response.status(400).json({ error: 'bad drop id' });
   }
+  const { issuedAt, signature } = request.body || {};
+  if (!issuedAt || !signature) {
+    return response.status(400).json({ error: 'a publish signature is required' });
+  }
   try {
-    const result = await deployDropGamesServerSide(id);
+    const result = await deployDropGamesServerSide(id, { issuedAt, signature });
     console.log(`deployDropGames(${id}) ::`, JSON.stringify(result));
     response.json(result);
   } catch (e: any) {
