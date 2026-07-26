@@ -58,12 +58,39 @@ const AUTHED: Role[] = [Role.USER, Role.ARTIST, Role.ADMIN];
 // concurrent callers is not — this is what was tipping the shared 15-
 // connection pool into EMAXCONNSESSION under moderate concurrent load.
 const memoCache = new Map<string, { data: any; expiresAt: number }>();
+/**
+ * In-flight requests, so concurrent callers SHARE one computation instead of
+ * each starting their own.
+ *
+ * The cache entry was only written AFTER `await compute()` resolved, so this
+ * memo deduplicated sequential callers and did nothing at all for simultaneous
+ * ones — N requests arriving together all missed and all ran the full
+ * computation. That is merely wasteful for a feed query, but SyncPixelBank
+ * routes through here to dbBankSweep, which is RPC-bound and stays in flight
+ * for tens of seconds: the endpoint's own comment claims "an extra poke can
+ * never corrupt state", and overlapping sweeps banking the same 200 wallets is
+ * precisely the window the ledger's read-modify-write race needed. The race is
+ * fixed at its source (dbBank now locks the row and increments); this is the
+ * second layer, and the reason the poke is cheap to leave open.
+ */
+const memoInFlight = new Map<string, Promise<any>>();
 async function withMemoCache<T>(key: string, ttlMs: number, compute: () => Promise<T>): Promise<T> {
   const hit = memoCache.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.data;
-  const data = await compute();
-  memoCache.set(key, { data, expiresAt: Date.now() + ttlMs });
-  return data;
+  const running = memoInFlight.get(key);
+  if (running) return running as Promise<T>;
+  // registered BEFORE the await, which is the whole point
+  const p = (async () => {
+    try {
+      const data = await compute();
+      memoCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+      return data;
+    } finally {
+      memoInFlight.delete(key);
+    }
+  })();
+  memoInFlight.set(key, p);
+  return p;
 }
 
 // burn-to-boost — Twitter-style budget × duration, SOFT. You pick a daily
@@ -4459,7 +4486,16 @@ async function syncPixelBank(res: NextApiResponse) {
   if (pixelsSource() !== 'db') {
     return res.json({ mode: 'chain', note: 'DB ledger not active — on-chain keeper owns accrual' });
   }
-  const result = await withMemoCache('pixel-bank-sweep', 60_000, () => dbBankSweep());
+  // computedAt is stamped INSIDE the callback, so a memo-served response
+  // carries the original sweep's timestamp. Without it two pokes 20s apart
+  // returned an identical {checked, banked} whether the sweep had re-run or
+  // not, and an operator (or an agent reading production logs) could not tell
+  // a healthy cache hit from a book that had stopped rotating — which is
+  // exactly the ambiguity that hid the sweep-rotation bug for six days.
+  const result = await withMemoCache('pixel-bank-sweep', 60_000, async () => ({
+    ...(await dbBankSweep()),
+    computedAt: new Date().toISOString(),
+  }));
   res.json({ mode: 'db', ...result });
 }
 async function getTokenTradeLedger(req: NextApiRequest, res: NextApiResponse) {
