@@ -697,7 +697,23 @@ async function registerOpenEditionMint(
       response.status(404).json({ error: 'Open edition not found' });
       return;
     }
-    const nftContractAddress = openEdition.Drop.NftContract.contractAddress;
+    /**
+     * The DROP's contract first, the artist's shared one only as a fallback.
+     *
+     * This read Drop.NftContract.contractAddress, which resolves through
+     * artistAddress and so always returns the artist's shared contract. Once
+     * editions began minting into a per-drop contract that address became the
+     * wrong one — and nothing here would have said so. ownerOf() would query a
+     * collection this token was never in and either revert or, worse, answer
+     * about a completely different token that happens to share the id, since
+     * every fresh SageNFT starts numbering at 1 again. The visible result is a
+     * 403 telling a minter they do not own what they just minted.
+     *
+     * Not yet firing in production only because no drop has been published
+     * since per-drop contracts shipped. The next one would have hit it.
+     */
+    const nftContractAddress =
+      openEdition.Drop.nftContractAddress || openEdition.Drop.NftContract?.contractAddress;
     if (!nftContractAddress) {
       response.status(400).json({ error: 'Artist NFT contract not deployed yet' });
       return;

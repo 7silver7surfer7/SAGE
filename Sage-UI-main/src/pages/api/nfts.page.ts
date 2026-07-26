@@ -10,6 +10,7 @@ import { SearchableNftData } from '@/store/nftsReducer';
 import { sendArweaveTransaction } from '@/utilities/arweave-server';
 import { parameters, currencyAddressFor } from '@/constants/config';
 import { toDecimalString } from '@/utilities/decimalString';
+import { nftContractFor, NFT_CONTRACT_INCLUDE } from '@/utilities/nftContractFor';
 
 // State-changing actions on this route — gated by the cross-site check below.
 // (Reads stay open so public marketplace browsing is unaffected.)
@@ -286,14 +287,19 @@ async function createOffer(request: NextApiRequest, response: NextApiResponse) {
     }
     const nft = await prisma.nft.findUnique({
       where: { id: numericNftId },
-      include: { NftContract: true },
+      include: NFT_CONTRACT_INCLUDE,
     });
     if (!nft) {
       response.status(404).json({ error: 'NFT not found' });
       return;
     }
-    // (1) contract identity comes from OUR record, never from the request
-    const trueContract = nft.NftContract?.contractAddress;
+    // (1) contract identity comes from OUR record, never from the request.
+    // Still true — nftContractFor only changes WHICH of our records answers.
+    // NftContract resolves through artistAddress and therefore always names the
+    // artist's shared contract, so a token minted into a per-drop contract had
+    // a "true" contract it does not live in, and every offer on it was refused
+    // by the equality check below.
+    const trueContract = nftContractFor(nft);
     if (!trueContract) {
       response.status(400).json({ error: 'this NFT has no registered contract — cannot be traded' });
       return;
@@ -448,7 +454,7 @@ async function updateOwner(request: NextApiRequest, id: number, response: NextAp
   try {
     const offer = await prisma.offer.findUnique({
       where: { id },
-      include: { Nft: { include: { NftContract: true } } },
+      include: { Nft: { include: NFT_CONTRACT_INCLUDE } },
     });
     if (!offer || offer.state != OfferState.ACTIVE) {
       throw new Error('Offer does not exist or is not active');
@@ -461,7 +467,9 @@ async function updateOwner(request: NextApiRequest, id: number, response: NextAp
     // arbitrary ownerAddress onto ANY NFT (stealing it as a "verified" pfp, or
     // un-listing an artist's whole catalogue). The relation was already loaded
     // here and then ignored.
-    const trueContract = offer.Nft.NftContract?.contractAddress;
+    // Same reasoning as createOffer: our record decides, but it has to be the
+    // record that knows where this token actually lives.
+    const trueContract = nftContractFor(offer.Nft);
     if (!trueContract) {
       throw new Error('NFT has no registered contract');
     }
