@@ -7,8 +7,10 @@ import { useSession } from 'next-auth/react';
 import { useGetListingNftsByOwnerQuery } from '@/store/nftsReducer';
 import { Tabs, Tab, TabList, TabPanel } from 'react-tabs';
 import { useRouter } from 'next/router';
+import useSAGEAccount from '@/hooks/useSAGEAccount';
 import Gallery from './Gallery';
 import SocialCollectiblesPanel from './SocialCollectiblesPanel';
+import EditionPanel from '@/components/Social/EditionPanel';
 
 interface Props {
   collectionTabIndex: number;
@@ -18,6 +20,7 @@ interface Props {
 export default function CollectionPanel({ collectionTabIndex, setCollectionTabIndex }: Props) {
   const router = useRouter();
   const { data: sessionData } = useSession();
+  const { walletAddress } = useSAGEAccount();
   const { data: claimedPrizes, isFetching: fetchingClaimedPrizes } = useGetClaimedPrizesQuery(
     undefined,
     { skip: !sessionData }
@@ -97,6 +100,24 @@ export default function CollectionPanel({ collectionTabIndex, setCollectionTabIn
         </div>
       </Tabs>
       <SocialCollectiblesPanel />
+      {/*
+        Editions this wallet MINTED ITSELF — a 1/1 from the AI chat, a social
+        launch, any standalone edition.
+
+        The grid above is built from auction wins, lottery prizes and
+        marketplace listings: Nft rows tied to a drop and an NftContract. A
+        standalone edition has neither, because prepare_mint deploys its own
+        contract outside the drop pipeline — which is what makes it a single
+        signature. So self-minted work could never appear there and showed up
+        nowhere a creator would look for it.
+
+        EditionPanel already does all of this (live mint counts, halt/unhalt,
+        hide) and was only ever rendered on the launcher page. It renders
+        nothing when there are no editions, so an empty collection is
+        unchanged. showLaunchCta is omitted deliberately: launching belongs on
+        the launcher, not as promotion inside someone's own collection.
+      */}
+      {walletAddress && <EditionPanel address={walletAddress} isSelf />}
     </div>
   );
 }
