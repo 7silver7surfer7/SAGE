@@ -396,13 +396,15 @@ export default function TokenDetailPage() {
           <div><span>Trades</span><b>{data?.tradeCount ?? 0}</b></div>
           <div
             title={
-              data?.complete
+              data?.isV4Pool
+                ? 'Trades in a Uniswap v4 pool. This token launched straight into the pool rather than on a bonding curve, so there is no curve to fill or graduate from.'
+                : data?.complete
                 ? 'Graduated: the curve sold out. Its ETH + reserve tokens seeded a Uniswap pool and the LP was BURNED — liquidity is locked forever; nobody can pull it.'
                 : `On curve: ${data?.bondingProgressPct ?? 0}% of 793.1M sold. The FINAL BUY auto-graduates the token — its collected ETH and reserve tokens are deposited into a Uniswap pool in the same transaction and the LP is BURNED (liquidity locked forever). Trading moves to the open market.`
             }
           >
             <span>Status</span>
-            <b>{data?.complete ? 'Graduated' : 'On curve'}</b>
+            <b>{data?.isV4Pool ? 'Uniswap V4' : data?.complete ? 'Graduated' : 'On curve'}</b>
           </div>
         </div>
 
@@ -442,15 +444,21 @@ export default function TokenDetailPage() {
         />
 
         <div className='token-page__curve'>
+          {/* A v4 token never had a curve: showing "100% sold" of a curve that
+              does not exist is simply false. Name the venue instead. */}
           <div className='token-page__curve-head'>
-            <span>Bonding curve</span>
-            <span>{data?.bondingProgressPct ?? 0}% sold</span>
+            <span>{data?.isV4Pool ? 'Liquidity' : 'Bonding curve'}</span>
+            <span>{data?.isV4Pool ? 'Uniswap v4 pool' : `${data?.bondingProgressPct ?? 0}% sold`}</span>
           </div>
-          <div className='token-page__curve-bar'>
-            <div className='token-page__curve-fill' style={{ width: `${data?.bondingProgressPct ?? 0}%` }} />
-          </div>
+          {!data?.isV4Pool && (
+            <div className='token-page__curve-bar'>
+              <div className='token-page__curve-fill' style={{ width: `${data?.bondingProgressPct ?? 0}%` }} />
+            </div>
+          )}
           <p className='token-page__curve-note'>
-            {data?.complete
+            {data?.isV4Pool
+              ? 'Trades on the open market through a Uniswap v4 pool on Robinhood Chain. There is no bonding curve — price is set by the pool, and every buy and sell goes straight through it.'
+              : data?.complete
               ? data?.uniswapPair
                 ? 'Graduated — trading continues right here through the Uniswap pool. Fees follow pump.fun’s exact tiers: the creator earns up to 0.95% per trade, gliding to 0.05% as market cap grows.'
                 : 'Sold out! Graduation is automatic on the final buy — if this token predates auto-migration, trigger it below.'

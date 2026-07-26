@@ -288,6 +288,8 @@ export interface TokenDetail {
   /** real on-chain supply in whole tokens; 1e9 was hardcoded before Doppler
    *  launches (SAGE new is 100B) made that assumption wrong. */
   totalSupplyWhole?: number;
+  /** trades in a Uniswap v4 pool, so the bonding-curve UI does not apply */
+  isV4Pool?: boolean;
   ethUsd: number;
   athPriceEth: number;
   price24hAgoEth: number;

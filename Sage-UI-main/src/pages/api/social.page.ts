@@ -4748,6 +4748,10 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
         : curve?.priceEth ||
           (trades.length ? trades[trades.length - 1].priceEth : 0),
     totalSupplyWhole,
+    // True when the token trades in a Uniswap v4 pool rather than a bonding
+    // curve. The UI's curve language ("On curve", "N% sold") is meaningless
+    // for a Doppler launch — it never had a curve to sell out of.
+    isV4Pool: !!poolKeyFor(token),
     ethUsd,
     athPriceEth,
     price24hAgoEth,
