@@ -4596,9 +4596,23 @@ async function syncPoolTradesInner(
 /**
  * The DB keeper's trigger — the zero-gas replacement for the seedSettled
  * cron. Public and unauthenticated by design (like the trade-indexer nudge):
- * the CI cron pokes it with a bare curl, no DB creds or keys in CI. Banking
- * is idempotent and self-correcting, so an extra poke can never corrupt
- * state — the throttle just caps RPC read load. No-op until PIXELS_SOURCE=db.
+ * the CI cron pokes it with a bare curl, no DB creds or keys in CI. No-op
+ * until PIXELS_SOURCE=db.
+ *
+ * THIS COMMENT USED TO CLAIM "an extra poke can never corrupt state". That was
+ * false for as long as dbBank wrote `settled` as a JS-computed literal: extra
+ * pokes ran overlapping sweeps over the same 200 wallets, and each overlap was
+ * a window in which a committed spend could be overwritten. Two things make
+ * the claim true now — dbBank takes the row lock and increments in the
+ * database, and withMemoCache dedupes in-flight callers so simultaneous pokes
+ * share one sweep rather than starting several.
+ *
+ * Left unauthenticated deliberately, and it is a JUDGEMENT rather than an
+ * oversight: an attacker gains nothing but RPC load, and the alternative is a
+ * shared secret in CI that, if it ever drifts, stops accrual banking silently.
+ * Revisit if the read load becomes the problem — but do not re-authenticate it
+ * as a substitute for the two fixes above, which are what actually made the
+ * idempotence claim honest.
  */
 async function syncPixelBank(res: NextApiResponse) {
   if (pixelsSource() !== 'db') {
