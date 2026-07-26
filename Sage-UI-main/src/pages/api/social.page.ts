@@ -4706,13 +4706,31 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
   // not the last-500 chart window (which quietly turned "ATH" into "recent
   // high": SAGE displayed $111k while its real peak was ~$579k). Max'd with
   // the live spot so a fresh peak shows before its trade row lands.
-  const athPriceEth = ledger.reduce((m, t) => Math.max(m, t.priceEth), curve?.priceEth || 0);
+  const athPriceEth = ledger.reduce(
+    (m, t) => Math.max(m, t.priceEth),
+    v4PriceEth > 0 ? v4PriceEth : curve?.priceEth || 0
+  );
   const dayAgo = Date.now() - 24 * 3600 * 1000;
   const before24h = [...trades].reverse().find((t) => +t.createdAt <= dayAgo);
   // baseline: last trade before the 24h window; if the token is younger than
   // 24h, the curve's initial price (its true starting point)
   const INITIAL_PRICE = 2_000_000 / 1_073_000_000;
-  const price24hAgoEth = before24h ? before24h.priceEth : trades.length ? INITIAL_PRICE : curve?.priceEth || 0;
+  // A v4 token has NO curve, so the curve's opening spot is not its starting
+  // point — its oldest known trade is. Using INITIAL_PRICE made SAGE (new)
+  // look like it had crashed 93.6% in 24h: the baseline was a bonding-curve
+  // price ~15x its real one, against a token that never sat on a curve.
+  // (Only reached when nothing older than 24h exists, so `trades` being the
+  // last-500 window rather than all history cannot matter here.)
+  const oldestKnownPriceEth = trades.length ? trades[0].priceEth : 0;
+  const youngBaseline =
+    v4PriceEth > 0
+      ? oldestKnownPriceEth || v4PriceEth // no drift when there is nothing older
+      : INITIAL_PRICE;
+  const price24hAgoEth = before24h
+    ? before24h.priceEth
+    : trades.length
+    ? youngBaseline
+    : curve?.priceEth || 0;
 
   return {
     token: {
