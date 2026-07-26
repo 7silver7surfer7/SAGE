@@ -7,6 +7,7 @@ import { isUserWalletCode } from '@/utilities/accountKind';
 import { extractFirstUrl, fetchLinkPreview } from '@/utilities/linkPreview';
 import prisma from '@/prisma/client';
 import { poolKeyFor, quoteV4Buy } from '@/utilities/uniswapV4';
+import { reconcileEditions, autoReconcileEditions } from '@/utilities/editionReconciler';
 import {
   parameters,
   SAGE_PRICE_TOKEN_ADDRESS,
@@ -330,6 +331,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
         return await withAuth(request, response, (r) => recordTrade(request, response, r));
       case 'RecordEditionLaunch':
         return await withAuth(request, response, (r) => recordEditionLaunch(request, response, r));
+      case 'ReconcileEditions':
+        return await withAuth(request, response, (r) => reconcileEditionsAction(response, r));
       case 'RequestCollectVoucher':
         return await withAuth(request, response, (r) => requestCollectVoucher(request, response, r));
       case 'RequestFaucetVoucher':
@@ -479,6 +482,27 @@ async function refundPixelsOrRecordDebt(
  * Media/art URLs must point at OUR bucket — a loose *.amazonaws.com match
  * would accept anyone's bucket with a /social/ folder.
  */
+/**
+ * Fetch a receipt, allowing for the server's RPC node to be a little behind.
+ *
+ * The Record*Launch handlers are only ever called after the CLIENT has watched
+ * its transaction get mined — but it watched through the user's RPC endpoint,
+ * and this runs against the server's. When the two are a block or two apart the
+ * receipt comes back null, the handler rejects a launch that genuinely
+ * happened, and the database row is lost permanently: a 400 here is terminal,
+ * nothing retries it, and the token or edition exists on-chain while appearing
+ * nowhere in the app. Waiting a few seconds costs one slow request and removes
+ * the whole class of failure.
+ */
+async function waitForReceipt(provider: any, txHash: string, tries = 5) {
+  let rcpt = await provider.getTransactionReceipt(txHash);
+  for (let i = 0; !rcpt && i < tries; i++) {
+    await new Promise((done) => setTimeout(done, 2000));
+    rcpt = await provider.getTransactionReceipt(txHash);
+  }
+  return rcpt;
+}
+
 function isOwnSocialMediaUrl(url: string): boolean {
   const bucket = process.env.S3_BUCKET;
   if (!bucket || typeof url !== 'string') return false;
@@ -3194,7 +3218,7 @@ async function recordTokenLaunch(
   try {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
-    const rcpt = await provider.getTransactionReceipt(launchTxHash);
+    const rcpt = await waitForReceipt(provider, launchTxHash);
     if (!rcpt || rcpt.status !== 1) throw new Error('launch tx not mined');
     if (rcpt.from.toLowerCase() !== r.walletAddress.toLowerCase()) throw new Error('not your launch');
     if (rcpt.to?.toLowerCase() !== factory.toLowerCase()) throw new Error('wrong factory');
@@ -3767,7 +3791,7 @@ async function recordEditionLaunch(
   try {
     const { ethers } = await import('ethers');
     const provider = new ethers.providers.StaticJsonRpcProvider(parameters.RPC_URL);
-    const rcpt = await provider.getTransactionReceipt(launchTxHash);
+    const rcpt = await waitForReceipt(provider, launchTxHash);
     if (!rcpt || rcpt.status !== 1) throw new Error('launch tx not mined');
     if (rcpt.from.toLowerCase() !== r.walletAddress.toLowerCase()) throw new Error('not your launch');
     if (rcpt.to?.toLowerCase() !== launcher.toLowerCase()) throw new Error('wrong launcher');
@@ -3809,9 +3833,25 @@ async function recordEditionLaunch(
   }
 }
 
+/** Manual/scheduled full sweep. The read path already self-heals, so this
+ *  exists for the cases that path cannot reach: an edition whose artist never
+ *  opens their profile, and verifying a repair without waiting for someone to
+ *  browse. `force` skips the count shortcut so a run always reports what it saw. */
+async function reconcileEditionsAction(res: NextApiResponse, r: { role: Role }) {
+  if (r.role !== Role.ADMIN) return res.status(403).json({ error: 'admin only' });
+  const report = await reconcileEditions({ force: true });
+  return res.json(report);
+}
+
 async function getProfileEditions(address: string, res: NextApiResponse) {
   const addr = canon(address);
   if (!addr) return res.status(400).json({ error: 'bad address' });
+  // Self-heal before reading. Recording a launch is a separate POST from the
+  // launch transaction itself, so it can be lost — and when it is, the edition
+  // is invisible in exactly the place its creator goes looking for it. Doing
+  // the repair here means the page that would show the gap is the page that
+  // closes it. Costs one eth_call when there is nothing to fix.
+  await autoReconcileEditions();
   const [rows, hidden] = await Promise.all([
     prisma.socialNftEdition.findMany({ where: { artistAddress: addr }, orderBy: { id: 'desc' }, take: 20 }),
     prisma.socialHiddenItem.findMany({ where: { ownerAddress: addr, kind: 'edition' } }),
