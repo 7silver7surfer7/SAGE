@@ -108,10 +108,37 @@ export const PIXELS_LEGACY_TOKEN_ADDRESS = SAGE_PRICE_TOKEN_ADDRESS;
 // When legacy accrual stops. A fixed instant, not "two weeks from deploy":
 // the date has to be announceable and identical on every instance, and a
 // deploy-relative window would silently restart on every redeploy.
-// Override with PIXELS_MIGRATION_ENDS_AT (ISO-8601) to extend or cut it short.
-export const PIXELS_MIGRATION_ENDS_AT = new Date(
-  process.env.PIXELS_MIGRATION_ENDS_AT || '2026-08-08T00:00:00Z'
-);
+//
+// VALIDATED AND FAIL-LOUD, because the failure was silent and total. This read
+// `new Date(process.env.X || default)` with no check, and an unparseable
+// override makes `now < PIXELS_MIGRATION_ENDS_AT` FALSE — an Invalid Date
+// compares false against everything. So one typo in an env var reads as "the
+// window already closed", everywhere, instantly, and every legacy holder's
+// accrual drops to zero with nothing logged. That is the single worst outcome
+// this constant can produce, and it was the default behaviour of a typo. A
+// deploy that refuses to boot is strictly better: it fails where someone is
+// watching.
+//
+// NEXT_PUBLIC_ so the BROWSER sees an override too. A bare `process.env.X` is
+// not inlined into the client bundle (there is no `env` block in
+// next.config.js), so useSAGEAccount kept evaluating the hardcoded date while
+// the server honoured the override — the two disagreeing about whether legacy
+// tokens still earn. The old name is still read for the server, so an existing
+// deployment does not change meaning on upgrade.
+const PIXELS_MIGRATION_DEFAULT = '2026-08-08T00:00:00Z';
+const pixelsMigrationRaw =
+  process.env.NEXT_PUBLIC_PIXELS_MIGRATION_ENDS_AT ||
+  process.env.PIXELS_MIGRATION_ENDS_AT ||
+  PIXELS_MIGRATION_DEFAULT;
+const pixelsMigrationEnd = new Date(pixelsMigrationRaw);
+if (Number.isNaN(pixelsMigrationEnd.getTime())) {
+  throw new Error(
+    `PIXELS_MIGRATION_ENDS_AT is not a valid ISO-8601 instant: ${JSON.stringify(pixelsMigrationRaw)}. ` +
+      `Refusing to start — an unparseable value silently closes the migration window and zeroes ` +
+      `every legacy holder's accrual.`
+  );
+}
+export const PIXELS_MIGRATION_ENDS_AT = pixelsMigrationEnd;
 // Candidate factories, newest first. A token's curve state lives in the
 // storage of whichever factory launched it and can never be migrated, so
 // resolution WALKS this list instead of assuming the current one — that is

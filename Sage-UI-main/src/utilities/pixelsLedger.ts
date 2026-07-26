@@ -233,17 +233,59 @@ const STREAM_UNIT = RATE_DIVISOR * DAY;
  * Carrying the remainder makes accrual exact at every balance instead: the
  * numerator is preserved across banks and only the whole pixels are paid out.
  */
-function streamWithDust(
+export function streamWithDust(
   liveWhole: bigint,
   checkpointSage: bigint,
   lastSync: Date,
   nowMs: number,
   dust: bigint
 ): { stream: bigint; dust: bigint } {
-  const elapsed = BigInt(Math.max(0, Math.floor(nowMs / 1000) - Math.floor(lastSync.getTime() / 1000)));
+  const from = Math.floor(lastSync.getTime() / 1000);
+  const to = Math.floor(nowMs / 1000);
+  const elapsed = BigInt(Math.max(0, to - from));
   let held = liveWhole < checkpointSage ? liveWhole : checkpointSage;
   if (held > CAP_SAGE) held = CAP_SAGE;
-  const numerator = held * RATE_SCALED * elapsed + dust;
+
+  /**
+   * THE MIGRATION BOUNDARY IS NOT A BALANCE CHANGE, SO IT MUST NOT BE PRICED
+   * LIKE ONE.
+   *
+   * `liveSageWhole` stops reading the legacy token the instant the window
+   * closes — gated on wall-clock now, not on the interval being priced. So at
+   * 2026-08-08T00:00:00Z a holder whose balance is entirely LEGACY sees their
+   * live balance fall from legacy*250 to 0 without moving a single token, and
+   * the line above prices the WHOLE unbanked interval at min(0, checkpoint) =
+   * 0. Nothing was sold, nothing was transferred, and every second since
+   * lastSync pays nothing.
+   *
+   * That interval is not one sweep. dbBankSweep's healthy branch touches only
+   * `updatedAt` — `lastSync` is deliberately left alone — so a passive holder
+   * still carries the lastSync from their first post-cutover bank. Nineteen
+   * days at the cap is 475,000 pixels, destroyed at one instant, for ~284
+   * wallets at once, with no journal row (the bank below only writes one when
+   * stream > 0) and checkpointSage overwritten to 0 — unrecoverable from the
+   * database afterwards.
+   *
+   * So the one interval that STRADDLES the boundary is split and each side
+   * priced under its own rule: before it, the checkpoint (what the holder was
+   * entitled to while legacy counted); after it, the post-boundary balance.
+   * Intervals wholly before or wholly after are byte-identical to before this
+   * existed, so the flash-farm rule is untouched.
+   *
+   * Note this is the ONE case the staged accrual plan does not catch: both
+   * "a balance drop ends the interval" and the Transfer indexer key on an
+   * ERC-20 Transfer, and no transfer is emitted here. It is a RULE change, not
+   * a balance change.
+   */
+  const boundary = Math.floor(PIXELS_MIGRATION_ENDS_AT.getTime() / 1000);
+  let numerator: bigint;
+  if (from < boundary && to >= boundary) {
+    const cp = checkpointSage > CAP_SAGE ? CAP_SAGE : checkpointSage;
+    numerator =
+      (cp * BigInt(boundary - from) + held * BigInt(to - boundary)) * RATE_SCALED + dust;
+  } else {
+    numerator = held * RATE_SCALED * elapsed + dust;
+  }
   return { stream: numerator / STREAM_UNIT, dust: numerator % STREAM_UNIT };
 }
 
