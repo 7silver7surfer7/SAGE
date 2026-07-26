@@ -447,28 +447,49 @@ async function createNftContract(
     sanitizedOverride ||
     contractName.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) ||
     'SAGE';
-  // Pick the deploy path by the roles the signer actually holds on-chain,
-  // not by self-vs-other: deployByArtist requires role.artist and reverts at
-  // gas estimation otherwise (error with no wallet prompt). An admin deploying
-  // a contract for their own wallet must go through deployByAdmin.
+  /**
+   * DEPLOYING YOUR OWN FIRST CONTRACT NEEDS NO ROLE.
+   *
+   * This used to require role.artist before calling deployByArtist, and fell
+   * through to "holds neither role.artist nor role.admin" for everyone else —
+   * so a normal wallet could not put work on the storefront at all without a
+   * human granting it a role in SageStorage first.
+   *
+   * That gate was stale. NFTFactory.deployByArtist is PERMISSIONLESS on-chain
+   * and says so at the definition: "Open to any wallet — matches the
+   * self-serve social launcher's permissionless createEdition/createCollection
+   * (no role gate there either)". Its only guard is createNFTContract's
+   * "Contract already exists" check, so a wallet can deploy its OWN first
+   * contract and can never redeploy over an existing one or anyone else's.
+   * Verified against mainnet: a wallet with role.artist=false and
+   * role.admin=false callStatics deployByArtist successfully.
+   *
+   * The client was therefore enforcing a permission the contract had dropped,
+   * and the two paths below now split on the question that actually matters —
+   * am I deploying for MYSELF, or for someone else? Only the latter needs
+   * admin, and the contract enforces that itself with "Admin calls only".
+   *
+   * Same economics either way: deployByArtist uses DEFAULT_ARTIST_SHARE, which
+   * is the 8333 this passed explicitly.
+   */
   const signerAddress = await signer.getAddress();
-  const storageContract = await getStorageContract(signer);
-  const artistRole = ethers.utils.id('role.artist');
-  const adminRole = ethers.utils.id('role.admin');
   const isSelf = artistAddress.toLowerCase() == signerAddress.toLowerCase();
-  if (isSelf && (await storageContract.hasRole(artistRole, signerAddress))) {
+  if (isSelf) {
     console.log(`createNftContract() :: deployByArtist as ${signerAddress} ("${contractName}")`);
     tx = await factory.deployByArtist(contractName, contractSymbol);
-  } else if (await storageContract.hasRole(adminRole, signerAddress)) {
+  } else {
+    const storageContract = await getStorageContract(signer);
+    const adminRole = ethers.utils.id('role.admin');
+    if (!(await storageContract.hasRole(adminRole, signerAddress))) {
+      throw new Error(
+        `Wallet ${signerAddress} cannot deploy an NFT contract for a different artist ` +
+          `(${artistAddress}) — that needs role.admin. Deploying your own is open to anyone.`
+      );
+    }
     console.log(
       `createNftContract() :: deployByAdmin for artist ${artistAddress} ("${contractName}")`
     );
     tx = await factory.deployByAdmin(artistAddress, contractName, contractSymbol, 8333); // artist share is 83,33%
-  } else {
-    throw new Error(
-      `Wallet ${signerAddress} holds neither role.artist nor role.admin on-chain, ` +
-        'so it cannot deploy an NFT contract. Grant a role in SageStorage and retry.'
-    );
   }
   await tx.wait(1);
   const contractAddress = await factory.getContractAddress(artistAddress);

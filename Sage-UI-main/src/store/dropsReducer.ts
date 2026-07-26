@@ -10,6 +10,7 @@ import {
   getNFTContract,
   getOpenEditionContract,
   getOpenEditionVoucherContract,
+  getStorageContract,
 } from '@/utilities/contracts';
 import splitterContractJson from '@/constants/abis/Utils/Splitter.sol/Splitter.json';
 import sageWhitelistJson from '@/constants/abis/Utils/SageWhitelist.sol/SageWhitelist.json';
@@ -677,8 +678,54 @@ async function deployStep<T>(step: string, run: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Confirm the contracts we are about to call EXIST as far as the SIGNER can
+ * see, before spending anyone's time or gas.
+ *
+ * assertSignerOnConfiguredChain compares chain IDs, which is necessary and not
+ * sufficient: every contract call below is made through the WALLET's provider,
+ * not the app's configured RPC. A wallet whose network entry for this chain id
+ * points at a stale, forked or private node reports the right id and then
+ * answers `getCode` with nothing — so the first contract call comes back as
+ * "missing revert data in call exception; Transaction reverted without a
+ * reason string", which names neither the contract nor the cause and sent a
+ * real diagnosis chasing role checks, gas bounds and ABI drift on a factory
+ * that was healthy the whole time.
+ *
+ * Two eth_calls, once per deploy, to turn that into a sentence someone can act
+ * on.
+ */
+async function assertContractsVisibleToSigner(signer: Signer) {
+  const provider = signer.provider;
+  if (!provider) return; // nothing to check against; the deploy will report its own error
+  const targets: [string, string][] = [
+    ['NFT factory', parameters.NFTFACTORY_ADDRESS],
+    ['SageStorage', parameters.STORAGE_ADDRESS],
+  ];
+  for (const [label, address] of targets) {
+    if (!address) continue;
+    let code = '0x';
+    try {
+      code = await provider.getCode(address);
+    } catch {
+      return; // a read failure is not proof of absence — let the deploy speak
+    }
+    if (code === '0x') {
+      throw new Error(
+        `Your wallet cannot see the ${label} contract at ${address} on ${parameters.NETWORK_NAME || 'this network'}. ` +
+          'The chain id matches, so this is usually a wallet network entry pointing at the ' +
+          'wrong or a stale RPC — check the RPC URL for this network in your wallet and retry. ' +
+          'Nothing was deployed.'
+      );
+    }
+  }
+}
+
 async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   await assertSignerOnConfiguredChain(signer);
+  await deployStep('checking contracts are reachable', () =>
+    assertContractsVisibleToSigner(signer)
+  );
   const { data: drop } = await fetchWithBQ(`drops?action=GetFullDrop&id=${dropId}`);
   inspectDropGamesEndTimes(drop);
   // HARD GATE: confirm every artwork's media + metadata is actually retrievable
@@ -780,6 +827,36 @@ async function setDropRoyalty(drop: DropFull, artistNftContractAddress: string, 
   }
   if (current === bps) {
     console.log(`setDropRoyalty() :: already ${bps} bps, skipping`);
+    return;
+  }
+  /**
+   * SageNFT.setDefaultRoyalty is onlyAdminOrMultisig — an artist cannot set it
+   * on their own contract. Left unchecked, this reverts and deployStep aborts
+   * the WHOLE deploy at "setting drop royalty", so a self-serve creator could
+   * never publish: the drop would die one step after the contract it just
+   * paid to deploy.
+   *
+   * A royalty that could not be applied is not a reason to throw away a valid
+   * drop. It is a reason to SAY SO — the contract keeps the 12% its
+   * constructor was given, which is a real difference from what the creator
+   * picked, so it goes in the deploy log rather than being swallowed.
+   *
+   * Checked up front rather than caught, so that an UNEXPECTED revert here
+   * still fails loudly instead of hiding behind a permission excuse.
+   */
+  const signerAddress = await signer.getAddress();
+  const storage = await getStorageContract(signer);
+  const [isAdmin, multisig] = await Promise.all([
+    storage.hasRole(ethers.utils.id('role.admin'), signerAddress).catch(() => false),
+    (storage as any).multisig?.().catch(() => ethers.constants.AddressZero) ??
+      Promise.resolve(ethers.constants.AddressZero),
+  ]);
+  if (!isAdmin && String(multisig).toLowerCase() !== signerAddress.toLowerCase()) {
+    dropProgress.note(
+      `Royalty stays at the contract default (${(current / 100).toFixed(2)}%) rather than the ` +
+        `${(bps / 100).toFixed(2)}% chosen for this drop — setting it needs an admin, and this ` +
+        `is a self-serve deploy. Everything else proceeds.`
+    );
     return;
   }
   console.log(`setDropRoyalty() :: ${current} -> ${bps} bps on ${artistNftContractAddress}`);
