@@ -787,16 +787,40 @@ export async function dbBankSweep(batch = 200): Promise<{ checked: number; banke
    * exists because holder lists built from the trade ledger alone were blind
    * to ~67 real holders — the same blindness, one layer down.
    *
-   * Bounded and self-extinguishing: only transferees with no PixelAccount yet,
-   * a batch at a time. Once discovered they join the ordinary stale rotation
-   * and this arm costs nothing again.
+   * Bounded: only transferees with no PixelAccount yet, a batch at a time.
+   * Once one is adopted it joins the ordinary stale rotation and leaves this
+   * queue for good.
+   *
+   * RANDOMLY SAMPLED, AND THAT IS LOAD-BEARING. A plain LIMIT looks obviously
+   * right and is stuck by construction: most addresses in this table received
+   * the token once and hold nothing now, and a wallet with a zero balance is
+   * deliberately NOT given a PixelAccount row (see the `!acct && live === 0`
+   * guard below — otherwise every historical recipient would litter the
+   * leaderboard). So the empty ones never leave the result set, and an
+   * unordered LIMIT hands back the same 50 of them on every sweep forever
+   * while real holders queue behind them, invisibly.
+   *
+   * Observed live: the first production sweep after this shipped returned
+   * checked:250 banked:0 — the full discovery batch, adopting nobody. It is
+   * the same failure as the `data: {}` rotation bug this function already
+   * carries a comment about: a queue that cannot record progress re-serves its
+   * head forever. Sampling makes progress probabilistic instead of impossible.
+   *
+   * random() costs a sort over a few thousand rows, once per sweep, off the
+   * request path.
    */
+  // GROUP BY rather than SELECT DISTINCT: Postgres rejects an ORDER BY
+  // expression that is not in the select list of a DISTINCT query, so
+  // `SELECT DISTINCT … ORDER BY random()` is a runtime error. GROUP BY dedupes
+  // the same way (an address can appear under both tokens) and permits it.
   const undiscovered = await prisma.$queryRaw<{ address: string }[]>`
-    SELECT DISTINCT t."address"
+    SELECT t."address"
     FROM "SocialTokenTransferee" t
     LEFT JOIN "PixelAccount" p ON p."walletAddress" = t."address"
     WHERE t."tokenAddress" IN (${PIXELS_TOKEN_ADDRESS}, ${PIXELS_LEGACY_TOKEN_ADDRESS})
       AND p."walletAddress" IS NULL
+    GROUP BY t."address"
+    ORDER BY random()
     LIMIT ${DISCOVERY_BATCH}`;
 
   const cpByLc = new Map(stale.map((a) => [a.walletAddress.toLowerCase(), a]));
