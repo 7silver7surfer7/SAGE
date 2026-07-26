@@ -330,6 +330,51 @@ function streamOf(liveWhole: bigint, checkpointSage: bigint, lastSync: Date, now
   return streamWithDust(liveWhole, checkpointSage, lastSync, nowMs, dust).stream;
 }
 
+/**
+ * "Close the accrual interval and pay for it" — the ONE implementation.
+ *
+ * dbBank, both sides of dbTransferPixels, and dbCreditPixels each had their
+ * own copy of this, and the copies disagreed: only dbBank passed the carried
+ * dust in and persisted the new remainder, so a spend silently destroyed the
+ * current interval's sub-pixel remainder — up to a whole pixel per collect,
+ * per side. A 10,000-token holder collecting every ten minutes floored to zero
+ * every single time and earned nothing, forever, which is the exact failure
+ * the dust carry exists to prevent.
+ *
+ * They also disagreed about the journal: only dbBank wrote a row, so `settled`
+ * moved by stream ± amount while the journal recorded only ±amount. The schema
+ * states "every settled-balance mutation writes a row" as an invariant; it was
+ * false by construction, and a repayment tool built on the journal would have
+ * under-paid exactly the accounts that spend the most.
+ *
+ * `live === null` means the balance could not be read. That is NOT zero: the
+ * interval is left open (lastSync untouched) so the next bank prices all of
+ * it, rather than closing it unpaid.
+ */
+function bankFields(
+  acct: { checkpointSage: bigint; lastSync: Date; streamDust: bigint | null } | null,
+  live: bigint | null,
+  now: Date
+): { stream: bigint; interval: { lastSync: Date; streamDust: bigint } | {} } {
+  if (!acct || live === null) return { stream: BigInt(0), interval: {} };
+  const carried = streamWithDust(
+    live,
+    acct.checkpointSage,
+    acct.lastSync,
+    now.getTime(),
+    acct.streamDust ?? BigInt(0)
+  );
+  return { stream: carried.stream, interval: { lastSync: now, streamDust: carried.dust } };
+}
+
+/** The journal row that makes a banked stream reconstructable. */
+async function journalBank(tx: any, address: string, stream: bigint, reason: string) {
+  if (stream <= BigInt(0)) return;
+  await tx.pixelJournal.create({
+    data: { walletAddress: address, delta: stream, kind: 'bank', reason },
+  });
+}
+
 export async function dbPointsOf(address: string): Promise<bigint> {
   const acct = await prisma.pixelAccount.findUnique({ where: { walletAddress: address } });
   if (!acct) return BigInt(0);
@@ -389,10 +434,7 @@ export async function dbBank(address: string, liveWhole: bigint): Promise<void> 
       WHERE "walletAddress" = ${address}
       FOR UPDATE`;
     const acct = await tx.pixelAccount.findUnique({ where: { walletAddress: address } });
-    const carried = acct
-      ? streamWithDust(liveWhole, acct.checkpointSage, acct.lastSync, now.getTime(), acct.streamDust ?? BigInt(0))
-      : { stream: BigInt(0), dust: BigInt(0) };
-    const stream = carried.stream;
+    const banked = bankFields(acct, liveWhole, now);
     await tx.pixelAccount.upsert({
       where: { walletAddress: address },
       create: { walletAddress: address, settled: BigInt(0), checkpointSage: liveWhole, lastSync: now },
@@ -402,18 +444,13 @@ export async function dbBank(address: string, liveWhole: bigint): Promise<void> 
         // does not exist, so a row inserted concurrently lands in the ON
         // CONFLICT branch — which under the old literal clamped it to 0 + 0,
         // destroying whatever the other transaction had just credited.
-        settled: { increment: stream },
+        settled: { increment: banked.stream },
+        // the checkpoint moves here and only here — this is the re-checkpoint
         checkpointSage: liveWhole,
-        lastSync: now,
-        // preserved, so a sub-threshold interval is deferred rather than lost
-        streamDust: carried.dust,
+        ...banked.interval,
       },
     });
-    if (stream > BigInt(0)) {
-      await tx.pixelJournal.create({
-        data: { walletAddress: address, delta: stream, kind: 'bank', reason: 'accrual banked at checkpoint' },
-      });
-    }
+    await journalBank(tx, address, banked.stream, 'accrual banked at checkpoint');
   });
 }
 
@@ -451,56 +488,43 @@ export async function dbTransferPixels(
       WHERE "walletAddress" IN (${from}, ${to})
       FOR UPDATE`;
     const acctFrom = await tx.pixelAccount.findUnique({ where: { walletAddress: from } });
-    // streamWithDust, not streamOf: banking here ADVANCES lastSync, so it
-    // closes the interval — and a close that does not consume and re-carry the
-    // remainder throws away every sub-pixel of it. The balance check is also
-    // fractionally more correct for it.
-    const carriedFrom =
-      acctFrom && liveFrom !== null
-        ? streamWithDust(liveFrom, acctFrom.checkpointSage, acctFrom.lastSync, now.getTime(), acctFrom.streamDust ?? BigInt(0))
-        : null;
-    const banked = (acctFrom?.settled ?? BigInt(0)) + (carriedFrom?.stream ?? BigInt(0));
-    if (banked < amount) throw new Error('insufficient pixels');
+    const bankedFrom = bankFields(acctFrom, liveFrom, now);
+    const balance = (acctFrom?.settled ?? BigInt(0)) + bankedFrom.stream;
+    if (balance < amount) throw new Error('insufficient pixels');
     await tx.pixelAccount.upsert({
       where: { walletAddress: from },
       create: { walletAddress: from, settled: BigInt(0) - amount, checkpointSage: BigInt(0), lastSync: now },
       // increment rather than a literal, matching dbBank — the row is locked
-      // above, but a literal would still clobber a row created concurrently.
-      // lastSync/streamDust move ONLY when the interval was actually priced.
+      // above, but a literal would still clobber a row created concurrently
       update: {
-        settled: { increment: (carriedFrom?.stream ?? BigInt(0)) - amount },
-        ...(carriedFrom ? { lastSync: now, streamDust: carriedFrom.dust } : {}),
+        settled: { increment: bankedFrom.stream - amount },
+        ...bankedFrom.interval,
       },
     });
     // `settled` moves by stream - amount, so the journal needs BOTH halves or
     // it cannot reconstruct the balance it is the record of.
-    if (carriedFrom && carriedFrom.stream > BigInt(0)) {
-      await tx.pixelJournal.create({
-        data: { walletAddress: from, delta: carriedFrom.stream, kind: 'bank', reason: 'accrual banked before spend' },
-      });
-    }
+    await journalBank(tx, from, bankedFrom.stream, 'accrual banked before spend');
     const spend = await tx.pixelJournal.create({
       data: { walletAddress: from, delta: BigInt(0) - amount, kind: 'spend', reason },
     });
     if (to.toLowerCase() !== from.toLowerCase()) {
       const acctTo = await tx.pixelAccount.findUnique({ where: { walletAddress: to } });
-      const carriedTo =
-        acctTo && liveTo !== null
-          ? streamWithDust(liveTo, acctTo.checkpointSage, acctTo.lastSync, now.getTime(), acctTo.streamDust ?? BigInt(0))
-          : null;
+      const bankedTo = bankFields(acctTo, liveTo, now);
       await tx.pixelAccount.upsert({
         where: { walletAddress: to },
         create: { walletAddress: to, settled: amount, checkpointSage: BigInt(0), lastSync: now },
+        // ALSO the fix for a first-time seller: FOR UPDATE locks matched rows,
+        // and a seller with no row matches nothing, so two concurrent collects
+        // of their first sale ran unserialised. Under the old literal the loser
+        // took the ON CONFLICT branch and wrote its stale value over the
+        // winner's — two buyers debited, one payment kept. `increment` makes
+        // that branch additive, so the loser adds instead of overwriting.
         update: {
-          settled: { increment: (carriedTo?.stream ?? BigInt(0)) + amount },
-          ...(carriedTo ? { lastSync: now, streamDust: carriedTo.dust } : {}),
+          settled: { increment: bankedTo.stream + amount },
+          ...bankedTo.interval,
         },
       });
-      if (carriedTo && carriedTo.stream > BigInt(0)) {
-        await tx.pixelJournal.create({
-          data: { walletAddress: to, delta: carriedTo.stream, kind: 'bank', reason: 'accrual banked before credit' },
-        });
-      }
+      await journalBank(tx, to, bankedTo.stream, 'accrual banked before credit');
     } else {
       // self-transfer nets to zero: put the debit back. Under increment
       // semantics that is +amount, undoing the -amount above and leaving the
@@ -531,30 +555,13 @@ export async function dbCreditPixels(to: string, amount: bigint, reason: string)
       WHERE "walletAddress" = ${to}
       FOR UPDATE`;
     const acct = await tx.pixelAccount.findUnique({ where: { walletAddress: to } });
-    // Banking the stream CLOSES the interval (lastSync moves), so it must
-    // consume and re-carry the dust like dbBank does. Calling streamOf with no
-    // dust left the remainder stranded against an interval that had already
-    // been paid for.
-    const carried =
-      acct && live !== null
-        ? streamWithDust(live, acct.checkpointSage, acct.lastSync, now.getTime(), acct.streamDust ?? BigInt(0))
-        : null;
+    const banked = bankFields(acct, live, now);
     await tx.pixelAccount.upsert({
       where: { walletAddress: to },
       create: { walletAddress: to, settled: amount, checkpointSage: BigInt(0), lastSync: now },
-      update: {
-        settled: { increment: (carried?.stream ?? BigInt(0)) + amount },
-        ...(carried ? { lastSync: now, streamDust: carried.dust } : {}),
-      },
+      update: { settled: { increment: banked.stream + amount }, ...banked.interval },
     });
-    // The banked accrual gets its OWN row. Without it `settled` moved by
-    // stream + amount while the journal recorded only amount, so the journal
-    // could not reconstruct the balance it is supposed to be the record of.
-    if (carried && carried.stream > BigInt(0)) {
-      await tx.pixelJournal.create({
-        data: { walletAddress: to, delta: carried.stream, kind: 'bank', reason: 'accrual banked before credit' },
-      });
-    }
+    await journalBank(tx, to, banked.stream, 'accrual banked before credit');
     const row = await tx.pixelJournal.create({
       data: { walletAddress: to, delta: amount, kind: 'credit', reason },
     });

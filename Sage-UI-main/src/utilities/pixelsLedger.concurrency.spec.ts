@@ -109,6 +109,29 @@ describe('pixelsLedger :: concurrency', function () {
     expect(((await journalSum(A)) - journalBefore).toString()).to.equal('0');
   });
 
+  it('pays a FIRST-TIME seller both of two concurrent collects', async () => {
+    // SELECT..FOR UPDATE locks MATCHED rows, and a seller with no PixelAccount
+    // row matches nothing — so two collects of their first sale run with no
+    // serialisation point at all. Under a literal write the loser took the ON
+    // CONFLICT branch and wrote its stale value over the winner's: two buyers
+    // debited, one payment kept, and two +100 journal rows against a settled
+    // of 100.
+    await reset(BigInt(10_000), BigInt(0), 0);
+    const C = '0x00000000000000000000000000000000000C0FFE';
+    await prisma.pixelJournal.deleteMany({ where: { walletAddress: C } });
+    await prisma.pixelAccount.deleteMany({ where: { walletAddress: C } });
+
+    await Promise.all([
+      dbTransferPixels(A, C, BigInt(100), 'collect 1'),
+      dbTransferPixels(A, C, BigInt(100), 'collect 2'),
+    ]);
+
+    const seller = await prisma.pixelAccount.findUnique({ where: { walletAddress: C } });
+    expect((seller?.settled ?? BigInt(0)).toString()).to.equal('200');
+    await prisma.pixelJournal.deleteMany({ where: { walletAddress: C } });
+    await prisma.pixelAccount.deleteMany({ where: { walletAddress: C } });
+  });
+
   it('refuses a spend larger than the balance', async () => {
     await reset(BigInt(100), BigInt(0), 0);
     let threw = '';
