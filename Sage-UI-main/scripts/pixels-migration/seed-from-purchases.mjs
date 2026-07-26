@@ -145,17 +145,86 @@ async function creationBlock(provider, address) {
   return receipt.blockNumber;
 }
 
+/**
+ * Say what is happening, on one rewritten line.
+ *
+ * This script spends half an hour writing to a live financial ledger and used
+ * to print NOTHING between "11,503 transfers" and the final summary. Asked how
+ * far along a --commit run was, the only way to answer was to query the
+ * database behind it and count journal rows. For an irreversible job that is
+ * not a nicety.
+ */
+const lastPct = new Map();
+function progress(label, done, total) {
+  const pct = total ? Math.floor((done / total) * 100) : 100;
+  const line = `  ${label}: ${done.toLocaleString()}/${total.toLocaleString()} (${pct}%)`;
+  if (process.stdout.isTTY) return void process.stdout.write(`\r${line}   `);
+  /**
+   * Piped/redirected: emit on a PERCENTAGE CHANGE, never on a modulus.
+   *
+   * The first version of this printed when `done % floor(total/20) === 0`,
+   * and the caller only offered it multiples of 100 — so for a 12,240-item
+   * phase (step 612) no offered value was ever a multiple of the step and the
+   * intermediate lines could not fire at all. A --commit run redirected to a
+   * file therefore printed nothing between phases, which is exactly the
+   * silence this function was added to remove; worse, I then read that
+   * silence as evidence the phase was slow and went looking for a performance
+   * problem that was not there.
+   */
+  const prev = lastPct.get(label) ?? -1;
+  if (pct >= prev + 5 || done === total) {
+    lastPct.set(label, pct);
+    console.log(line);
+  }
+}
+
+/**
+ * Map with bounded concurrency.
+ *
+ * The chain reads here were strictly sequential: ~12,000 getBlock calls one
+ * after another dominated the runtime, at a round-trip each. They are
+ * independent point queries, so the only reason to serialise them was that a
+ * for-await loop is the easy thing to write. 20 at a time is polite to a
+ * public RPC and roughly an order of magnitude faster.
+ */
+async function mapLimit(items, limit, fn, label) {
+  const out = new Array(items.length);
+  let next = 0;
+  let done = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await fn(items[i], i);
+        done++;
+        if (label && done % 10 === 0) progress(label, done, items.length);
+      }
+    })
+  );
+  if (label) progress(label, items.length, items.length);
+  return out;
+}
+
 /** Every Transfer of one token, start..head, with no silent holes. */
 async function fetchTransfers(provider, token, start, head) {
-  const logs = [];
+  const ranges = [];
   for (let from = start; from <= head; from += CHUNK) {
-    const to = Math.min(from + CHUNK - 1, head);
-    const batch = await withRetry(`getLogs ${token} ${from}-${to}`, () =>
-      provider.getLogs({ address: token, topics: [TRANSFER], fromBlock: from, toBlock: to })
-    );
-    logs.push(...batch);
+    ranges.push([from, Math.min(from + CHUNK - 1, head)]);
   }
-  return logs;
+  // getLogs windows are also independent; the RPC caps the WIDTH of a window,
+  // not how many are in flight.
+  const batches = await mapLimit(
+    ranges,
+    20,
+    ([from, to]) =>
+      withRetry(`getLogs ${token} ${from}-${to}`, () =>
+        provider.getLogs({ address: token, topics: [TRANSFER], fromBlock: from, toBlock: to })
+      ),
+    `scanning ${token.slice(0, 8)}…`
+  );
+  console.log('');
+  return batches.flat();
 }
 
 async function main() {
@@ -221,11 +290,14 @@ async function main() {
 
   // block timestamps, deduped — the integration is over TIME, not blocks
   const blocks = [...new Set(logs.map((l) => l.blockNumber))];
-  const timeOf = new Map();
-  for (const b of blocks) {
-    const blk = await withRetry(`getBlock ${b}`, () => provider.getBlock(b));
-    timeOf.set(b, BigInt(blk.timestamp));
-  }
+  const stamps = await mapLimit(
+    blocks,
+    20,
+    (b) => withRetry(`getBlock ${b}`, () => provider.getBlock(b)),
+    'block timestamps'
+  );
+  console.log('');
+  const timeOf = new Map(blocks.map((b, i) => [b, BigInt(stamps[i].timestamp)]));
 
   // ── pass 1: raw per-ADDRESS balances, for the impossibility check ──────────
   //
@@ -272,16 +344,24 @@ async function main() {
   // report: the dropped wallet never appeared in the table and was not in the
   // total, so the operator saw a clean run.
   const isPerson = new Map();
-  for (const who of seen) {
-    if (NOBODY.has(who.toLowerCase())) {
-      isPerson.set(who, false);
-      continue;
-    }
-    const code = await withRetry(`getCode ${who}`, () => provider.getCode(who));
+  const everyone = [...seen];
+  const codes = await mapLimit(
+    everyone,
+    20,
+    (who) =>
+      NOBODY.has(who.toLowerCase())
+        ? null
+        : withRetry(`getCode ${who}`, () => provider.getCode(who)),
+    'classifying addresses'
+  );
+  console.log('');
+  everyone.forEach((who, i) => {
+    const code = codes[i];
+    if (code === null) return isPerson.set(who, false);
     // EIP-7702 delegated EOAs are exactly 23 bytes of 0xef0100 || implementation
     const delegated = code.toLowerCase().startsWith('0xef0100') && code.length === 2 + 23 * 2;
     isPerson.set(who, code === '0x' || delegated);
-  }
+  });
 
   // ── holder -> the ACCOUNT that should be credited ─────────────────────────
   //
@@ -404,33 +484,47 @@ async function main() {
   }
 
   const accounts = [...earned.keys()].filter((a) => (earned.get(a) ?? 0n) > 0n);
-  const rows = [];
-  for (const acct of accounts) {
-    const [account, journal] = await Promise.all([
-      prisma.pixelAccount.findUnique({ where: { walletAddress: acct } }),
-      prisma.pixelJournal.findMany({ where: { walletAddress: acct }, select: { delta: true, kind: true } }),
-    ]);
-    const sumAll = journal.reduce((s, j) => s + j.delta, 0n);
-    const accrualRows = journal
-      .filter((j) => ['bank', 'snapshot', 'seed', 'seed:v2'].includes(j.kind))
-      .reduce((s, j) => s + j.delta, 0n);
-    const settled = account?.settled ?? 0n;
-    const unJournalled = settled > sumAll ? settled - sumAll : 0n;
-    const alreadyCredited = accrualRows + unJournalled;
-    const entitlement = earned.get(acct) ?? 0n;
-    const shortfall = entitlement > alreadyCredited ? entitlement - alreadyCredited : 0n;
-    rows.push({
-      address: acct,
-      entitlement,
-      alreadyCredited,
-      unJournalled,
-      shortfall,
-      effective: effective(acct),
-      heldSince: new Date(Number(firstSeen.get(acct)) * 1000),
-      sources: [...(sources.get(acct) ?? [])],
-      exists: !!account,
-    });
-  }
+  // 8 at a time: the ledger sits behind a SHARED 15-connection Supabase pool
+  // that this repo has already tipped into EMAXCONNSESSION once. Concurrency
+  // here is about not serialising 3,000 round trips from a laptop, not about
+  // saturating the pool.
+  const rows = (
+    await mapLimit(
+      accounts,
+      8,
+      async (acct) => {
+        const [account, journal] = await Promise.all([
+          prisma.pixelAccount.findUnique({ where: { walletAddress: acct } }),
+          prisma.pixelJournal.findMany({
+            where: { walletAddress: acct },
+            select: { delta: true, kind: true },
+          }),
+        ]);
+        const sumAll = journal.reduce((s, j) => s + j.delta, 0n);
+        const accrualRows = journal
+          .filter((j) => ['bank', 'snapshot', 'seed', 'seed:v2'].includes(j.kind))
+          .reduce((s, j) => s + j.delta, 0n);
+        const settled = account?.settled ?? 0n;
+        const unJournalled = settled > sumAll ? settled - sumAll : 0n;
+        const alreadyCredited = accrualRows + unJournalled;
+        const entitlement = earned.get(acct) ?? 0n;
+        const shortfall = entitlement > alreadyCredited ? entitlement - alreadyCredited : 0n;
+        return {
+          address: acct,
+          entitlement,
+          alreadyCredited,
+          unJournalled,
+          shortfall,
+          effective: effective(acct),
+          heldSince: new Date(Number(firstSeen.get(acct)) * 1000),
+          sources: [...(sources.get(acct) ?? [])],
+          exists: !!account,
+        };
+      },
+      'reading the ledger'
+    )
+  ).filter(Boolean);
+  console.log('');
   rows.sort((a, b) => (b.shortfall > a.shortfall ? 1 : b.shortfall < a.shortfall ? -1 : 0));
 
   console.log(`\n${rows.length} accounts earned pixels on chain:\n`);
@@ -465,6 +559,12 @@ async function main() {
   let wrote = 0;
   let skipped = 0;
   let nothingOwed = 0;
+  let paid = 0n;
+  const owing = rows.filter((r) => r.shortfall > 0n).length;
+  // DELIBERATELY SEQUENTIAL. Everything above this line is a read and is
+  // parallelised; these are transactions against a live ledger, and the time
+  // saved by overlapping them is not worth reasoning about interleaved writes
+  // to the table this whole script exists to repair.
   for (const r of rows) {
     if (r.shortfall === 0n) {
       nothingOwed++;
@@ -521,6 +621,10 @@ async function main() {
       }),
     ]);
     wrote++;
+    paid += r.shortfall;
+    if (wrote % 25 === 0 || wrote === owing) {
+      progress(`writing (${paid.toLocaleString()} px)`, wrote, owing);
+    }
   }
   console.log(
     `\npaid ${wrote} accounts, skipped ${skipped} already reconciled, ${nothingOwed} owed nothing.`
