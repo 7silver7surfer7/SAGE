@@ -129,13 +129,42 @@ describe('pixelsLedger :: streamWithDust', () => {
   });
 
   describe('the sustained-balance rule', () => {
-    it('prices the interval at the LOWER of live and checkpoint', () => {
+    it('still pays nothing to a wallet that never had a checkpoint', () => {
       const from = boundary - 100 * DAY_SECONDS;
       const now = (from + DAY_SECONDS) * 1000;
-      const sold = streamWithDust(BigInt(0), BigInt(1_000_000), at(from), now, ZERO);
+      // buying does not retroactively earn: the checkpoint is what was held
       const bought = streamWithDust(BigInt(1_000_000), BigInt(0), at(from), now, ZERO);
-      expect(sold.stream.toString()).to.equal('0');
       expect(bought.stream.toString()).to.equal('0');
+    });
+
+    it('costs a seller ONE window, not the whole holding period', () => {
+      // 9 days at 222x the cap, sold just before the sweep looked — the
+      // confirmed case. Old rule: min(0, cp) over the whole interval = 0.
+      const days = 9;
+      const from = boundary - 100 * DAY_SECONDS;
+      const now = (from + days * DAY_SECONDS) * 1000;
+      const { stream } = streamWithDust(ZERO, CAP * BigInt(222), at(from), now, ZERO);
+      // paid for 9 days minus the one unobserved hour
+      const owed = expected(CAP, days * DAY_SECONDS - 3600);
+      expect(stream.toString()).to.equal(owed.toString());
+      expect(stream > BigInt(200_000)).to.equal(true);
+    });
+
+    it('still refuses to pay a hold shorter than the window', () => {
+      // bought and gone again inside one unobserved window: the flash-farm
+      // case the min() rule exists for, and it must still pay nothing
+      const from = boundary - 100 * DAY_SECONDS;
+      const now = (from + 1800) * 1000; // 30 minutes, under the 1h window
+      const { stream } = streamWithDust(ZERO, CAP, at(from), now, ZERO);
+      expect(stream.toString()).to.equal('0');
+    });
+
+    it('does not pay MORE for a balance that went up', () => {
+      const from = boundary - 100 * DAY_SECONDS;
+      const now = (from + DAY_SECONDS) * 1000;
+      const grew = streamWithDust(CAP * BigInt(10), BigInt(1_000_000), at(from), now, ZERO);
+      const flat = streamWithDust(BigInt(1_000_000), BigInt(1_000_000), at(from), now, ZERO);
+      expect(grew.stream.toString()).to.equal(flat.stream.toString());
     });
 
     it('never returns a negative stream for a clock that went backwards', () => {

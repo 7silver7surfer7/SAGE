@@ -313,16 +313,80 @@ export function streamWithDust(
    * ERC-20 Transfer, and no transfer is emitted here. It is a RULE change, not
    * a balance change.
    */
+  const cp = checkpointSage > CAP_SAGE ? CAP_SAGE : checkpointSage;
   const boundary = Math.floor(PIXELS_MIGRATION_ENDS_AT.getTime() / 1000);
-  let numerator: bigint;
-  if (from < boundary && to >= boundary) {
-    const cp = checkpointSage > CAP_SAGE ? CAP_SAGE : checkpointSage;
-    numerator =
-      (cp * BigInt(boundary - from) + held * BigInt(to - boundary)) * RATE_SCALED + dust;
-  } else {
-    numerator = held * RATE_SCALED * elapsed + dust;
-  }
-  return { stream: numerator / STREAM_UNIT, dust: numerator % STREAM_UNIT };
+  const numerator =
+    from < boundary && to >= boundary
+      ? // The legacy balance was genuinely held right up to the boundary, so
+        // that side is paid at the checkpoint in full. The other side is paid
+        // at the OBSERVED balance in full — deliberately NOT through
+        // priceSegment, because the checkpoint predates the rule change and is
+        // no evidence at all about the period after it. Treating it as
+        // evidence would pay a legacy-only holder their old rate indefinitely
+        // past the boundary, which is the opposite error to the one the
+        // boundary split exists to fix.
+        cp * BigInt(boundary - from) + held * BigInt(to - boundary)
+      : priceSegment(from, to, cp, held);
+  return {
+    stream: (numerator * RATE_SCALED + dust) / STREAM_UNIT,
+    dust: (numerator * RATE_SCALED + dust) % STREAM_UNIT,
+  };
+}
+
+/**
+ * How far back a balance DROP is allowed to reprice.
+ *
+ * The sweep is the only thing that observes a balance, and it observes each
+ * account roughly once per rotation: 200 accounts per call over a ~482-row
+ * book at a 10-minute cadence is 30-40 minutes, and a just-swept wallet goes
+ * to the back of the queue. One hour is that rotation with room to spare.
+ *
+ * The direction of the error matters. LARGER is stingier to honest sellers and
+ * safer against farming; SMALLER is the reverse. It must stay >= the real
+ * rotation, or a farmer could buy, hold less than a rotation, sell before
+ * being observed, and still be paid for the hold. If the book grows enough
+ * that a rotation exceeds an hour, raise this with it.
+ */
+const REPRICE_WINDOW = BigInt(3600);
+
+/**
+ * New holders adopted per sweep. Each costs balance reads, so this is capped
+ * rather than unbounded — the backlog drains over consecutive sweeps and then
+ * the arm goes quiet.
+ */
+const DISCOVERY_BATCH = 50;
+
+/**
+ * Price [a, b) — the checkpoint for the part that is definitely past, the
+ * observed balance for the last unobserved window.
+ *
+ * THE BUG THIS EXISTS TO FIX. `held = min(live, checkpoint)` applied ONE
+ * endpoint sample to the entire elapsed interval, so selling retroactively
+ * repriced every second since lastSync — not since the last sweep, since the
+ * last time the BALANCE MOVED, because dbBankSweep's healthy branch leaves
+ * lastSync alone. For a holder who does not trade that is weeks.
+ *
+ * The header calls this "the contract's flash-farm protection", but the
+ * contract re-checkpoints on every balance-changing transfer, so its interval
+ * is bounded BY the transfer. Here it is bounded only by when the keeper
+ * happens to look. Confirmed cost on one wallet: 222x over the cap for 9.0
+ * days, entitled to >= 225,653 pixels, credited 26,745 — 12% — having sold 30
+ * minutes before the sweep reached them.
+ *
+ * Splitting it keeps the protection where it is real (a balance we have not
+ * observed since could have been gone the whole time) and drops it where it
+ * never was (a balance the ledger itself checkpointed days ago). A drop can
+ * now cost at most one window, not the whole holding period.
+ *
+ * NOT a substitute for banking on the Transfer event itself, which ends the
+ * interval instead of repricing any of it — this bounds the damage, that
+ * removes it.
+ */
+function priceSegment(a: number, b: number, cp: bigint, held: bigint): bigint {
+  if (b <= a) return BigInt(0);
+  const span = BigInt(b - a);
+  const unobserved = span < REPRICE_WINDOW ? span : REPRICE_WINDOW;
+  return cp * (span - unobserved) + held * unobserved;
 }
 
 /** Read-only view of the same stream. */
@@ -706,9 +770,42 @@ export async function dbBankSweep(batch = 200): Promise<{ checked: number; banke
       distinct: ['trader'],
     }),
   ]);
+  /**
+   * DISCOVERY — the sweep's third arm, and the one it never had.
+   *
+   * Both arms above can only ever re-visit accounts that ALREADY have a
+   * PixelAccount row, and those rows are created solely by banking, crediting
+   * or spending. So a wallet that buys the token and simply holds — never
+   * collects, never links, never trades through us — is never seen by
+   * anything, accrues nothing forever, and is told a rate on its profile the
+   * whole time. At the cap that is 25,000 pixels/day recorded as zero.
+   *
+   * SocialTokenTransferee already answers exactly this question: every EOA
+   * that ever received the token, contract-filtered and EIP-7702-aware
+   * (98.89% of user-held supply on this token carries a 7702 designator, so
+   * a plain `code === '0x'` test would have discarded almost everyone). It
+   * exists because holder lists built from the trade ledger alone were blind
+   * to ~67 real holders — the same blindness, one layer down.
+   *
+   * Bounded and self-extinguishing: only transferees with no PixelAccount yet,
+   * a batch at a time. Once discovered they join the ordinary stale rotation
+   * and this arm costs nothing again.
+   */
+  const undiscovered = await prisma.$queryRaw<{ address: string }[]>`
+    SELECT DISTINCT t."address"
+    FROM "SocialTokenTransferee" t
+    LEFT JOIN "PixelAccount" p ON p."walletAddress" = t."address"
+    WHERE t."tokenAddress" IN (${PIXELS_TOKEN_ADDRESS}, ${PIXELS_LEGACY_TOKEN_ADDRESS})
+      AND p."walletAddress" IS NULL
+    LIMIT ${DISCOVERY_BATCH}`;
+
   const cpByLc = new Map(stale.map((a) => [a.walletAddress.toLowerCase(), a]));
   const byLc = new Map<string, string>();
-  for (const a of [...stale.map((s) => s.walletAddress), ...recent.map((r) => r.trader)]) {
+  for (const a of [
+    ...stale.map((s) => s.walletAddress),
+    ...recent.map((r) => r.trader),
+    ...undiscovered.map((u) => u.address),
+  ]) {
     if (!byLc.has(a.toLowerCase())) byLc.set(a.toLowerCase(), a);
   }
   const addresses = Array.from(byLc.values());
