@@ -6,8 +6,11 @@ import {
   CAP_SAGE as SHARED_CAP_SAGE,
   LEGACY_PIXEL_RATIO as SHARED_LEGACY_RATIO,
 } from '@/constants/pixels';
+// No `parameters` import by design: everything this module touches is PINNED,
+// because a per-build value here means an accrual job silently pointed at a
+// testnet token, or at a token nobody holds. The last one (ASHTOKEN_ADDRESS in
+// the sweep's freshness filter) is gone as of the audit.
 import {
-  parameters,
   PIXELS_TOKEN_ADDRESS,
   PIXELS_LEGACY_TOKEN_ADDRESS,
   PIXELS_MIGRATION_ENDS_AT,
@@ -105,8 +108,31 @@ async function wholeBalance(token: string, address: string): Promise<bigint> {
 async function oneWalletWhole(address: string): Promise<bigint> {
   const fresh = await wholeBalance(PIXELS_TOKEN_ADDRESS, address);
   if (!migrationWindowOpen()) return fresh;
-  // a legacy read failing must never zero a live balance
-  const legacy = await wholeBalance(PIXELS_LEGACY_TOKEN_ADDRESS, address).catch(() => BigInt(0));
+  /**
+   * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+   *
+   * This read used to end `.catch(() => BigInt(0))` under a comment saying "a
+   * legacy read failing must never zero a live balance". That invariant only
+   * holds when `fresh > 0` — and for a LEGACY-ONLY holder, which is the entire
+   * population the migration window exists for, the legacy balance IS the live
+   * balance. So one RPC hiccup made them read as zero, and the value flows
+   * into a WRITE: dbBank banks the interval at min(0, checkpoint) = 0 AND
+   * re-checkpoints to 0, so the interval before the glitch is destroyed and
+   * the one after it is too (min(real, 0) = 0). ~347 pixels per incident at
+   * the cap, lastSync advanced, no journal row.
+   *
+   * Worse, it goes quiet: once checkpointSage is 0, every later failed sweep
+   * matches `0 === live` and takes the healthy branch, freezing lastSync — so
+   * recovery destroys the whole outage. A 24-hour outage is a full day at the
+   * cap, 25,000 pixels per holder.
+   *
+   * Letting it throw is the correct behaviour and it is already implemented
+   * one call away: dbBankSweep does `liveSageWhole(a).catch(() => null)` and
+   * `continue`s, so the wallet is skipped and the NEXT sweep banks the whole
+   * interval correctly. These internal catches were what prevented that
+   * working path from ever being reached.
+   */
+  const legacy = await wholeBalance(PIXELS_LEGACY_TOKEN_ADDRESS, address);
   const legacyEquivalent = legacy * LEGACY_PIXEL_RATIO;
   return legacyEquivalent > fresh ? legacyEquivalent : fresh;
 }
@@ -148,33 +174,39 @@ async function liveSageWhole(address: string): Promise<bigint> {
    * case. An exact match would silently fail open — which is the same as no
    * check at all.
    */
-  try {
-    const linkedElsewhere = await prisma.linkedWallet.findFirst({
-      where: { address: { equals: address, mode: 'insensitive' } },
-      select: { walletAddress: true },
-    });
-    if (
-      linkedElsewhere &&
-      linkedElsewhere.walletAddress.toLowerCase() !== address.toLowerCase()
-    ) {
-      return BigInt(0);
-    }
-  } catch {
-    /* a lookup failure must not silently open the double-credit; fall through
-       to the normal path, which is the pre-link behaviour */
+  /**
+   * NEITHER LOOKUP IS ALLOWED TO FAIL QUIETLY.
+   *
+   * The guard below used to end `catch { /* must not silently open the
+   * double-credit; fall through to the normal path *\/ }` — but falling
+   * through to the normal path IS the pre-fix behaviour, i.e. exactly the
+   * double-credit the comment promised to prevent. The comment asserted the
+   * invariant and the code did the opposite.
+   *
+   * The `extra` lookup below had the mirror-image problem: degrading to the
+   * sign-in wallet alone is harmless for a display read, but this value flows
+   * into dbBank, which banks at the reduced balance and overwrites
+   * checkpointSage with it. One pool timeout permanently cost an account with
+   * a linked wallet two intervals of accrual, with a healthy-looking ledger
+   * and no journal row.
+   *
+   * Throwing is right for both: dbBankSweep skips the wallet and the next
+   * sweep is correct, while dbPointsOf/dbDailyRate already catch for display.
+   */
+  const linkedElsewhere = await prisma.linkedWallet.findFirst({
+    where: { address: { equals: address, mode: 'insensitive' } },
+    select: { walletAddress: true },
+  });
+  if (linkedElsewhere && linkedElsewhere.walletAddress.toLowerCase() !== address.toLowerCase()) {
+    return BigInt(0);
   }
 
-  let extra: string[] = [];
-  try {
-    extra = (
-      await prisma.linkedWallet.findMany({
-        where: { walletAddress: address },
-        select: { address: true },
-      })
-    ).map((r) => r.address);
-  } catch {
-    /* fall back to the sign-in wallet alone */
-  }
+  const extra = (
+    await prisma.linkedWallet.findMany({
+      where: { walletAddress: address },
+      select: { address: true },
+    })
+  ).map((r) => r.address);
   if (!extra.length) return oneWalletWhole(address);
 
   /**
@@ -196,15 +228,19 @@ async function liveSageWhole(address: string): Promise<bigint> {
    * matter how the balances are arranged across an account's wallets.
    */
   const wallets = [address, ...extra];
+  // Uncaught, for the reason spelled out in oneWalletWhole. A PARTIAL failure
+  // here was the worst of the three: it produced a plausible non-zero total
+  // (60,000 of one wallet plus a failed read of the other) that looks like a
+  // real balance rather than an outage, so nothing downstream could tell the
+  // difference — and dbBank wrote it in as the new checkpoint.
   const freshes = await Promise.all(
-    wallets.map((a) => wholeBalance(PIXELS_TOKEN_ADDRESS, a).catch(() => BigInt(0)))
+    wallets.map((a) => wholeBalance(PIXELS_TOKEN_ADDRESS, a))
   );
   const fresh = freshes.reduce((s, v) => s + v, BigInt(0));
   if (!migrationWindowOpen()) return fresh;
 
-  // a legacy read failing must never zero a live balance
   const legacies = await Promise.all(
-    wallets.map((a) => wholeBalance(PIXELS_LEGACY_TOKEN_ADDRESS, a).catch(() => BigInt(0)))
+    wallets.map((a) => wholeBalance(PIXELS_LEGACY_TOKEN_ADDRESS, a))
   );
   const legacyEquivalent = legacies.reduce((s, v) => s + v, BigInt(0)) * LEGACY_PIXEL_RATIO;
   return legacyEquivalent > fresh ? legacyEquivalent : fresh;
@@ -397,9 +433,16 @@ export async function dbTransferPixels(
   const now = new Date();
   // live balances for the sustained-stream rule — fetched BEFORE the DB tx so
   // no RPC round-trip happens while rows are locked
+  //
+  // NULL, not zero. A collect must still work during an RPC blip, but banking
+  // a zero stream and advancing lastSync would silently pay the user nothing
+  // for the whole interval — the spend would quietly cost them their accrual
+  // as well as the pixels. Null means "balance unknown": skip the accrual
+  // banking entirely and leave lastSync where it is, so the next sweep prices
+  // the full interval correctly.
   const [liveFrom, liveTo] = await Promise.all([
-    liveSageWhole(from).catch(() => BigInt(0)),
-    liveSageWhole(to).catch(() => BigInt(0)),
+    liveSageWhole(from).catch(() => null),
+    liveSageWhole(to).catch(() => null),
   ]);
   const journalId = await prisma.$transaction(async (tx) => {
     // row locks so two concurrent spends can't both pass the balance check
@@ -412,25 +455,26 @@ export async function dbTransferPixels(
     // closes the interval — and a close that does not consume and re-carry the
     // remainder throws away every sub-pixel of it. The balance check is also
     // fractionally more correct for it.
-    const carriedFrom = acctFrom
-      ? streamWithDust(liveFrom, acctFrom.checkpointSage, acctFrom.lastSync, now.getTime(), acctFrom.streamDust ?? BigInt(0))
-      : { stream: BigInt(0), dust: BigInt(0) };
-    const banked = (acctFrom?.settled ?? BigInt(0)) + carriedFrom.stream;
+    const carriedFrom =
+      acctFrom && liveFrom !== null
+        ? streamWithDust(liveFrom, acctFrom.checkpointSage, acctFrom.lastSync, now.getTime(), acctFrom.streamDust ?? BigInt(0))
+        : null;
+    const banked = (acctFrom?.settled ?? BigInt(0)) + (carriedFrom?.stream ?? BigInt(0));
     if (banked < amount) throw new Error('insufficient pixels');
     await tx.pixelAccount.upsert({
       where: { walletAddress: from },
       create: { walletAddress: from, settled: BigInt(0) - amount, checkpointSage: BigInt(0), lastSync: now },
       // increment rather than a literal, matching dbBank — the row is locked
-      // above, but a literal would still clobber a row created concurrently
+      // above, but a literal would still clobber a row created concurrently.
+      // lastSync/streamDust move ONLY when the interval was actually priced.
       update: {
-        settled: { increment: carriedFrom.stream - amount },
-        lastSync: now,
-        streamDust: carriedFrom.dust,
+        settled: { increment: (carriedFrom?.stream ?? BigInt(0)) - amount },
+        ...(carriedFrom ? { lastSync: now, streamDust: carriedFrom.dust } : {}),
       },
     });
     // `settled` moves by stream - amount, so the journal needs BOTH halves or
     // it cannot reconstruct the balance it is the record of.
-    if (carriedFrom.stream > BigInt(0)) {
+    if (carriedFrom && carriedFrom.stream > BigInt(0)) {
       await tx.pixelJournal.create({
         data: { walletAddress: from, delta: carriedFrom.stream, kind: 'bank', reason: 'accrual banked before spend' },
       });
@@ -440,19 +484,19 @@ export async function dbTransferPixels(
     });
     if (to.toLowerCase() !== from.toLowerCase()) {
       const acctTo = await tx.pixelAccount.findUnique({ where: { walletAddress: to } });
-      const carriedTo = acctTo
-        ? streamWithDust(liveTo, acctTo.checkpointSage, acctTo.lastSync, now.getTime(), acctTo.streamDust ?? BigInt(0))
-        : { stream: BigInt(0), dust: BigInt(0) };
+      const carriedTo =
+        acctTo && liveTo !== null
+          ? streamWithDust(liveTo, acctTo.checkpointSage, acctTo.lastSync, now.getTime(), acctTo.streamDust ?? BigInt(0))
+          : null;
       await tx.pixelAccount.upsert({
         where: { walletAddress: to },
         create: { walletAddress: to, settled: amount, checkpointSage: BigInt(0), lastSync: now },
         update: {
-          settled: { increment: carriedTo.stream + amount },
-          lastSync: now,
-          streamDust: carriedTo.dust,
+          settled: { increment: (carriedTo?.stream ?? BigInt(0)) + amount },
+          ...(carriedTo ? { lastSync: now, streamDust: carriedTo.dust } : {}),
         },
       });
-      if (carriedTo.stream > BigInt(0)) {
+      if (carriedTo && carriedTo.stream > BigInt(0)) {
         await tx.pixelJournal.create({
           data: { walletAddress: to, delta: carriedTo.stream, kind: 'bank', reason: 'accrual banked before credit' },
         });
@@ -477,7 +521,8 @@ export async function dbTransferPixels(
 /** Credit pixels (seller earnings, promos, refunds) — atomic, banks first. */
 export async function dbCreditPixels(to: string, amount: bigint, reason: string): Promise<string> {
   const now = new Date();
-  const live = await liveSageWhole(to).catch(() => BigInt(0));
+  // null, not zero — see dbTransferPixels
+  const live = await liveSageWhole(to).catch(() => null);
   const journalId = await prisma.$transaction(async (tx) => {
     // Same lock + increment as dbBank, and for the same reason — this path had
     // neither. See the note there.
@@ -490,18 +535,22 @@ export async function dbCreditPixels(to: string, amount: bigint, reason: string)
     // consume and re-carry the dust like dbBank does. Calling streamOf with no
     // dust left the remainder stranded against an interval that had already
     // been paid for.
-    const carried = acct
-      ? streamWithDust(live, acct.checkpointSage, acct.lastSync, now.getTime(), acct.streamDust ?? BigInt(0))
-      : { stream: BigInt(0), dust: BigInt(0) };
+    const carried =
+      acct && live !== null
+        ? streamWithDust(live, acct.checkpointSage, acct.lastSync, now.getTime(), acct.streamDust ?? BigInt(0))
+        : null;
     await tx.pixelAccount.upsert({
       where: { walletAddress: to },
       create: { walletAddress: to, settled: amount, checkpointSage: BigInt(0), lastSync: now },
-      update: { settled: { increment: carried.stream + amount }, lastSync: now, streamDust: carried.dust },
+      update: {
+        settled: { increment: (carried?.stream ?? BigInt(0)) + amount },
+        ...(carried ? { lastSync: now, streamDust: carried.dust } : {}),
+      },
     });
     // The banked accrual gets its OWN row. Without it `settled` moved by
     // stream + amount while the journal recorded only amount, so the journal
     // could not reconstruct the balance it is supposed to be the record of.
-    if (carried.stream > BigInt(0)) {
+    if (carried && carried.stream > BigInt(0)) {
       await tx.pixelJournal.create({
         data: { walletAddress: to, delta: carried.stream, kind: 'bank', reason: 'accrual banked before credit' },
       });
@@ -576,8 +625,37 @@ export async function dbBankSweep(batch = 200): Promise<{ checked: number; banke
       take: batch,
       select: { walletAddress: true, checkpointSage: true },
     }),
+    /**
+     * THE FRESHNESS ARM MUST WATCH THE TOKENS THAT ACTUALLY ACCRUE.
+     *
+     * This filtered on `parameters.ASHTOKEN_ADDRESS` — the last `parameters.`
+     * read left in a file that pins everything else precisely so an accrual
+     * job cannot end up pointed at the wrong token (see ledgerProvider). On
+     * production that resolves to 0x14561006…, which is byte-identical to
+     * PIXELS_LEGACY_TOKEN_ADDRESS. So today it is INCOMPLETE rather than
+     * wrong — legacy is a genuine accrual input through the max() above — but
+     * it has never once covered the token pixels actually accrue from, and on
+     * 2026-08-08 legacy stops counting and the arm becomes pure noise.
+     *
+     * Derived from the same predicate the accrual reads use, so the two cannot
+     * drift apart again.
+     *
+     * KNOWN GAP, not closed here: nothing writes a SocialTokenTrade row for
+     * the v4 token live — recordTrade rejects it (a Doppler swap goes through
+     * the UniversalRouter, not the factory) and the pool sweep is v2-pair
+     * shaped. So this arm is correct but still starved for the new token until
+     * a Transfer indexer feeds it. That indexer is also what U1/O7 need, and
+     * it is the only discovery path for a holder who buys and simply holds.
+     */
     prisma.socialTokenTrade.findMany({
-      where: { tokenAddress: parameters.ASHTOKEN_ADDRESS, createdAt: { gt: twoHoursAgo } },
+      where: {
+        tokenAddress: {
+          in: migrationWindowOpen()
+            ? [PIXELS_TOKEN_ADDRESS, PIXELS_LEGACY_TOKEN_ADDRESS]
+            : [PIXELS_TOKEN_ADDRESS],
+        },
+        createdAt: { gt: twoHoursAgo },
+      },
       select: { trader: true },
       distinct: ['trader'],
     }),
