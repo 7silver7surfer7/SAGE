@@ -197,7 +197,7 @@ export default function AgentChat({
 
             {(m.cards || []).map((c) => (
               <div key={c.id} style={surface}>
-                <AgentCard card={c} onConnect={onConnect} />
+                <AgentCard card={c} onConnect={onConnect} onAsk={onPick} />
               </div>
             ))}
 

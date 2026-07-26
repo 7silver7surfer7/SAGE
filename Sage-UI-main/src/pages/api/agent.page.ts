@@ -978,6 +978,8 @@ async function runTool(
         byline: 'NOT YET MINTED',
         title: prompt.slice(0, 120),
         images: job.urls,
+        // the agent made this FOR this user, so offer the mint action under it
+        mintable: true,
         rows: [
           { k: 'MODEL', v: imageModel.label },
           { k: 'RATIO', v: String(input?.aspect_ratio || '1:1') },

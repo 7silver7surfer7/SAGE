@@ -18,6 +18,8 @@ function isTxHash(row: { k: string; v: any }): boolean {
 export interface Props {
   card: Card;
   onConnect: () => void;
+  /** send a message as the user — used by the mint action on generated art */
+  onAsk?: (text: string) => void;
 }
 
 /** Accent chip used as the eyebrow on the drop, tx and credits cards. */
@@ -150,7 +152,7 @@ function ImageSlot({ hint, url }: { hint?: string; url?: string | null }) {
   );
 }
 
-export default function AgentCard({ card, onConnect }: Props) {
+export default function AgentCard({ card, onConnect, onAsk }: Props) {
   if (card.kind === 'drop') {
     return (
       <div style={{ display: 'flex', flexWrap: 'wrap' }}>
@@ -296,6 +298,26 @@ export default function AgentCard({ card, onConnect }: Props) {
           <div style={{ ...hairlineStack, marginTop: '14px' }}>
             {card.rows.map((row: KV) => kvRow(row, '10px 0', 16))}
           </div>
+        ) : null}
+        {/*
+          The mint question, as a button rather than only a sentence.
+          The agent already ASKS in prose whether to mint; answering meant
+          typing "yes" and trusting it to resolve which image that meant.
+
+          It names its OWN url instead of saying "mint it", because
+          prepare_mint falls back to the most recent image when none is given
+          — correct when you have just generated one, wrong the moment you
+          scroll up and mint an earlier one. The card knows which artwork it
+          is; nothing else in the chain does.
+        */}
+        {card.mintable && images.length > 0 && onAsk ? (
+          <HoverButton
+            style={{ ...btnPrimary, marginTop: '16px', width: '100%', cursor: 'pointer' }}
+            hoverStyle={{ background: C.ink }}
+            onClick={() => onAsk(`Mint this as an NFT: ${images[0]}`)}
+          >
+            mint this as an NFT
+          </HoverButton>
         ) : null}
       </div>
     );

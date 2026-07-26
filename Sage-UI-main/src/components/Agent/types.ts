@@ -77,6 +77,15 @@ export interface ImageCard extends CardBase {
   /** finished image URLs from the generator */
   images: string[];
   rows?: KV[];
+  /**
+   * Offer the "mint this" action under the image.
+   *
+   * OPT-IN, because this card kind is also how critique_subject shows the work
+   * it is reviewing — somebody else's drop, already minted by them. A mint
+   * button under that would invite the user to re-mint another artist's piece
+   * as their own. Only art the agent generated for this user sets it.
+   */
+  mintable?: boolean;
 }
 
 export interface TxCard extends CardBase {
