@@ -7,6 +7,7 @@ import { flushDropAllowlist, flushAllPendingAllowlists } from '@/utilities/allow
 import { PresetDrop } from '@/store/dropsReducer';
 import { withArtistDisplayNameOverride } from '@/prisma/functions';
 import { requireRole, isCrossSiteRequest } from '@/utilities/apiAuth';
+import { deployDropGamesServerSide } from '@/utilities/dropDeployServer';
 import { parseAddressList, ALLOWLIST_MAX_ADDRESSES } from '@/utilities/allowlist';
 import {
   deployWhitelistServerSide,
@@ -47,6 +48,9 @@ const ACTION_ROLES: Record<string, Role[]> = {
   UpdateCollectionContractAddress: [Role.USER, Role.ARTIST, Role.ADMIN],
   UpdateCollectionNftContract: [Role.USER, Role.ARTIST, Role.ADMIN],
   UpdateApprovedDateAndIsLiveFlags: [Role.USER, Role.ARTIST, Role.ADMIN],
+  // Server-side game creation: the artist signs their NFT contract and nothing
+  // else. Owner-scoped below, exactly like the other self-serve deploy actions.
+  DeployDropGames: [Role.USER, Role.ARTIST, Role.ADMIN],
   DeleteDrop: [Role.ADMIN],
   DeleteDrops: [Role.ADMIN],
   // Per-drop allowlist gating. Admin manages the list; CheckDropAllowlist is
@@ -74,6 +78,7 @@ const ACTION_ROLES: Record<string, Role[]> = {
 // (GetApprovedDrops, GetFullDrop, …) stay open so public browsing is unaffected.
 const MUTATING_ACTIONS = new Set([
   'ClaimMintSpot',
+  'DeployDropGames',
   'DeleteDrop',
   'DeleteDrops',
   'EnableIpGate',
@@ -136,6 +141,7 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
     switch (action) {
       case 'OptimizeDropImages':
       case 'UpdateApprovedDateAndIsLiveFlags':
+      case 'DeployDropGames':
       case 'GetDropAllowlist':
         dropArtist = (
           await prisma.drop.findUnique({ where: { id: idNum }, select: { artistAddress: true } })
@@ -274,6 +280,9 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
     case 'EnableIpGate':
       await enableIpGate(Number(id), response);
       break;
+    case 'DeployDropGames':
+      await deployDropGames(Number(id), response);
+      break;
     case 'GetGameVoucher':
       await getGameVoucher(request, walletAddress, response);
       break;
@@ -281,6 +290,33 @@ async function handler(request: NextApiRequest, response: NextApiResponse) {
       response.status(500);
   }
   response.end();
+}
+
+/**
+ * Create the drop's games on-chain with the PLATFORM's key.
+ *
+ * The artist's signature is spent on their NFT contract and nothing else — see
+ * utilities/dropDeployServer for why the other three transactions moved here
+ * and which one deliberately did not. Owner-scoped above, so a wallet can only
+ * do this for its own drop.
+ *
+ * This SPENDS REAL GAS on a caller-triggered path. It is bounded by the caller
+ * having to own an approved-shaped drop, and by createOpenEdition/createAuction
+ * being idempotent per game id, so a retry loop cannot bill twice for the same
+ * game. A per-wallet daily cap is still worth adding before this is loud.
+ */
+async function deployDropGames(id: number, response: NextApiResponse) {
+  if (!Number.isFinite(id) || id <= 0) {
+    return response.status(400).json({ error: 'bad drop id' });
+  }
+  try {
+    const result = await deployDropGamesServerSide(id);
+    console.log(`deployDropGames(${id}) ::`, JSON.stringify(result));
+    response.json(result);
+  } catch (e: any) {
+    console.error(`deployDropGames(${id}) failed`, e);
+    response.status(500).json({ error: e?.message || 'the games could not be created' });
+  }
 }
 
 async function getApprovedDrops(response: NextApiResponse) {

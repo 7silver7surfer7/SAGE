@@ -756,32 +756,54 @@ async function deployDrop(dropId: number, signer: Signer, fetchWithBQ: any) {
   // Stamp this drop's royalty on the artist contract BEFORE any game deploys,
   // so every token minted for this drop carries it. Legacy artist contracts
   // (pre-royalty code, no setter) log a warning and keep their fixed 12%.
-  await deployStep('setting drop royalty', () => setDropRoyalty(drop, artistNftContractAddress, signer));
-  // Gated drop? Deploy its SageWhitelist + push the addresses BEFORE the games,
-  // so lotteries/open editions can be wired to it at creation. Ungated drops
-  // get AddressZero — identical to the pre-allowlist behavior.
-  //
-  // Voucher-gating (opt-in, gas-free): open editions AND lotteries both take
-  // the voucher path (voucherGated set on-chain), so they need no whitelist.
-  // Skip the whitelist entirely UNLESS the drop has collection mints, whose
-  // voucher path isn't wired yet. Auctions are UI-gated and never needed it.
-  const needsWhitelist =
-    !(drop as any).voucherGating || (drop.CollectionMints?.length ?? 0) > 0;
-  const whitelistAddress = needsWhitelist
-    ? await deployStep('allowlist contract', () => deployAndSyncAllowlist(drop, signer, fetchWithBQ))
-    : ethers.constants.AddressZero;
-  await deployStep('auctions', () =>
-    deployAuctions(drop, artistNftContractAddress, signer, fetchWithBQ)
+  /**
+   * ONE SIGNATURE. Everything below this line used to be signed by the artist
+   * and is now done by the platform key.
+   *
+   * A self-serve drop cost four wallet prompts: the NFT contract, its
+   * metadata, the game, and the game's artist share. Only the first is
+   * something ONLY the artist can authorise; the rest are the platform's
+   * bookkeeping that merely happened to be artist-callable. The server key
+   * holds role.admin, which every one of those calls accepts — verified by
+   * callStatic on mainnet before this was written.
+   *
+   * So the drop's royalty, auctions and open editions (the self-serve
+   * formats), their artist shares, and any allowlist contract are all created
+   * server-side in ONE request. The royalty especially: setDefaultRoyalty is
+   * onlyAdminOrMultisig, so a self-serve artist could never apply the
+   * percentage they picked — this is the first time it actually takes effect
+   * for them.
+   * The artist's first drop is one signature; every drop after it is none,
+   * because fetchOrCreateNftContract returns their existing contract.
+   *
+   * LOTTERIES AND ZIP COLLECTIONS still deploy from here: they are admin-only
+   * (the social launcher cannot create them) and have their own multi-step
+   * pipelines, so they keep the client path rather than being half-ported.
+   * The server reports them back as `unsupported` and this handles them.
+   */
+  const { data: served, error: serveErr } = await fetchWithBQ({
+    url: `drops?action=DeployDropGames&id=${dropId}`,
+    method: 'POST',
+  });
+  if (serveErr || !served) {
+    throw new Error(
+      (serveErr as any)?.data?.error || 'the platform could not create the games — nothing was minted'
+    );
+  }
+  dropProgress.note(
+    `Created ${(served as any).openEditions ?? 0} edition(s) and ${(served as any).auctions ?? 0} auction(s) — no signature needed.`
   );
-  await deployStep('lotteries', () =>
-    deployLotteries(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
-  );
-  await deployStep('open editions', () =>
-    deployOpenEditions(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
-  );
-  await deployStep('collection mints', () =>
-    deployCollectionMints(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
-  );
+
+  const stillMine = (drop.Lotteries?.length ?? 0) > 0 || (drop.CollectionMints?.length ?? 0) > 0;
+  const whitelistAddress = (served as any).whitelist || ethers.constants.AddressZero;
+  if (stillMine) {
+    await deployStep('lotteries', () =>
+      deployLotteries(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
+    );
+    await deployStep('collection mints', () =>
+      deployCollectionMints(drop, artistNftContractAddress, signer, fetchWithBQ, whitelistAddress)
+    );
+  }
   // FINAL required step: flip approvedAt/isLive so the drop appears on the
   // storefront. This call was dropped in an earlier refactor, which left a
   // fully-minted drop invisible — it must always run after the games deploy
