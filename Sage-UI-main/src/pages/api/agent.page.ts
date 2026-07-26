@@ -64,12 +64,19 @@ const SYSTEM = `You are SAGE AGENT, the AI curator of SAGE — an AI-native NFT 
 
 VOICE: an art-world curator who also reads chain data. Precise, unhurried, a little austere. No emoji, no hype, no exclamation marks. Short paragraphs, two to four sentences.
 
-FACTUAL LIMITS — obey strictly:
-- Your tools are the ONLY source of truth. Never name a drop, artist, price, edition count or date that a tool did not return.
+WHAT YOU KNOW, beyond this platform: you are fluent in web3 and you should sound like it — Ethereum and its rollups, consensus and proof systems, EIPs and account abstraction, AMM mechanics and MEV, token standards, wallets, custody and key management, DAOs, bridges, zero-knowledge proofs — and in the people and arguments behind them (Vitalik Buterin's writing, Satoshi's design choices, the researchers whose results you know). Cryptography, maths and computer science are fair game. Answer a technical question technically and at length if it deserves it; do not deflect back to art or to SAGE. Someone asking how a rollup settles wants that answered, not a drop recommended.
+
+FACTUAL LIMITS — obey strictly. Note what these do and do not cover: they bound LIVE FACTS, never general knowledge.
+- Your tools are the ONLY source of truth for anything CURRENT: a drop, artist, price, edition count, date, balance, supply, gas figure, or the state of any address or transaction. Never name one a tool did not return.
+- That restriction does NOT apply to how things WORK. Explaining EIP-1559's burn, why a Merkle proof is succinct, or what Vitalik argued about censorship resistance needs no tool — it is yours to answer.
+- The line is live-versus-durable, not crypto-versus-art. "How does an AMM price a swap" is knowledge. "What is ETH worth right now" is a live fact you do not have unless a tool returned it — say so instead of guessing.
 - If asked what is coming next, say nothing has been announced. Never imply a roadmap, allowlist or future drop.
-- Never present a guess as platform news.
+- Never present a guess as platform news, and say plainly when your knowledge of recent events may be stale — this field moves faster than your training.
+- No financial advice, price predictions, or opinion on whether to buy or hold ANY asset — SAGE's, a token you were asked about, or anything else. Describe the mechanism, decline the investment question, move on.
 
 TOOLS: use them whenever a drop, token figure or balance is involved. Each renders a visual card in the interface, so do NOT repeat every number in prose — add the context or judgement the card cannot.
+
+CHAIN READS: you can look at the chain directly, so do it rather than saying you cannot. inspect_address reads any public address (balance, wallet-or-contract, optionally an ERC-20 balance); inspect_transaction says whether a hash succeeded, what it moved and what it cost; get_chain_info gives the current block and gas. Reach for these the moment someone pastes an address or hash, or asks about live chain conditions. They are READ-ONLY — nothing here signs or spends, and get_balances remains the one for the connected user's own holdings.
 
 TRANSACTIONS: you cannot execute anything. prepare_buy builds an UNSIGNED order that the user signs in their own wallet; the agent never holds custody. Say plainly what a purchase will cost, surface the order, and let them sign. Never claim a purchase is complete.
 - prepare_buy works for ANY token traded on Robinhood Chain, not only SAGE — pass the symbol the user named. Use list_tokens when they ask what is buyable or name something unfamiliar.
@@ -253,6 +260,39 @@ const TOOLS = [
       },
       required: ['format', 'name'],
     },
+  },
+  {
+    name: 'inspect_address',
+    description:
+      'Read any PUBLIC address on Robinhood Chain: native balance, whether it is a wallet or a contract, and optionally its balance of a given ERC-20. Use for questions about a wallet or contract that is NOT the signed-in user (get_balances covers them). Read-only.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        address: { type: 'string', description: '0x… address to inspect' },
+        token: {
+          type: 'string',
+          description:
+            'Optional 0x… ERC-20 contract to also report the balance of. Omit for native ETH only.',
+        },
+      },
+      required: ['address'],
+    },
+  },
+  {
+    name: 'inspect_transaction',
+    description:
+      'Look up a transaction on Robinhood Chain by hash — whether it succeeded, who sent it, what it moved, which block, and what it cost in gas. Use whenever someone asks what happened to a transaction. Read-only.',
+    input_schema: {
+      type: 'object',
+      properties: { hash: { type: 'string', description: '0x… 66-character transaction hash' } },
+      required: ['hash'],
+    },
+  },
+  {
+    name: 'get_chain_info',
+    description:
+      'Current state of Robinhood Chain: latest block height, block time and gas price. Use for "what is gas right now", "what block are we on", or any question needing live chain conditions rather than general knowledge.',
+    input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'critique_subject',
@@ -1116,6 +1156,165 @@ async function runTool(
       note:
         'An unsigned drop was surfaced to the user. NOTHING exists yet — no rows, no contracts, nothing public. The artwork IS already pinned to IPFS. Signing creates the drop, deploys it on-chain and publishes it to the sageart.xyz home page and the social feed; the clock starts then, so the sale ends the stated number of hours after they sign. Deploying costs gas, more than a plain mint because their artist contract may deploy too. Do not claim it is live until they sign.',
     });
+  }
+
+  /**
+   * The three read-only chain tools.
+   *
+   * These take an address or hash FROM THE MODEL, which get_balances
+   * deliberately does not — and that asymmetry is the point, not an
+   * inconsistency. get_balances reports the signed-in user's holdings, so
+   * letting the model choose whose wallet to read would turn a prompt
+   * injection into a way to snoop on a third party through our server. These
+   * report only what any block explorer will show anyone who asks; there is no
+   * privacy to leak and no session to abuse.
+   *
+   * All three are view calls against the pinned trading RPC. Nothing here can
+   * write, sign, or spend.
+   */
+  if (name === 'inspect_address') {
+    const raw = String(input?.address || '').trim();
+    if (!ethers.utils.isAddress(raw)) {
+      return 'ERROR: that is not a valid address. Ask the user for the full 0x… address.';
+    }
+    const addr = ethers.utils.getAddress(raw);
+    ctx.steps.push('READING CHAIN · ' + addr.slice(0, 6) + '…' + addr.slice(-4));
+    const provider = tradeProvider();
+    const tokenArg = String(input?.token || '').trim();
+    const wantToken = ethers.utils.isAddress(tokenArg) ? ethers.utils.getAddress(tokenArg) : null;
+    try {
+      const [balRaw, code, tokenRaw] = await Promise.all([
+        provider.getBalance(addr),
+        provider.getCode(addr),
+        wantToken
+          ? new ethers.Contract(
+              wantToken,
+              ['function balanceOf(address) view returns (uint256)'],
+              provider
+            )
+              .balanceOf(addr)
+              .catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      const eth = Number(ethers.utils.formatEther(balRaw));
+      // 0xef0100 || implementation, exactly 23 bytes — an EIP-7702 delegated
+      // EOA is a PERSON whose key still signs, not a contract. Reporting it as
+      // a contract is wrong and, on this chain, wrong for most real wallets.
+      const delegated = code.toLowerCase().startsWith('0xef0100') && code.length === 2 + 23 * 2;
+      const kind = code === '0x' ? 'WALLET' : delegated ? 'WALLET · EIP-7702' : 'CONTRACT';
+      const rows = [
+        { k: 'TYPE', v: kind },
+        { k: 'ETH', v: eth.toLocaleString('en-US', { maximumFractionDigits: 6 }) },
+      ];
+      if (tokenRaw !== null) {
+        rows.push({
+          k: 'TOKEN',
+          v: Number(ethers.utils.formatEther(tokenRaw)).toLocaleString('en-US', {
+            maximumFractionDigits: 4,
+          }),
+        });
+      }
+      if (kind === 'CONTRACT') rows.push({ k: 'CODE', v: `${(code.length - 2) / 2} bytes` });
+      ctx.cards.push({
+        kind: 'stats',
+        status: 'ON CHAIN',
+        byline: TRADE_CHAIN_NAME.toUpperCase() + ' · PUBLIC DATA',
+        title: `${addr.slice(0, 10)}…${addr.slice(-8)}`,
+        rows,
+      });
+      return JSON.stringify({
+        address: addr,
+        type: kind,
+        eth,
+        token_balance: tokenRaw === null ? undefined : Number(ethers.utils.formatEther(tokenRaw)),
+        code_bytes: (code.length - 2) / 2,
+        note: 'Live read, shown as a card. Add what the numbers mean rather than restating them.',
+      });
+    } catch (e: any) {
+      return `ERROR: could not read that address (${e?.message || 'RPC failure'}).`;
+    }
+  }
+
+  if (name === 'inspect_transaction') {
+    const hash = String(input?.hash || '').trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+      return 'ERROR: that is not a valid transaction hash. It is 0x followed by 64 hex characters.';
+    }
+    ctx.steps.push('READING TX · ' + hash.slice(0, 10) + '…');
+    const provider = tradeProvider();
+    try {
+      const [tx, rcpt] = await Promise.all([
+        provider.getTransaction(hash),
+        provider.getTransactionReceipt(hash),
+      ]);
+      if (!tx) {
+        return 'ERROR: no transaction with that hash on this chain. It may be on a different chain, or not mined yet.';
+      }
+      const status = !rcpt ? 'PENDING' : rcpt.status === 1 ? 'SUCCESS' : 'REVERTED';
+      const value = Number(ethers.utils.formatEther(tx.value || 0));
+      const gasEth = rcpt?.gasUsed && tx.gasPrice
+        ? Number(ethers.utils.formatEther(rcpt.gasUsed.mul(tx.gasPrice)))
+        : null;
+      ctx.cards.push({
+        kind: 'stats',
+        status,
+        byline: TRADE_CHAIN_NAME.toUpperCase(),
+        title: `${hash.slice(0, 10)}…${hash.slice(-8)}`,
+        rows: [
+          { k: 'FROM', v: `${tx.from.slice(0, 6)}…${tx.from.slice(-4)}` },
+          { k: 'TO', v: tx.to ? `${tx.to.slice(0, 6)}…${tx.to.slice(-4)}` : 'CONTRACT CREATION' },
+          { k: 'VALUE', v: `${value.toLocaleString('en-US', { maximumFractionDigits: 6 })} ETH` },
+          { k: 'BLOCK', v: rcpt?.blockNumber ? rcpt.blockNumber.toLocaleString() : 'not mined' },
+          ...(gasEth !== null
+            ? [{ k: 'GAS COST', v: `${gasEth.toLocaleString('en-US', { maximumFractionDigits: 8 })} ETH` }]
+            : []),
+        ],
+      });
+      return JSON.stringify({
+        hash,
+        status,
+        from: tx.from,
+        to: tx.to,
+        value_eth: value,
+        block: rcpt?.blockNumber ?? null,
+        gas_cost_eth: gasEth,
+        note:
+          status === 'REVERTED'
+            ? 'It was mined but FAILED — the gas was still spent. Say so plainly.'
+            : 'Live read, shown as a card.',
+      });
+    } catch (e: any) {
+      return `ERROR: could not read that transaction (${e?.message || 'RPC failure'}).`;
+    }
+  }
+
+  if (name === 'get_chain_info') {
+    ctx.steps.push('READING CHAIN STATE');
+    const provider = tradeProvider();
+    try {
+      const [block, gas] = await Promise.all([provider.getBlock('latest'), provider.getGasPrice()]);
+      const gwei = Number(ethers.utils.formatUnits(gas, 'gwei'));
+      ctx.cards.push({
+        kind: 'stats',
+        status: 'LIVE',
+        byline: `${TRADE_CHAIN_NAME.toUpperCase()} · CHAIN ${TRADE_CHAIN_ID}`,
+        title: 'Chain state',
+        rows: [
+          { k: 'BLOCK', v: block.number.toLocaleString() },
+          { k: 'GAS', v: `${gwei.toLocaleString('en-US', { maximumFractionDigits: 4 })} gwei` },
+          { k: 'MINED', v: new Date(block.timestamp * 1000).toISOString().replace('T', ' ').slice(0, 19) + 'Z' },
+        ],
+      });
+      return JSON.stringify({
+        block: block.number,
+        gas_gwei: gwei,
+        block_time: new Date(block.timestamp * 1000).toISOString(),
+        chain: TRADE_CHAIN_NAME,
+        chain_id: TRADE_CHAIN_ID,
+      });
+    } catch (e: any) {
+      return `ERROR: could not read chain state (${e?.message || 'RPC failure'}).`;
+    }
   }
 
   if (name === 'critique_subject') {
