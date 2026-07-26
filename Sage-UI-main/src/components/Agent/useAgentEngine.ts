@@ -12,6 +12,8 @@ import type {
 } from './types';
 import { getSession } from 'next-auth/react';
 import useSignIn from '@/hooks/useSignIn';
+import { useApproveAndDeployDropMutation } from '@/store/dropsReducer';
+import { useCreateDropPostMutation } from '@/store/socialReducer';
 import { matchDrop, type AgentDrop } from './dropIndex';
 import type { AgentWallet } from './useAgentWallet';
 import { SAGE_PRICE_TOKEN_ADDRESS } from '@/constants/config';
@@ -305,6 +307,11 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
   }, [loadXLink, wallet.address]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The drop pipeline, unchanged: a create_drop card deploys through the SAME
+  // mutation the dashboard and the /social/launch/nft form use, so an
+  // agent-assembled drop goes on-chain and goes live by exactly one code path.
+  const [approveAndDeployDrop] = useApproveAndDeployDropMutation();
+  const [createDropPost] = useCreateDropPostMutation();
   // late-bound: respond() closes over these before confirmIntent is declared
   const confirmIntentRef = useRef<(id: number, intent: any) => void>(() => {});
   const discardIntentRef = useRef<(id: number) => void>(() => {});
@@ -724,7 +731,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
         setError('CONNECT A WALLET TO SIGN THIS ORDER');
         return;
       }
-      const settle = (patch: Record<string, any>) =>
+      const settle = (patch: Record<string, any>) => {
         setMsgs((prev) =>
           prev.map((m) => ({
             ...m,
@@ -733,13 +740,125 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
             ),
           }))
         );
+        // Persist it too. The payload was stored when the turn was created,
+        // with pending:true — without this, reopening the session replayed an
+        // already-signed mint as an unsigned order and invited a second mint
+        // of the same artwork. Best-effort: the on-screen state is already
+        // correct, so a failed write must not surface as an error.
+        const sid = sessionIdRef.current || sessionId;
+        if (sid) {
+          fetch('/api/agent-sessions/', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id: sid, cardId, cardPatch: { pending: false, ...patch } }),
+          }).catch(() => {});
+        }
+      };
       try {
         // buy_sage is the pre-multi-token intent; treat it as SAGE.
         const isBuy = intent?.action === 'buy_token' || intent?.action === 'buy_sage';
         const isSell = intent?.action === 'sell_token';
         const isMint = intent?.action === 'mint_edition';
-        if (!isBuy && !isSell && !isMint) throw new Error('unsupported order');
+        const isDrop = intent?.action === 'create_drop';
+        if (!isBuy && !isSell && !isMint && !isDrop) throw new Error('unsupported order');
         setError('');
+
+        if (isDrop) {
+          // A drop deploys onto the APP's configured chain (its auction /
+          // open-edition singletons live there), not the trading chain — so
+          // this deliberately skips ensureTradeChain and lets deployDrop's own
+          // assertSignerOnConfiguredChain be the authority. Everything after
+          // the draft rows is the shared pipeline: artist contract, royalty,
+          // the game, then approvedAt.
+          settle({ status: 'CREATING', byline: 'WRITING THE DROP' });
+          // The rows are written HERE, on confirmation — the tool call only
+          // described the sale and pinned the art. The endpoint re-derives the
+          // artist from the session and re-clamps every number, so what the
+          // model put in the intent cannot widen what actually gets built.
+          const draftRes = await fetch('/api/agent-drop/', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              format: intent.format,
+              name: intent.name,
+              description: intent.description,
+              imageUri: intent.imageUri,
+              tokenUri: intent.tokenUri,
+              durationHours: intent.durationHours,
+              price: intent.price,
+              maxPerUser: intent.maxPerUser,
+              royaltyPercent: intent.royaltyPercent,
+              symbol: intent.symbol,
+            }),
+          });
+          const draft = await draftRes.json().catch(() => ({}));
+          const dropId = Number(draft?.dropId);
+          if (!draftRes.ok || !dropId) {
+            throw new Error(draft?.error || 'the drop could not be created');
+          }
+          settle({
+            status: 'DEPLOYING',
+            byline: 'APPROVE EACH WALLET PROMPT',
+          });
+          const deployed = await approveAndDeployDrop({
+            dropId,
+            signer: wallet.signer as any,
+          }).unwrap();
+          if (!deployed) {
+            // approveAndDeployDrop resolves false and raises its own detailed
+            // toast. The drop row survives, so a retry from the dashboard
+            // needs no re-upload — say that rather than implying it is lost.
+            settle({
+              status: 'NOT LIVE',
+              byline: 'DEPLOY FAILED — DRAFT KEPT',
+              rows: [
+                { k: 'DROP', v: `#${dropId}` },
+                { k: 'STATE', v: 'DRAFT — NOTHING MINTED, NOTHING PUBLIC' },
+              ],
+            });
+            setError('DROP NOT DEPLOYED · SEE THE ERROR TOAST');
+            return;
+          }
+          // The drop becomes a feed post, same as the launcher. Cosmetic: it
+          // is already live on the home page, so a failure here must not read
+          // as a failed deploy.
+          let posted = false;
+          try {
+            await createDropPost({
+              dropId,
+              kind: intent.format === 'auction' ? 'auction' : 'openEdition',
+            }).unwrap();
+            posted = true;
+          } catch {
+            /* live on-chain either way — share it manually */
+          }
+          const url = typeof window !== 'undefined' ? `${window.location.origin}/drops/${dropId}/` : '';
+          settle({
+            status: 'LIVE',
+            byline: 'SIGNED BY YOU',
+            rows: [
+              { k: 'DROP', v: `#${dropId}` },
+              { k: 'PAGE', v: url || `/drops/${dropId}/` },
+              { k: 'HOME PAGE', v: 'LISTED' },
+              { k: 'FEED', v: posted ? 'POSTED' : 'POST FAILED — SHARE MANUALLY' },
+            ],
+          });
+          setTxs((prev) =>
+            [
+              {
+                title: `${intent.format === 'auction' ? 'Auction' : 'Open edition'} "${intent.name}"`,
+                venue: 'SAGE DROP PIPELINE · ROBINHOOD CHAIN',
+                status: 'CONFIRMED',
+                hash: '',
+                amount: `DROP #${dropId}`,
+                via: 'AGENT',
+                when: 'JUST NOW',
+              },
+            ].concat(prev)
+          );
+          return;
+        }
+
         const { buyAnyToken, sellAnyToken } = await import('@/utilities/socialToken');
         const { ensureTradeChain, TRADE_VENUE } = await import('./trade');
         const { ethers } = await import('ethers');
@@ -868,7 +987,7 @@ export function useAgentEngine({ drops, wallet, startingCredits = 0 }: AgentEngi
         setError('ORDER NOT SENT · ' + reason.slice(0, 90));
       }
     },
-    [wallet.signer]
+    [wallet.signer, approveAndDeployDrop, createDropPost]
   );
 
   /** Start a fresh thread. The current one is already saved. */

@@ -227,19 +227,26 @@ export function HistoryModal({ onClose, address, txRows }: HistoryModalProps) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
               <span style={mono(12.5, C.ink)}>{t.amount}</span>
-              <a
-                href={explorerTx(t.hash)}
-                target='_blank'
-                rel='noreferrer'
-                style={{
-                  ...mono(10.5, C.ink2),
-                  width: '92px',
-                  textAlign: 'right',
-                  textDecoration: 'none',
-                }}
-              >
-                {shortHash(t.hash)}
-              </a>
+              {/* A drop deploy is several transactions, not one, so it carries
+                  no single hash — link only when there is something to link to,
+                  rather than an empty anchor pointing at the explorer's /tx/. */}
+              {t.hash ? (
+                <a
+                  href={explorerTx(t.hash)}
+                  target='_blank'
+                  rel='noreferrer'
+                  style={{
+                    ...mono(10.5, C.ink2),
+                    width: '92px',
+                    textAlign: 'right',
+                    textDecoration: 'none',
+                  }}
+                >
+                  {shortHash(t.hash)}
+                </a>
+              ) : (
+                <span style={{ ...mono(10.5, C.ink3), width: '92px', textAlign: 'right' }}>—</span>
+              )}
               <span style={{ ...label(9, C.ink3, '0.16em'), width: '78px', textAlign: 'right' }}>
                 {t.when}
               </span>

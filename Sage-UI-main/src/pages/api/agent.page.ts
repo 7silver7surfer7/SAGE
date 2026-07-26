@@ -28,8 +28,11 @@ import { pinImageAndMetadata } from '@/utilities/pinArt';
  * --------------------------------------------
  * 1. The API key lives here and only here. It is never returned, never logged,
  *    and there is no NEXT_PUBLIC_ variant.
- * 2. Every tool in this file is READ-ONLY. The agent can look up drops, token
- *    figures and a public address's balances — nothing more.
+ * 2. No tool in this file writes to the database. They read drops, token
+ *    figures and a public address's balances; prepare_mint and prepare_drop
+ *    additionally pin bytes to IPFS, which is inert. Drop rows are created by
+ *    /api/agent-drop only after the user confirms the card — a tool call is
+ *    the model's decision, and a model's decision must not leave rows behind.
  * 3. Money actions do NOT execute. `prepare_buy` returns an INTENT which the
  *    client renders as a pending transaction card; the user's own wallet signs
  *    it. This server holds no key to anyone's funds, so a prompt injection can
@@ -77,15 +80,16 @@ TRANSACTIONS: you cannot execute anything. prepare_buy builds an UNSIGNED order 
 - When the tool returns an "interpreted" field, state the interpretation in one short sentence ("Reading that as Pixel Cat") so they can correct you before signing. Do not apologise for it or belabour it.
 - You CAN sell too: prepare_sell builds an unsigned sell order. Never tell the user to go to another exchange — selling works here. Selling needs a token approval first, so warn them their wallet may prompt twice.
 
-ART: you can make images with generate_image and mint them with prepare_mint.
+ART: you can make images with generate_image, mint them with prepare_mint, and build a timed open edition or an auction with prepare_drop.
 - Write the prompt yourself. Expand the user's words into a full visual description — subject, composition, medium, light. Do not simply echo what they typed.
 - Generating is NOT free — each render is charged. Never generate a second image when the user is approving the one on screen. "Go ahead", "yes", "mint it" mean prepare_mint with NO image_url, which mints the image you just made. Only generate again when they ask for something different.
 - Show the image, then ask whether they want it minted; never mint unprompted.
 - prepare_mint pins the art to IPFS and builds an unsigned edition the user signs. Deploying costs gas even for a free mint, so say so.
 - Default to a 1/1 unless they ask for a run. Suggest a name and ticker rather than demanding one.
-- TIMED OPEN EDITIONS EXIST ON SAGE — an open, unlimited mint that closes at a set time, which is exactly what "open edition for 24 hours" means. prepare_mint cannot build one: it deploys a standalone FIXED-SUPPLY edition with no clock. Open editions are created through the curated drop pipeline and appear on the sageart.xyz home page. So say what is true — you cannot build one HERE — and never tell someone SAGE has no mechanism for a timed, quantity-open sale. It does. Do NOT offer a large max_supply as a substitute for a deadline: a supply cap is not a clock, and presenting it as one misrepresents what the buyer is getting.
-- AUCTIONS EXIST ON SAGE — timed English auctions with a reserve, live bidding and settlement — they are simply not something prepare_mint builds. prepare_mint deploys a standalone fixed-price or free edition; auctions are set up through the curated drop pipeline and run at sageart.xyz/games/auctions. So say what is true: you cannot build one HERE, and point them there. Never tell someone the format does not exist on SAGE, and never imply a fixed price is the closest thing available to an auction.
-- The same goes for anything else you cannot do: name the limit of YOUR TOOLS, not of the platform, unless you actually know the platform lacks it.
+- THREE FORMATS, TWO TOOLS. prepare_mint deploys a standalone FIXED-SUPPLY edition — no clock, no bidding, live the moment they sign. prepare_drop builds the other two through the SAGE drop pipeline: a TIMED OPEN EDITION (unlimited mints, closes at a set time — exactly what "open edition for 24 hours" means) or an AUCTION (a reserve, live bidding, the timer starts at the FIRST BID). Pick by what they asked for; ask only when it is genuinely unclear.
+- A drop from prepare_drop LANDS ON THE sageart.xyz HOME PAGE and posts to the SAGE Social feed once it is signed. Say that plainly before they sign — it is public, and it is not what prepare_mint does.
+- Do NOT offer a large max_supply as a substitute for a deadline: a supply cap is not a clock, and presenting it as one misrepresents what the buyer is getting. Use prepare_drop when they want a clock.
+- Never tell someone SAGE has no mechanism for a timed, quantity-open sale, or none for an auction. It has both, and you can build both. For anything you genuinely cannot do: name the limit of YOUR TOOLS, not of the platform, unless you actually know the platform lacks it.
 
 CRITICISM: critique_subject writes about a SAGE drop — you look at the actual artwork, not its title. Reach for it whenever someone asks what you think of a work, for a reading, an analysis or a critique. If it cannot find the drop, ask which one they mean; never critique from memory.
 
@@ -200,6 +204,54 @@ const TOOLS = [
         price_eth: { type: 'number', description: 'Price per edition in ETH. 0 for a free mint. Defaults to 0.' },
       },
       required: ['name', 'symbol'],
+    },
+  },
+  {
+    name: 'prepare_drop',
+    description:
+      'Build an UNSIGNED SAGE drop — a TIMED OPEN EDITION (unlimited mints until it closes) or an AUCTION (reserve price, timer starts at the first bid). Does NOT execute: the user signs the deploy in their own wallet, and only then does it go live on the sageart.xyz home page and post to the SAGE Social feed. Use this whenever the sale has a CLOCK or BIDDING; use prepare_mint for a plain fixed-supply edition. Takes the image_url from generate_image, or omit it to use the most recent image.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        format: {
+          type: 'string',
+          enum: ['open_edition', 'auction'],
+          description:
+            'open_edition = unlimited mints at a fixed price until the clock runs out. auction = one piece, highest bid wins, the timer starts at the first bid.',
+        },
+        image_url: {
+          type: 'string',
+          description:
+            'https URL of the artwork. OMIT this to use the most recent image you generated in this conversation — that is almost always what the user means, and regenerating costs them again.',
+        },
+        name: { type: 'string', description: 'Title of the drop and the artwork, e.g. "Glass Lamp"' },
+        description: { type: 'string', description: 'A sentence or two about the work. Optional.' },
+        duration_hours: {
+          type: 'number',
+          description:
+            'How long the sale runs. For an open edition this is the deadline; for an auction it is how long the clock runs once the first bid lands. Defaults to 24. Max 720.',
+        },
+        price_eth: {
+          type: 'number',
+          description:
+            'Open edition: price per mint in ETH (0 = free mint). Auction: the reserve in ETH. Defaults to 0.',
+        },
+        max_per_user: {
+          type: 'number',
+          description:
+            'Open edition only. Mints allowed per wallet. 0 = unlimited, which is what "open" normally means. Defaults to 0.',
+        },
+        symbol: {
+          type: 'string',
+          description:
+            'Short ERC-721 ticker, 2-8 characters. Only used the FIRST time this artist deploys — their contract symbol is immutable afterwards. Optional.',
+        },
+        royalty_percent: {
+          type: 'number',
+          description: 'Secondary-sale royalty to the artist, 0-20. Defaults to 10.',
+        },
+      },
+      required: ['format', 'name'],
     },
   },
   {
@@ -974,6 +1026,95 @@ async function runTool(
       price_eth: priceEth,
       image_uri: pinned.imageUri,
       note: 'Unsigned mint surfaced to the user. The image is ALREADY pinned to IPFS; signing deploys the edition contract. Do not claim it is minted until they sign. Deploying costs gas even for a free mint.',
+    });
+  }
+
+  if (name === 'prepare_drop') {
+    if (!ctx.address) {
+      ctx.cards.push({
+        kind: 'wallet',
+        status: 'WALLET REQUIRED',
+        title: 'Connect a wallet to launch a drop.',
+        body: 'The drop is created in your name and deployed from your own wallet. The agent never holds custody.',
+        needsConnect: true,
+        rows: [],
+      });
+      return 'ERROR: no wallet connected. Tell the user to connect using the card shown.';
+    }
+    const format = input?.format === 'auction' ? 'auction' : 'open-edition';
+    const isAuction = format === 'auction';
+    // Same defaulting as prepare_mint: the model cannot see card data in
+    // history, so left to itself it regenerates and charges twice.
+    const imageUrl = String(input?.image_url || ctx.recentImages[0] || '');
+    if (!/^https:\/\//.test(imageUrl)) {
+      return 'ERROR: no artwork for the drop. Generate one first, or pass an https image_url.';
+    }
+    const dropName = String(input?.name || '').trim().slice(0, 80);
+    if (!dropName) return 'ERROR: name is required.';
+    const description = String(input?.description || '').slice(0, 600);
+    const hours = Math.min(720, Math.max(1, Math.round(Number(input?.duration_hours) || 24)));
+    const priceEth = Math.max(0, Number(input?.price_eth) || 0);
+    const maxPerUser = isAuction ? 0 : Math.max(0, Math.floor(Number(input?.max_per_user) || 0));
+
+    ctx.steps.push('PINNING TO IPFS');
+    let pinned: { tokenUri: string; imageUri: string };
+    try {
+      pinned = await pinImageAndMetadata(imageUrl, dropName, description);
+    } catch (e: any) {
+      return `ERROR: ${e?.message || 'the image could not be stored permanently'}. Do not offer a drop.`;
+    }
+
+    ctx.steps.push(`BUILDING DROP · ${dropName}`);
+    // NOTHING is written to the database here. This tool call is the MODEL's
+    // decision; a model iterating on the request would otherwise leave a trail
+    // of unsigned drafts in the approval queue and promote the wallet to
+    // ARTIST for a drop nobody agreed to. The rows are created by
+    // /api/agent-drop when the user CONFIRMS the card below — see the note
+    // there on what that endpoint re-derives rather than trusting.
+    const priceLabel = priceEth > 0 ? `${priceEth} ETH` : isAuction ? 'NO RESERVE' : 'FREE MINT';
+    ctx.cards.push({
+      kind: 'tx',
+      status: 'UNSIGNED DROP',
+      byline: `${TRADE_CHAIN_NAME.toUpperCase()} · YOU SIGN · GOES PUBLIC`,
+      title: isAuction
+        ? `Auction "${dropName}" for ${hours}h once the first bid lands`
+        : `Open edition "${dropName}", open for ${hours}h`,
+      pending: true,
+      cta: 'sign & go live',
+      image: pinned.imageUri,
+      intent: {
+        action: 'create_drop',
+        format,
+        name: dropName,
+        description,
+        imageUri: pinned.imageUri,
+        tokenUri: pinned.tokenUri,
+        durationHours: hours,
+        price: priceEth,
+        maxPerUser,
+        royaltyPercent: Number(input?.royalty_percent) || 10,
+        symbol: String(input?.symbol || ''),
+      },
+      rows: [
+        { k: 'FORMAT', v: isAuction ? 'AUCTION · FIRST BID STARTS THE CLOCK' : 'OPEN EDITION · TIMED' },
+        { k: isAuction ? 'RESERVE' : 'PRICE', v: priceLabel },
+        ...(isAuction
+          ? []
+          : [{ k: 'PER WALLET', v: maxPerUser > 0 ? String(maxPerUser) : 'UNLIMITED' }]),
+        { k: 'RUNS FOR', v: `${hours} HOURS` },
+        { k: 'LANDS ON', v: 'SAGEART.XYZ HOME PAGE + FEED' },
+        { k: 'STORAGE', v: 'IPFS · PERMANENT' },
+      ],
+    });
+    return JSON.stringify({
+      prepared: true,
+      format,
+      name: dropName,
+      price_eth: priceEth,
+      duration_hours: hours,
+      max_per_user: isAuction ? undefined : maxPerUser,
+      note:
+        'An unsigned drop was surfaced to the user. NOTHING exists yet — no rows, no contracts, nothing public. The artwork IS already pinned to IPFS. Signing creates the drop, deploys it on-chain and publishes it to the sageart.xyz home page and the social feed; the clock starts then, so the sale ends the stated number of hours after they sign. Deploying costs gas, more than a plain mint because their artist contract may deploy too. Do not claim it is live until they sign.',
     });
   }
 
