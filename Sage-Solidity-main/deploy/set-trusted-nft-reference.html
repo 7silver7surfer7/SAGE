@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Set trustedNftReference — open self-serve drops</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    max-width: 760px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .sub { opacity: .78; margin-top: 0; }
+  .card { border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: .92rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; word-break: break-all; }
+  button { font-size: 1rem; padding: 12px 18px; border-radius: 10px;
+    border: 0; background: #0c9d68; color: #fff; cursor: pointer; margin-top: 12px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(128,128,128,.12); white-space: pre-wrap; font-size: .9rem; }
+  .warn { color: #b45309; } .err { color: #dc2626; } .ok { color: #0c9d68; }
+</style>
+</head>
+<body>
+  <h1>Set <code>trustedNftReference</code> 🔓</h1>
+  <p class="sub">This is the ONE remaining thing stopping a normal wallet from putting a
+  drop on sageart.xyz. Both game contracts gate creation with
+  <code>onlyAdminOrArtist</code>, which allows the NFT contract's artist —
+  <em>but only if</em> <code>_isTrustedNft()</code> passes, and that requires
+  <code>trustedNftReference</code> to be set. It is currently
+  <code>address(0)</code> on both, so the second clause is always false and the
+  modifier collapses to admin-only.</p>
+
+  <p class="sub">Two <code>setTrustedNftReference</code> transactions, signed by an admin
+  (<code>0x3E099aF007CaB8233D44782D8E6fe80FECDC321e</code>). The reference is only ever
+  read for its runtime <strong>codehash</strong> — never called into — so pointing it at a
+  real SageNFT deployed by the current factory makes every future
+  <code>deployByArtist</code> contract match.</p>
+
+  <button id="connectBtn">connect wallet</button>
+  <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
+  <div class="row"><span>role.admin</span><code id="isAdmin">—</code></div>
+
+  <div class="card">
+    <div class="row"><span>Reference SageNFT (codehash source)</span><code>0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1</code></div>
+    <div class="row"><span>OpenEdition</span><code id="oeCur">—</code></div>
+    <div class="row"><span>Auction</span><code id="auCur">—</code></div>
+    <button id="setBtn" disabled>set on both contracts</button>
+    <div class="status" id="status">Connect the admin wallet to read the current values.</div>
+  </div>
+
+<script>
+  const CHAIN_ID = '0x1237'; // 4663 (Robinhood Chain mainnet)
+  const STORAGE  = '0x43E26D8B5c559DECb09d65F325e1405589775BA2';
+  const OE       = '0x78cA991872839Bfa6223A41039E3895ce8eefF5D';
+  const AUCTION  = '0x83Eac0DCfd0bC5D52Edf4e631CdDb6C0e6438E03';
+  // A real SageNFT deployed BY THE CURRENT FACTORY (0x2DEEe3E6…), so its runtime
+  // code is byte-identical to anything deployByArtist mints from now on.
+  const REFERENCE = '0xc1Ba1Db8bfC2f22818ca69200e1870e1eb6792B1';
+  // keccak256("role.admin"), computed with ethers and checked against this file
+  // rather than typed from memory — the first draft of this page carried a
+  // wrong hash, which makes hasRole return false and disables the button
+  // forever with no hint as to why.
+  const ADMIN_ROLE = 'e303cb88ace8c9e6ba216f1aecb44b3206dcab364c60512ffc6cbc920a1bf9d1';
+  const SET_SEL     = '0xdaeec676'; // setTrustedNftReference(address)
+  const READ_SEL    = '0x29a9c277'; // trustedNftReference()
+  const HASROLE_SEL = '0x91d14854'; // hasRole(bytes32,address)
+
+  const $ = (id) => document.getElementById(id);
+  let account = null;
+
+  const pad = (addr) => addr.toLowerCase().replace('0x', '').padStart(64, '0');
+  const ZERO = '0x0000000000000000000000000000000000000000';
+
+  async function call(to, data) {
+    return await ethereum.request({ method: 'eth_call', params: [{ to, data }, 'latest'] });
+  }
+
+  async function refresh() {
+    try {
+      const [oe, au] = await Promise.all([call(OE, READ_SEL), call(AUCTION, READ_SEL)]);
+      const fmt = (r) => {
+        const a = '0x' + (r || '').slice(-40);
+        return a === ZERO ? a + '  (UNSET — artists blocked)' : a;
+      };
+      $('oeCur').textContent = fmt(oe);
+      $('auCur').textContent = fmt(au);
+    } catch (e) {
+      $('status').textContent = 'Could not read the contracts: ' + (e.message || e);
+    }
+  }
+
+  $('connectBtn').onclick = async () => {
+    if (!window.ethereum) { $('status').textContent = 'No wallet found.'; return; }
+    try {
+      const accts = await ethereum.request({ method: 'eth_requestAccounts' });
+      account = accts[0];
+      $('connected').textContent = account;
+      const chain = await ethereum.request({ method: 'eth_chainId' });
+      if (chain !== CHAIN_ID) {
+        await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
+      }
+      const res = await call(STORAGE, HASROLE_SEL + ADMIN_ROLE + pad(account));
+      const ok = /1$/.test(res);
+      $('isAdmin').textContent = ok ? 'yes' : 'NO — this wallet cannot set it';
+      $('isAdmin').className = ok ? 'ok' : 'err';
+      $('setBtn').disabled = !ok;
+      await refresh();
+      $('status').textContent = ok
+        ? 'Ready. This sends TWO transactions — one per contract.'
+        : 'Connect a wallet holding role.admin on SageStorage.';
+    } catch (e) {
+      $('status').textContent = 'Connect failed: ' + (e.message || e);
+    }
+  };
+
+  $('setBtn').onclick = async () => {
+    $('setBtn').disabled = true;
+    const data = SET_SEL + pad(REFERENCE);
+    for (const [name, to] of [['OpenEdition', OE], ['Auction', AUCTION]]) {
+      try {
+        $('status').textContent = `Signing ${name}…`;
+        const tx = await ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [{ from: account, to, data }],
+        });
+        $('status').textContent += `\n${name}: ${tx}`;
+      } catch (e) {
+        $('status').textContent += `\n${name} FAILED: ${(e.message || e)}`;
+      }
+    }
+    await refresh();
+    $('status').textContent += '\nDone — re-read above. Both should now show the reference address.';
+    $('setBtn').disabled = false;
+  };
+</script>
+</body>
+</html>
