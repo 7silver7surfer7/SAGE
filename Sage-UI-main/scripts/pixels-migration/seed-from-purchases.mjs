@@ -484,22 +484,33 @@ async function main() {
   }
 
   const accounts = [...earned.keys()].filter((a) => (earned.get(a) ?? 0n) > 0n);
-  // 8 at a time: the ledger sits behind a SHARED 15-connection Supabase pool
-  // that this repo has already tipped into EMAXCONNSESSION once. Concurrency
-  // here is about not serialising 3,000 round trips from a laptop, not about
-  // saturating the pool.
+  /**
+   * FOUR, AND THE TWO READS INSIDE ARE SEQUENTIAL. Count connections, not
+   * workers.
+   *
+   * This was 8 workers each doing its two reads in a Promise.all — 16
+   * simultaneous connections against a pool whose size is 15. It failed
+   * exactly as the previous comment on this line warned it might:
+   * "EMAXCONNSESSION: max clients reached in session mode - max clients are
+   * limited to pool_size: 15". Writing the hazard down is not the same as
+   * doing the arithmetic.
+   *
+   * Worse than a failed script: this pool is SHARED WITH THE LIVE SITE, so an
+   * offline maintenance job that saturates it takes the app down with it. A
+   * batch job gets the leftovers, not the majority. Four sequential workers is
+   * four connections — twice the original's two, a quarter of the ceiling, and
+   * still ~4x faster than serialising 3,000 round trips.
+   */
   const rows = (
     await mapLimit(
       accounts,
-      8,
+      4,
       async (acct) => {
-        const [account, journal] = await Promise.all([
-          prisma.pixelAccount.findUnique({ where: { walletAddress: acct } }),
-          prisma.pixelJournal.findMany({
-            where: { walletAddress: acct },
-            select: { delta: true, kind: true },
-          }),
-        ]);
+        const account = await prisma.pixelAccount.findUnique({ where: { walletAddress: acct } });
+        const journal = await prisma.pixelJournal.findMany({
+          where: { walletAddress: acct },
+          select: { delta: true, kind: true },
+        });
         const sumAll = journal.reduce((s, j) => s + j.delta, 0n);
         const accrualRows = journal
           .filter((j) => ['bank', 'snapshot', 'seed', 'seed:v2'].includes(j.kind))
