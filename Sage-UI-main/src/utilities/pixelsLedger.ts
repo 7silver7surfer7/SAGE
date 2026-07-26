@@ -378,11 +378,40 @@ async function journalBank(tx: any, address: string, stream: bigint, reason: str
 export async function dbPointsOf(address: string): Promise<bigint> {
   const acct = await prisma.pixelAccount.findUnique({ where: { walletAddress: address } });
   if (!acct) return BigInt(0);
-  const live = await liveSageWhole(address).catch(() => acct.checkpointSage);
+  /**
+   * ON A FAILED READ, REPORT WHAT A SPEND WOULD ACTUALLY ALLOW.
+   *
+   * This substituted `checkpointSage` for the live balance, which makes the
+   * min() a no-op and reports the full optimistic stream — while the spend
+   * path, unable to read the balance, banks nothing and allows only `settled`.
+   * The two disagreed in the user's face: a collect refused by the ledger, and
+   * the error message built from this function, produced verbatim "not enough
+   * pixels (need 500, have 707)".
+   *
+   * Returning `settled` alone matches dbTransferPixels exactly — same failure,
+   * same answer — so a refusal is never contradicted by the number beside it.
+   */
+  const live = await liveSageWhole(address).catch(() => null);
+  if (live === null) return acct.settled;
   return (
     acct.settled +
     streamOf(live, acct.checkpointSage, acct.lastSync, Date.now(), acct.streamDust ?? BigInt(0))
   );
+}
+
+/**
+ * The wallets whose balances count toward this account — the sign-in wallet
+ * plus every verified link. Exported because the collect hold-gate needs the
+ * same answer the ledger uses: it read the sign-in wallet alone, so a holder
+ * whose 25,000,000 SAGE sits in a linked Privy wallet accrued 25,000/day
+ * correctly and was refused every pixel-priced collect with "hold at least 1
+ * SAGE" — which is the exact situation linking exists to support.
+ */
+export async function walletsForAccount(address: string): Promise<string[]> {
+  const extra = await prisma.linkedWallet
+    .findMany({ where: { walletAddress: address }, select: { address: true } })
+    .catch(() => [] as { address: string }[]);
+  return [address, ...extra.map((r) => r.address)];
 }
 
 export async function dbDailyRate(address: string): Promise<bigint> {
@@ -572,11 +601,21 @@ export async function dbCreditPixels(to: string, amount: bigint, reason: string)
 
 /**
  * The whole pixels leaderboard from ONE SQL read — no RPC. Uses each
- * account's checkpoint as the live-balance proxy: the bank sweep
- * re-checkpoints within ~10min of any balance change, so a freshly-traded
- * wallet's row is off by at most minutes of accrual until the next sweep —
- * invisible at leaderboard granularity, and worth it: the per-wallet
- * RPC version pinned cold instances for 30-60s.
+ * account's checkpoint as the live-balance proxy, which makes the min() in
+ * streamOf a no-op: a wallet that has SOLD keeps showing its old rate here
+ * until a sweep re-checkpoints it. Worth it — the per-wallet RPC version
+ * pinned cold instances for 30-60s — but the window is not what this comment
+ * used to claim.
+ *
+ * It said "~10min", which was the cron cadence, not the rotation. The sweep
+ * takes 200 accounts per call from a ~482-row book, so a full rotation is
+ * 30-40 minutes, and a just-swept wallet goes to the BACK of the queue. The
+ * freshness arm that was supposed to shortcut that for active traders watched
+ * the wrong token entirely (see dbBankSweep), so until the Transfer indexer
+ * lands, "minutes" should be read as "up to a rotation".
+ *
+ * Display only — no pixel is mis-credited by it; the ledger itself always
+ * reads the live balance before it writes.
  */
 export async function dbLeaderboardRows(): Promise<
   { address: string; net: bigint; rate: bigint }[]

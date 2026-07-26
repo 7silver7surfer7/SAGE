@@ -29,7 +29,12 @@ import {
   pixelsDailyRate,
   transferPixelsOnChain,
 } from '@/utilities/serverWallet';
-import { pixelsSource, dbBankSweep, dbLeaderboardRows } from '@/utilities/pixelsLedger';
+import {
+  pixelsSource,
+  dbBankSweep,
+  dbLeaderboardRows,
+  walletsForAccount,
+} from '@/utilities/pixelsLedger';
 
 /**
  * SAGE Social — a wallet-native BlueSky clone. Identity is the SIWE wallet
@@ -1891,7 +1896,17 @@ async function collectPost(
         ['function balanceOf(address) view returns (uint256)'],
         new e.providers.StaticJsonRpcProvider(parameters.RPC_URL)
       );
-      const bal = Number(e.utils.formatEther(await token.balanceOf(r.walletAddress)));
+      // ACROSS LINKED WALLETS, like the ledger does. This read the sign-in
+      // wallet alone, which contradicts the premise of linking: holdings live
+      // in wallets the holder never signs in with. A holder with 25,000,000
+      // SAGE in a linked Privy wallet accrued 25,000 pixels/day correctly and
+      // was then refused every pixel-priced collect with "hold at least 1 SAGE"
+      // — earning a currency they could not spend.
+      const wallets = await walletsForAccount(r.walletAddress);
+      const balances = await Promise.all(wallets.map((w) => token.balanceOf(w)));
+      const bal = Number(
+        e.utils.formatEther(balances.reduce((s: any, b: any) => s.add(b), e.BigNumber.from(0)))
+      );
       const minHold = process.env.NEXT_PUBLIC_APP_MODE === 'production' ? 1 : 0;
       if (bal < minHold) {
         await releaseClaim();
