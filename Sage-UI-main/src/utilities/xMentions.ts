@@ -353,8 +353,34 @@ export function isAddressed(m: IncomingMention): boolean {
   );
   if (new RegExp(`@${handle}\\b`, 'i').test(body) && !referential.test(body)) return true;
 
-  const firstHandle = (lead.match(/@(\w+)/) || [])[1];
-  if (firstHandle && firstHandle.toLowerCase() === handle) return true;
+  /**
+   * ANYWHERE in the leading handle block, not just first.
+   *
+   * This checked only the FIRST handle, which quietly made the bot unreachable
+   * from the most ordinary way to summon it. Reply to somebody else's tweet
+   * and tag us, and X auto-prepends the parent author's handle — so the text
+   * that arrives is "@vladtenev @sageartxyz do some advanced math for us" and
+   * our handle is in second position. The user typed us first; X put someone
+   * else in front of us.
+   *
+   * The failure was silent and looked like nothing: the mention was read,
+   * recorded ignored_not_addressed, and the cursor moved on. It only surfaced
+   * because a human noticed a reply that never came. Every chat-shaped request
+   * made this way had been dropped — generate/restyle/critique survived only
+   * because the body check below rescues them.
+   *
+   * RESIDUAL, accepted knowingly: X also auto-prepends us when we are further
+   * up a thread somebody else is replying to, and that shape is
+   * indistinguishable from a typed summons without fetching the parent tweet
+   * to see whether we are actually in it. Telling them apart costs a read per
+   * ambiguous mention. Not paying that yet, because the credit gate bounds the
+   * damage — only accounts linked to a funded wallet are ever answered, so an
+   * unwanted reply can only land in a thread involving someone who opted in.
+   * If it becomes a nuisance, the fix is to pass the parent's participants in
+   * here, not to go back to reading one handle.
+   */
+  const leadHandles = (lead.match(/@(\w+)/g) || []).map((h) => h.slice(1).toLowerCase());
+  if (leadHandles.includes(handle)) return true;
 
   // Mentioned mid-thread, so the handle alone proves nothing. Let the BODY
   // decide: replying to an artwork and tagging us is the natural way to ask
