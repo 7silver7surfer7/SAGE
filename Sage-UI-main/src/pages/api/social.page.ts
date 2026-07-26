@@ -7,7 +7,7 @@ import { isUserWalletCode } from '@/utilities/accountKind';
 import { extractFirstUrl, fetchLinkPreview } from '@/utilities/linkPreview';
 import prisma from '@/prisma/client';
 import { poolKeyFor, quoteV4Buy } from '@/utilities/uniswapV4';
-import { reconcileEditions, autoReconcileEditions } from '@/utilities/editionReconciler';
+import { reconcileEditions, autoReconcileEditions, isTrustedArtUrl } from '@/utilities/editionReconciler';
 import {
   parameters,
   SAGE_PRICE_TOKEN_ADDRESS,
@@ -3786,7 +3786,16 @@ async function recordEditionLaunch(
   if (!launcher) return res.status(400).json({ error: 'edition launches are not enabled here' });
   if (!edition || !name || !symbol || !imageUrl || !launchTxHash)
     return res.status(400).json({ error: 'editionAddress, name, symbol, imageUrl, launchTxHash required' });
-  if (!isOwnSocialMediaUrl(imageUrl))
+  // Art for an edition can be either of two first-party things, and this used
+  // to accept only one. The launch modal uploads to S3; the AI chat pins to
+  // Filebase and passes back an ipfs.filebase.io URL (agent.page.ts, via
+  // pinImageAndMetadata). isOwnSocialMediaUrl matches S3 only, so EVERY agent
+  // mint was rejected here with a 400 — deterministically, not intermittently —
+  // and the client swallowed it. That is the actual reason the operator's two
+  // 1/1s existed on-chain and nowhere else; the RPC-lag race below is a real
+  // bug but was never the one firing. isTrustedArtUrl accepts both, and still
+  // nothing else.
+  if (!isTrustedArtUrl(imageUrl))
     return res.status(400).json({ error: 'edition art must be uploaded through SAGE Social' });
   try {
     const { ethers } = await import('ethers');

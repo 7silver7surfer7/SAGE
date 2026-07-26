@@ -55,7 +55,7 @@ const URI_SLOT = 6;
  *  Both are first-party: Filebase is where the app pins edition metadata (see
  *  uploadJsonToFilebase), and S3_BUCKET is its own media mirror. Anything else
  *  is a URL an untrusted launcher put on-chain, and is never fetched. */
-function isTrustedArtUrl(url: unknown): url is string {
+export function isTrustedArtUrl(url: unknown): url is string {
   if (typeof url !== 'string' || url.length > 500) return false;
   if (url.startsWith('https://ipfs.filebase.io/ipfs/')) return true;
   const bucket = process.env.S3_BUCKET;
