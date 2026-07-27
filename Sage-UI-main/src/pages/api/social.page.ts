@@ -4343,6 +4343,17 @@ async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: 
       });
     }
     rows.sort((a, b) => b.bal - a.bal);
+    // Persist so the NEXT cold instance has something true to serve. Awaited
+    // rather than fire-and-forget: this already ran ~45 RPC rounds, one upsert
+    // is nothing beside it, and silently losing the write is how the cache
+    // stays permanently empty on a service that redeploys often.
+    await prisma.tokenHoldersCache
+      .upsert({
+        where: { tokenAddress: token },
+        create: { tokenAddress: token, rows: rows as any, at: new Date() },
+        update: { rows: rows as any, at: new Date() },
+      })
+      .catch((e) => console.error('holders cache put failed', e));
     return rows;
   };
   const cached = holdersCache.get(key);
@@ -4360,9 +4371,7 @@ async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: 
   // with candidates now spanning transfer recipients too (~900 wallets), a
   // cold rebuild is 45+ RPC rounds and pinned fresh instances for 30-60s
   // (observed live as "token page takes forever" right after deploys). Kick
-  // the real sweep off in the background and serve the cheap ledger
-  // approximation (one SQL, no RPC) for the seconds until it lands; its
-  // known flaws (aggregator-split phantoms) live for under a minute.
+  // the real sweep off in the background and answer from the shared cache.
   if (!holdersRefreshing.has(key)) {
     holdersRefreshing.add(key);
     computeFresh()
@@ -4370,6 +4379,37 @@ async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: 
       .catch((e) => console.error('holders cold build failed', e))
       .finally(() => holdersRefreshing.delete(key));
   }
+  /**
+   * The last VERIFIED list, shared by every instance. Served however old it is:
+   * the sweep above is already running, and a holder list minutes behind is
+   * ordinary, while a wrong one is a bug someone reports.
+   */
+  const shared = await prisma.tokenHoldersCache
+    .findUnique({ where: { tokenAddress: token } })
+    .catch(() => null);
+  if (shared) {
+    const rows = (shared.rows as unknown as { addr: string; bal: number }[]) || [];
+    holdersCache.set(key, { rows, at: shared.at.getTime() });
+    return rows;
+  }
+
+  /**
+   * Nothing verified has ever been computed for this token, so this is its
+   * first page view. Deriving balances from the trade ledger is only honest
+   * BEFORE a token graduates, while every trade still goes through us. After
+   * graduation trading moves to the pool, SocialTokenTrade stops seeing most of
+   * it, and the nets become fiction — $SAGE's ledger named a single holder of
+   * 1.08% of supply whose real balance was zero, and that is what the token
+   * page showed after every deploy.
+   *
+   * An empty list for the few seconds until the sweep lands is a page that
+   * looks like it is still loading. A phantom is a page that lies.
+   */
+  const launch = await prisma.socialTokenLaunch
+    .findUnique({ where: { tokenAddress: token }, select: { poolSyncedBlock: true } })
+    .catch(() => null);
+  if (launch?.poolSyncedBlock) return [];
+
   const trades = await tokenLedger(token);
   const nets = new Map<string, number>();
   for (const t of trades) {

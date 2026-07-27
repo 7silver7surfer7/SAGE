@@ -1111,6 +1111,24 @@ model DexIndexState {
   cursor Int    @default(0)
 }
 
+// Cross-instance cache of the VERIFIED holder list — the balanceOf-checked one,
+// not the trade-ledger guess.
+//
+// The verified sweep is ~45 RPC rounds, so it cannot run on the request path and
+// its result lived only in each instance's memory. Every deploy replaced those
+// instances, and a cold one answered from the trade ledger instead — which for a
+// graduated token is fiction, because trading moved to the pool and
+// SocialTokenTrade stopped seeing it. $SAGE showed ONE holder of 1.08% of supply
+// whose real balance was zero. Persisting the last good list means a cold
+// instance serves something true and slightly old rather than something fresh
+// and wrong.
+model TokenHoldersCache {
+  tokenAddress String   @id @db.Char(42)
+  // [{ addr, bal }], highest balance first — the exact shape the page renders
+  rows         Json
+  at           DateTime @default(now())
+}
+
 // cross-instance cache for the DexScreener global lookup: one row per query,
 // shared by every Cloud Run instance (the in-memory memo triples upstream
 // spend at 3 instances), and failures cache too (ok=false) so a 429 storm
