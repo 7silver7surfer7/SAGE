@@ -553,7 +553,7 @@ async function insertAuction(data: any, response: NextApiResponse) {
       data: {
         Drop: { connect: { id: dropId } },
         // contractAddress stays null until the on-chain createAuction runs —
-        // deployAuctions uses it as the "already deployed" marker, so setting
+        // dropDeployServer uses it as the "already deployed" marker, so setting
         // it here made the deploy step silently skip every auction.
         minimumPrice: data.minPrice,
         startTime: new Date(Number(data.startDate) * 1000),
@@ -591,7 +591,7 @@ async function insertOpenEdition(data: any, response: NextApiResponse) {
     var record = await prisma.openEdition.create({
       data: {
         Drop: { connect: { id: dropId } },
-        // null until on-chain createOpenEdition runs — deployOpenEditions
+        // null until on-chain createOpenEdition runs — dropDeployServer
         // treats a non-null contractAddress as "already deployed" and skips
         costTokens: toNumber(data.costTokens),
         costPoints: toNumber(data.costPoints),

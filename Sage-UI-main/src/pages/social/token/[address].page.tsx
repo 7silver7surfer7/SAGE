@@ -69,10 +69,24 @@ export default function TokenDetailPage() {
   // live price straight from the chain-event tape — beats the 10s poll
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [tradesOffset, setTradesOffset] = useState(0);
+  // Mirrored into state because the poll interval is an ARGUMENT to the query
+  // that produces it — reading holdersPage inside its own declaration does not
+  // compile. The effect below keeps them in step.
+  const [holdersPending, setHoldersPending] = useState(false);
   const { data: holdersPage, isFetching: loadingHolders } = useGetTokenHoldersPageQuery(
     { address, offset: holdersOffset },
-    { skip: !address }
+    {
+      skip: !address,
+      // While the server reports the verified sweep is still running, keep
+      // asking — otherwise "Counting holders…" is where the page stays until
+      // someone reloads it, which is a nicer-looking version of the same lie.
+      // Stops on its own the moment real rows arrive.
+      pollingInterval: holdersPending ? 5000 : 0,
+    }
   );
+  useEffect(() => {
+    setHoldersPending(!!holdersPage?.pending);
+  }, [holdersPage?.pending]);
   const { data: tradesPage, isFetching: loadingTrades } = useGetTokenTradesPageQuery(
     { address, offset: tradesOffset },
     { skip: !address }
@@ -583,6 +597,10 @@ export default function TokenDetailPage() {
                   </span>
                 </div>
               ))
+            ) : holdersPage?.pending ? (
+              /* The verified balance sweep is still running. Saying "no holders"
+                 here was wrong on a token with 126 of them. */
+              <p className='social__empty'>Counting holders…</p>
             ) : (
               <p className='social__empty'>No holders yet.</p>
             )}

@@ -576,7 +576,9 @@ const socialApi = baseApi.injectEndpoints({
       providesTags: (_r, _e, arg) => [{ type: 'SocialProfile', id: `tok-${arg.address}` }],
     }),
     getTokenHoldersPage: builder.query<
-      { holders: TokenHolder[]; nextOffset: number | null },
+      // pending: the verified sweep has not finished, so an empty list here
+      // means "not counted yet", not "nobody holds this"
+      { holders: TokenHolder[]; nextOffset: number | null; pending?: boolean },
       { address: string; offset?: number }
     >({
       query: ({ address, offset }) => ({

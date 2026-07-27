@@ -138,13 +138,13 @@ export async function createAgentDrop(input: AgentDropInput): Promise<AgentDropR
       // Social-launcher economics (99/1) rather than the curated marketplace
       // split: this drop came from a creator through the agent, not from
       // curation, so it should not silently take the marketplace's cut. It is
-      // also what deployAuctions/deployOpenEditions read to stamp that rate.
+      // also what dropDeployServer reads to stamp that rate.
       isSocial: true,
       NftContract: { connect: { artistAddress: artist } },
     },
   });
 
-  // metadataPath is the ON-CHAIN tokenURI (deployOpenEditions/deployAuctions
+  // metadataPath is the ON-CHAIN tokenURI (dropDeployServer
   // pass it as nftUri); the image fields are what the site renders.
   const nft = {
     name,
@@ -160,13 +160,13 @@ export async function createAgentDrop(input: AgentDropInput): Promise<AgentDropR
     const auction = await prisma.auction.create({
       data: {
         Drop: { connect: { id: drop.id } },
-        // contractAddress stays NULL: deployAuctions treats a non-null value
+        // contractAddress stays NULL: dropDeployServer treats a non-null value
         // as "already deployed" and would skip this auction entirely.
         // minimumPrice is parseEther'd at deploy, so it must be a decimal
         // STRING and never null.
         minimumPrice: String(price),
         startTime,
-        // The auction contract starts its clock at the FIRST BID; deployAuctions
+        // The auction contract starts its clock at the FIRST BID; dropDeployServer
         // derives `duration` from these two, so the window is what encodes the
         // requested length.
         endTime,

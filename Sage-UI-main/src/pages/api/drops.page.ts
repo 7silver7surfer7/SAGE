@@ -599,7 +599,7 @@ async function updateOpenEditionContractAddress(
   console.log(`updateOpenEditionContractAddress(${id}, ${contractAddress}, voucher=${voucherGated})`);
   try {
     // the on-chain OpenEdition struct's `id` is this row's DB id (see
-    // deployOpenEditions in dropsReducer.ts), so editionId == id once deployed
+    // dropDeployServer.ts), so editionId == id once deployed
     const result = await prisma.openEdition.update({
       where: { id },
       data: { contractAddress, editionId: id, voucherGated },

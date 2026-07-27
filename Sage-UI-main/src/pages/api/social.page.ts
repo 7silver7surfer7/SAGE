@@ -4292,6 +4292,17 @@ async function cachedTransferees(token: string): Promise<{ address: string }[]> 
 // only ever RECEIVED tokens appear too. Same stale-while-revalidate shape as
 // pixelsLeaderboard: any warm cache answers instantly, one background refresh
 // per instance past the TTL, and only a cold instance pays the sweep inline.
+/**
+ * "We don't know yet" — NOT "there are none".
+ *
+ * Returning an empty array for a graduated token with nothing cached fixed one
+ * lie by telling a smaller one: the page said "No holders yet." about a token
+ * with 126 of them, because the verified sweep had not finished. An unknown has
+ * to travel as an unknown all the way to the UI, or every layer downstream is
+ * free to render it as a fact.
+ */
+class HoldersPending extends Error {}
+
 const holdersCache = new Map<string, { rows: { addr: string; bal: number }[]; at: number }>();
 const holdersRefreshing = new Set<string>();
 async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: number }[]> {
@@ -4408,7 +4419,7 @@ async function liveVerifiedHolders(token: string): Promise<{ addr: string; bal: 
   const launch = await prisma.socialTokenLaunch
     .findUnique({ where: { tokenAddress: token }, select: { poolSyncedBlock: true } })
     .catch(() => null);
-  if (launch?.poolSyncedBlock) return [];
+  if (launch?.poolSyncedBlock) throw new HoldersPending();
 
   const trades = await tokenLedger(token);
   const nets = new Map<string, number>();
@@ -4427,7 +4438,18 @@ async function getTokenHoldersPage(req: NextApiRequest, res: NextApiResponse) {
   if (!token) return res.status(400).json({ error: 'bad address' });
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const limit = Math.min(50, Number(req.query.limit) || 25);
-  const all = await liveVerifiedHolders(token);
+  let all: { addr: string; bal: number }[];
+  try {
+    all = await liveVerifiedHolders(token);
+  } catch (e) {
+    // The sweep is running; we have nothing verified yet. Say so, so the page
+    // can show that it is counting rather than assert the token has no holders.
+    if (e instanceof HoldersPending) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ holders: [], nextOffset: null, pending: true });
+    }
+    throw e;
+  }
   const page = all.slice(offset, offset + limit);
   const cards = await userCards(page.map((h) => h.addr));
   res.setHeader('Cache-Control', 'no-store');
