@@ -50,6 +50,18 @@
   first for that reason. Only the multisig can sign it: <code>role.minter</code>'s role-admin
   is <code>DEFAULT_ADMIN_ROLE</code>, which the server key deliberately does not hold.</p>
 
+  <p class="sub"><strong>And one more, for the resume path.</strong>
+  <code>createCollectionWithNewNft</code> needs no <code>trustedNftReference</code> — it
+  deploys the NFT itself, so there is no caller-supplied address to validate, which is why a
+  random wallet already simulates fine. Plain <code>createCollection</code> does need it:
+  <code>onlyAdminOrArtist</code> falls back to <code>_isTrustedNft</code> on a supplied
+  contract, and while the reference is <code>address(0)</code> that clause is dead and the
+  modifier collapses to admin-only. That is exactly the path an artist hits when their
+  collection deployed its contract but died before registering — they cannot retry their own
+  drop. OpenEdition and Auction have had this set for a while; SageCollection was missed.
+  The value is a real SageNFT read only for its runtime <strong>codehash</strong>, never
+  called into.</p>
+
   <button id="connectBtn">connect wallet</button>
   <div class="row"><span>Connected wallet</span><code id="connected">not connected</code></div>
   <div class="row"><span>role.admin</span><code id="isAdmin">—</code></div>
@@ -59,10 +71,11 @@
     <div class="row"><span>SageStorage</span><code>0x43E26D8B5c559DECb09d65F325e1405589775BA2</code></div>
     <div class="row"><span>current <code>nftDeployer</code></span><code id="curDeployer">—</code></div>
     <div class="row"><span>SageCollection has <code>role.minter</code></span><code id="curMinter">—</code></div>
+    <div class="row"><span><code>trustedNftReference</code></span><code id="curRef">—</code></div>
     <div class="row"><span>existing deployer (server's, untouched)</span><code>0xce955740293D251019cAF1A5f00751d465962A0f</code></div>
   </div>
 
-  <button id="goBtn" disabled>grant + deploy + wire (up to 3 transactions)</button>
+  <button id="goBtn" disabled>set reference + grant + deploy + wire (up to 4 transactions)</button>
   <div class="status" id="status">connect an admin wallet to begin.</div>
 
 <script>
@@ -75,6 +88,13 @@
   const ALLOWEDCALLER_SEL = '0x3895d938'; // allowedCaller()
   const HASROLE_SEL = '0x91d14854'; // hasRole(bytes32,address)
   const GRANTROLE_SEL = '0x2f2ff15d'; // grantRole(bytes32,address)
+  const TRUSTEDREF_SEL = '0x29a9c277'; // trustedNftReference()
+  const SETTRUSTEDREF_SEL = '0xdaeec676'; // setTrustedNftReference(address)
+  /* Any genuinely-deployed SageNFT — read ONLY for its runtime codehash, never
+     called into. This is the same one OpenEdition and Auction already use, and
+     its codehash (0x2dadca49…) is byte-identical to what DedicatedNftDeployer
+     produces, verified against the live SUPERRARE per-drop contract. */
+  const NFT_REFERENCE = '0xA38f5a4a4414ccdd44C99e1AC69b4d4fF317b801';
   // keccak256("role.admin") / keccak256("role.minter")
   const ROLE_ADMIN = 'e303cb88ace8c9e6ba216f1aecb44b3206dcab364c60512ffc6cbc920a1bf9d1';
   const ROLE_MINTER = '43c12360602d49748153591f2df5a853821ec8410115f225b90a7a49bd5d2bb9';
@@ -121,6 +141,10 @@
       const hasM = /1$/.test(m || '');
       $('curMinter').textContent = hasM ? 'yes' : 'NO — collection mints would revert "No minting rights"';
       $('curMinter').className = hasM ? 'ok' : 'err';
+      const ref = '0x' + (await call(COLLECTION, TRUSTEDREF_SEL)).slice(-40);
+      const okRef = ref.toLowerCase() === NFT_REFERENCE.toLowerCase();
+      $('curRef').textContent = okRef ? ref : (ref === ZERO ? ref + '  (UNSET — the resume path is admin-only)' : ref);
+      $('curRef').className = okRef ? 'ok' : 'err';
     } catch (e) { $('curDeployer').textContent = 'read failed: ' + e.message; }
   }
   refresh();
@@ -163,11 +187,41 @@
       // and then revert at the first mint with "No minting rights". Only the
       // multisig can grant it — role.minter's role-admin is DEFAULT_ADMIN_ROLE,
       // which the server key deliberately does not hold.
+      // ---- 0/4 trustedNftReference.
+      // createCollectionWithNewNft does not need this — it deploys the NFT
+      // itself, so there is no untrusted address to validate, which is why a
+      // random wallet already simulates fine. Plain createCollection DOES:
+      // onlyAdminOrArtist falls back to _isTrustedNft on a caller-supplied
+      // contract, and with the reference at address(0) that clause is dead and
+      // the modifier collapses to admin-only. That is the RESUME path — an
+      // artist whose collection deployed its contract but died before
+      // registering cannot retry their own drop. OpenEdition and Auction have
+      // had this set for a while; SageCollection was simply missed.
+      const curRef = '0x' + (await call(COLLECTION, TRUSTEDREF_SEL)).slice(-40);
+      if (curRef.toLowerCase() === NFT_REFERENCE.toLowerCase()) {
+        log('\n0/4 trustedNftReference already set — skipping.');
+      } else {
+        log('\n0/4 setTrustedNftReference(' + NFT_REFERENCE + ')…');
+        const hR = await window.ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [{ from: account, to: COLLECTION, data: SETTRUSTEDREF_SEL + pad(NFT_REFERENCE) }],
+        });
+        log('    tx ' + hR + ' — waiting…');
+        const rR = await waitForReceipt(hR);
+        if (!rR) return log('    TIMED OUT. Check the explorer before re-running.');
+        if (parseInt(rR.status, 16) !== 1) return log('    REVERTED. Nothing else attempted.');
+        const nowRef = '0x' + (await call(COLLECTION, TRUSTEDREF_SEL)).slice(-40);
+        if (nowRef.toLowerCase() !== NFT_REFERENCE.toLowerCase()) {
+          return log('    tx succeeded but the reference reads ' + nowRef + ' — STOPPING.');
+        }
+        log('    trustedNftReference set.');
+      }
+
       const already = /1$/.test(await call(STORAGE, HASROLE_SEL + ROLE_MINTER + pad(COLLECTION)) || '');
       if (already) {
-        log('\n1/3 SageCollection already holds role.minter — skipping.');
+        log('\n1/4 SageCollection already holds role.minter — skipping.');
       } else {
-        log('\n1/3 granting role.minter to SageCollection…');
+        log('\n1/4 granting role.minter to SageCollection…');
         const h0 = await window.ethereum.request({
           method: 'eth_sendTransaction',
           params: [{ from: account, to: STORAGE, data: GRANTROLE_SEL + ROLE_MINTER + pad(COLLECTION) }],
@@ -181,8 +235,8 @@
         log('    role.minter granted.');
       }
 
-      // ---- 2/3 deploy the dedicated deployer, allowedCaller = SageCollection
-      log('\n2/3 deploying DedicatedNftDeployer(storage, allowedCaller=SageCollection)…');
+      // ---- 2/4 deploy the dedicated deployer, allowedCaller = SageCollection
+      log('\n2/4 deploying DedicatedNftDeployer(storage, allowedCaller=SageCollection)…');
       const initcode = CREATION_BYTECODE + pad(STORAGE) + pad(COLLECTION);
       const h1 = await window.ethereum.request({
         method: 'eth_sendTransaction',
@@ -202,8 +256,8 @@
       }
       log('    allowedCaller verified = ' + ac);
 
-      // ---- 3/3 point SageCollection at it
-      log('\n3/3 SageCollection.setNftDeployer(' + deployed + ')…');
+      // ---- 3/4 point SageCollection at it
+      log('\n3/4 SageCollection.setNftDeployer(' + deployed + ')…');
       const h2 = await window.ethereum.request({
         method: 'eth_sendTransaction',
         params: [{ from: account, to: COLLECTION, data: SETDEPLOYER_SEL + pad(deployed) }],
