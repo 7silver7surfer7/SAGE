@@ -105,23 +105,6 @@ export interface GenerateOptions {
   model?: string;
   /** how long to wait for the image before handing back a pending job */
   timeoutMs?: number;
-  /**
-   * Source image for IMAGE-TO-IMAGE. Krea fetches this URL itself, so it has
-   * to be publicly reachable — a signed or private URL will fail on their side,
-   * not ours. With it, generation starts from this image instead of pure noise,
-   * which is what preserves the original composition rather than rebuilding an
-   * approximation of it from a description.
-   */
-  imageUrl?: string;
-  /**
-   * How far to move from `imageUrl`: 0 keeps the input untouched, 1 discards it
-   * entirely. No effect without `imageUrl`.
-   *
-   * KREA DEFAULTS THIS TO 0.99, which is effectively "ignore the input" — so a
-   * caller that passes an image and forgets the strength gets text-to-image
-   * with extra steps. We pass it explicitly for that reason.
-   */
-  strength?: number;
 }
 
 /**
@@ -145,11 +128,6 @@ export async function generateImage(opts: GenerateOptions): Promise<KreaJob> {
       aspect_ratio: opts.aspectRatio || '1:1',
       resolution: '1K',
       creativity: 'medium',
-      // Omitted entirely unless asked for, so plain text-to-image sends the
-      // exact body it always has.
-      ...(opts.imageUrl
-        ? { image_url: opts.imageUrl, strength: opts.strength ?? 0.8 }
-        : {}),
     }),
   });
 
