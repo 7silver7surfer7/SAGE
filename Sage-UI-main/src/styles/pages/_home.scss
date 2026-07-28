@@ -356,16 +356,26 @@ $tile-info-z: calc(#{$tile-img-z} + 1);
       width: auto;
       padding: 8px 18px;
     }
-    // ENDED: a finished drop that had no supply to run out of. Deliberately
-    // NOT the accent — accent means "act now", and there is nothing to act on.
-    // Muted so it reads as a fact about the past rather than a call to mint.
+    /**
+     * ENDED: a finished drop that had no supply to run out of.
+     *
+     * First attempt was dark-on-dark at 75% opacity, reasoning that a dead
+     * drop should not shout. It disappeared — the SUPERRARE tile is a black
+     * image, so a near-black badge on it was invisible in practice while
+     * passing every "is it rendered?" check. A label nobody can read is the
+     * same as the missing label it replaced.
+     *
+     * Inverted instead: solid light pill, dark text, full opacity. Same visual
+     * weight as SOLD OUT so it holds its own beside it, opposite colour so the
+     * two are never confused, and no accent — accent means "act now" and there
+     * is nothing left to act on.
+     */
     &[data-status='Done'] {
-      color: m.t('contrast');
-      background-color: m.t('base');
+      color: m.t('base');
+      background-color: m.t('contrast');
       aspect-ratio: auto;
       width: auto;
       padding: 8px 18px;
-      opacity: 0.75;
     }
     display: flex;
   }
