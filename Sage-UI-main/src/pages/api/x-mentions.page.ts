@@ -349,9 +349,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             continue;
           }
 
-          // Vision writes the prompt: Krea takes text, not pictures, so the
-          // image has to be READ before it can be re-rendered. Describing it
-          // first is also what keeps the output anchored to the source.
+          /**
+           * The source image goes to Krea AS AN IMAGE, and vision still writes
+           * the prompt. They do different jobs and both are worth paying for.
+           *
+           * This used to be vision only, on the belief that "Krea takes text,
+           * not pictures". That was wrong — krea-2 has accepted `image_url` all
+           * along on the very endpoint we call. Describing a picture and
+           * re-rendering the description produces a NEW picture of a similar
+           * scene; starting from the pixels produces THAT picture, restyled.
+           * For "remake this as pixel art" the difference is the whole request.
+           *
+           * Vision stays because the prompt now only has to carry STYLE, and
+           * because it is what enforces the no-naming-a-living-artist rule —
+           * which matters most when the source is someone else's art.
+           */
           const { prompt, credits: readCost } = await restylePrompt(
             src.base64, src.mime, raw.text.replace(/@\w+/g, ' ').trim()
           );
@@ -361,6 +373,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             aspectRatio: '4:5',
             model: model.id,
             timeoutMs: 60_000,
+            imageUrl: photo,
+            /**
+             * 0.8, chosen by rendering the same source at several values rather
+             * than by taste. Restyling a photograph of tornado damage as pixel
+             * art:
+             *   0.45  composition perfect, style absent — the original with a
+             *         light illustrative pass over it
+             *   0.65  composition good, style still weak — smooth illustration,
+             *         nothing pixelated about it
+             *   0.80  composition held AND genuinely blocky, limited palette
+             *
+             * The intuition that "lower = more faithful" is right about
+             * geometry and wrong about the request: below ~0.7 the source
+             * dominates so completely that the requested medium never arrives,
+             * which fails the actual ask. Krea's own default of 0.99 fails the
+             * other way and ignores the image.
+             */
+            strength: 0.8,
           });
           if (job.status !== 'completed' || !job.urls.length) {
             throw new Error(job.error || `generation ${job.status}`);
