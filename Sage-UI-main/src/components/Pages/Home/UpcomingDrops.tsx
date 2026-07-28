@@ -93,16 +93,18 @@ function UpcomingDropsTile(props: UpcomingDropsTileProps) {
   const { displayValue: openingTime } = useCountdown({ targetDate: startTime });
   return (
     <div className='home-page__upcoming-drops-tile' onClick={goToDropOnClick}>
-      {/* Done drops carry no badge — except a sold-out collection, which is
-          the strongest social proof a drop can show */}
-      {(dropStatus !== 'Done' || soldOut) && (
-        <div
-          className='home-page__upcoming-drops-countdown'
-          data-status={soldOut ? 'SoldOut' : dropStatus}
-        >
-          {dropStatus === 'Upcoming' ? openingTime : statusDisplay}
-        </div>
-      )}
+      {/* Every drop carries a badge. Finished drops used to carry none unless
+          a collection had sold out, so a closed open edition sat on the grid
+          looking indistinguishable from a live one — SUPERRARE next to a
+          SOLD OUT rMonet read as still mintable. ENDED and SOLD OUT are styled
+          alike but say different things: one ran out of supply, the other ran
+          out of time. */}
+      <div
+        className='home-page__upcoming-drops-countdown'
+        data-status={soldOut ? 'SoldOut' : dropStatus}
+      >
+        {dropStatus === 'Upcoming' ? openingTime : statusDisplay}
+      </div>
       <BaseMedia src={bannerImgSrc} />
       <div className='home-page__upcoming-drops-tile-tag'>
         {/* <div className='home-page__upcoming-drops-tile-pfp'>

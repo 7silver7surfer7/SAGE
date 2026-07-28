@@ -356,6 +356,17 @@ $tile-info-z: calc(#{$tile-img-z} + 1);
       width: auto;
       padding: 8px 18px;
     }
+    // ENDED: a finished drop that had no supply to run out of. Deliberately
+    // NOT the accent — accent means "act now", and there is nothing to act on.
+    // Muted so it reads as a fact about the past rather than a call to mint.
+    &[data-status='Done'] {
+      color: m.t('contrast');
+      background-color: m.t('base');
+      aspect-ratio: auto;
+      width: auto;
+      padding: 8px 18px;
+      opacity: 0.75;
+    }
     display: flex;
   }
 }

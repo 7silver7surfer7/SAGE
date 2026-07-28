@@ -37,7 +37,23 @@ function useDrop({ drop, artist, Lotteries, Auctions, OpenEditions, CollectionMi
   const state: string = artist.state;
   const createdAt = formatDateYYMMddHHmm(drop.createdAt);
   const systemTypes = computeDropSystems({ lottery: Lotteries, auction: Auctions });
-  const statusDisplay = soldOut ? 'SOLD OUT' : status.toLocaleUpperCase();
+  /**
+   * SOLD OUT and ENDED are different facts and the tile must not conflate them.
+   *
+   * A collection has a fixed supply, so running out is the thing worth showing.
+   * An open edition has NO supply cap — it is open until its deadline and then
+   * it closes, so calling it "sold out" would claim a supply ran out when
+   * anyone could have minted right up to the end. SUPERRARE closed with 3 mints
+   * and no cap; that is ENDED.
+   *
+   * 'Done' would otherwise surface as the literal word "DONE", which says
+   * nothing to someone deciding whether they missed something.
+   */
+  const statusDisplay = soldOut
+    ? 'SOLD OUT'
+    : status === 'Done'
+    ? 'ENDED'
+    : status.toLocaleUpperCase();
   function goToDropOnClick() {
     pushToDrops(drop.id);
   }
