@@ -22,6 +22,22 @@ function home({
   const { isMobile } = useWindowDimensions();
   // no cover media -> skip the cover entirely so the page isn't hidden behind it
   const [coverOn, setCoverOn] = useState(Boolean(featuredDrop?.featuredMediaS3Path));
+  /**
+   * Two shapes, because the message is admin-editable and both are legitimate.
+   *
+   * A blank line means the author wrote PARAGRAPHS, and those render as
+   * paragraphs at reading size. Anything else is the original one-line headline,
+   * which still breaks onto two lines at the first comma and stays display-size.
+   *
+   * The distinction matters: the old renderer split on the FIRST comma no matter
+   * how long the text was, so prose with several commas came out as one short
+   * fragment above one enormous run-on line, in uppercase.
+   */
+  const welcomeParagraphs = welcomeMessage
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const isProse = welcomeParagraphs.length > 1;
   // messages with a comma break onto two lines at the first comma; messages
   // without one render as a single line (no stray trailing comma)
   const [welcomeFirstLine, ...welcomeRest] = welcomeMessage.split(',');
@@ -65,10 +81,18 @@ function home({
           </div>
         )}
 
-        <h1 className='home-page__statement'>
-          {welcomeSecondLine ? `${welcomeFirstLine},` : welcomeFirstLine} <pre />{' '}
-          {welcomeSecondLine}
-        </h1>
+        {isProse ? (
+          <section className='home-page__statement home-page__statement--prose'>
+            {welcomeParagraphs.map((p) => (
+              <p key={p.slice(0, 40)}>{p}</p>
+            ))}
+          </section>
+        ) : (
+          <h1 className='home-page__statement'>
+            {welcomeSecondLine ? `${welcomeFirstLine},` : welcomeFirstLine} <pre />{' '}
+            {welcomeSecondLine}
+          </h1>
+        )}
         <div className='home-page__upcoming-drops-header'>
           <h1 className='home-page__upcoming-drops-header-left'>drops</h1>
         </div>

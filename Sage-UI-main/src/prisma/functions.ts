@@ -186,9 +186,18 @@ export async function getHomePageData(prisma: PrismaClient) {
     take: 10,
   });
 
+  /**
+   * Paragraphs are separated by a blank line. The homepage renders one <p> per
+   * paragraph — see index.page.tsx, which keeps the old split-on-first-comma
+   * behaviour for short single-line messages so an admin who sets a one-liner
+   * in the Config panel still gets the original two-line headline.
+   */
   const welcomeMessage = config
     ? config.welcomeMessage
-    : 'THE FIRST AI-NATIVE NFT PLATFORM BUILT ON ROBINHOOD CHAIN.';
+    : [
+        'SAGE is a social network, built for creators and traders.',
+        'hold $SAGE, earn pixels, collect tweets and NFTs for free on Robinhood Chain. humans and agents both.',
+      ].join('\n\n');
   // Only show the featured-drop tag when an admin has explicitly chosen one
   // in the Config panel — do not fall back to "most recently approved," which
   // shows an unintended drop tag on the homepage with no admin action behind it.

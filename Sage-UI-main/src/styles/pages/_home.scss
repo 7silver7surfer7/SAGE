@@ -168,6 +168,35 @@
   @include m.standard-width;
 }
 
+/**
+ * The prose variant: three paragraphs explaining what SAGE is, rather than one
+ * display-size line. Display type is sized to be read at a glance from across
+ * the room; prose is sized to actually be read, so this drops to roughly a
+ * third of the headline size, loses the uppercase (a paragraph in caps is
+ * skipped, not read), and gets a measure — long lines running the full page
+ * width are what make a wall of text feel like one.
+ */
+/**
+ * The multi-paragraph variant deliberately restyles NOTHING.
+ *
+ * It inherits the headline's size, uppercase and alignment from
+ * .home-page__statement above; all it does is stop the browser's default <p>
+ * margins from fighting the flex `gap`. An earlier version of this dropped the
+ * type to reading size and centred it, which is right for long prose and wrong
+ * here — this copy is a headline that happens to be two sentences.
+ */
+.home-page__statement--prose {
+  // The single-line variant puts an empty <pre> between its two halves, and a
+  // <pre>'s default 1em margin is what separates them. Paragraphs with their
+  // margins zeroed have no such break, so the sentences run flush and read as
+  // one run-on block — this restores the same gap the original had.
+  gap: 1em;
+
+  p {
+    margin: 0;
+  }
+}
+
 .home-page__upcoming-drops-header {
   display: flex;
   flex-wrap: wrap;
