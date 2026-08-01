@@ -6,7 +6,7 @@ import { requireRole, getRequester } from '@/utilities/apiAuth';
 import { isUserWalletCode } from '@/utilities/accountKind';
 import { extractFirstUrl, fetchLinkPreview } from '@/utilities/linkPreview';
 import prisma from '@/prisma/client';
-import { poolKeyFor, poolIdOf, quoteV4Buy, type PoolKey } from '@/utilities/uniswapV4';
+import { poolKeyFor, poolIdOf, discoverPoolKey, quoteV4Buy, type PoolKey } from '@/utilities/uniswapV4';
 import { V4_POOL_MANAGER } from '@/constants/config';
 import { reconcileEditions, autoReconcileEditions, isTrustedArtUrl } from '@/utilities/editionReconciler';
 import {
@@ -5254,7 +5254,10 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
    * The v4 branch is keyed on the pool registry, not on curve state, because
    * curve state is precisely what a v4-native token does not have.
    */
-  const v4Key = poolKeyFor(token);
+  const v4Key = await discoverPoolKey(
+    token,
+    new ethers.providers.StaticJsonRpcProvider({ url: TRADE_RPC_URL, timeout: 20000 }, TRADE_CHAIN_ID)
+  );
   if (v4Key) {
     await syncV4PoolTrades(launch.id, token, v4Key);
   } else if (curve?.complete && curve.pair) {

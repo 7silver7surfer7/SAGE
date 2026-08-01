@@ -87,8 +87,136 @@ export function poolIdOf(key: PoolKey): string {
   );
 }
 
+/** Discovered keys, so the log queries run once per token per instance. */
+const discovered = new Map<string, PoolKey | null>();
+
+/**
+ * The pinned registry FIRST, then anything discovery has already resolved.
+ *
+ * Deliberately still synchronous. Every quote, encode, buy and sell path in
+ * this file calls it, and the five of them plus three more in social.page.ts
+ * would each need async plumbing otherwise — for a lookup that is a Map hit.
+ * Reading the discovery cache here means one await, in the indexer, warms the
+ * whole file: a discovered token becomes quotable and tradeable, and the UI
+ * stops describing it with bonding-curve language it never had.
+ *
+ * A token nobody has run discovery for yet still reads as null, which is the
+ * old behaviour and safe — it degrades to "no v4 price" rather than to a wrong
+ * one. `discoverPoolKey` is what removes that state, and the token page calls
+ * it on every view.
+ */
 export function poolKeyFor(tokenAddress: string): PoolKey | null {
-  return V4_POOLS[tokenAddress.toLowerCase()] || null;
+  const k = tokenAddress.toLowerCase();
+  return V4_POOLS[k] || discovered.get(k) || null;
+}
+
+const INITIALIZE_TOPIC = ethers.utils.id(
+  'Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)'
+);
+const SWAP_TOPIC = ethers.utils.id(
+  'Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)'
+);
+const INITIALIZE_IFACE = new ethers.utils.Interface([
+  'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)',
+]);
+const topicFor = (a: string) => '0x' + a.toLowerCase().replace('0x', '').padStart(64, '0');
+
+
+/**
+ * Find a token's v4 pool from the chain instead of a hand-written list.
+ *
+ * WHY THIS HAD TO EXIST. V4_POOLS was a registry of exactly one token, and the
+ * indexer is gated on it — so a v4 token that nobody had hand-added showed a
+ * frozen chart forever, silently, with no error anywhere. The comment above
+ * the registry claimed `discoverPoolKey` already did this; the function had
+ * never been written.
+ *
+ * The registry's stated reason for existing — "finding a PoolKey means scanning
+ * Initialize events, and this chain's RPC caps eth_getLogs at ~2,000 blocks, so
+ * a cold lookup is thousands of requests" — is not true of a FILTERED query.
+ * currency0 and currency1 are indexed, so asking for one token's Initialize
+ * events over all history is a single call that returns in ~500ms, measured.
+ * That claim is what made a hardcoded list look necessary.
+ *
+ * MOST-TRADED POOL WINS. A token can have several pools (SAGE has five,
+ * differing in fee tier and hook) and only one is the real market — 569 swaps
+ * against a handful. Picking the first would silently index a dead pool.
+ *
+ * ONLY WETH-QUOTED POOLS. The trade rows store `ethAmount`, so a pool quoted in
+ * something else would write the wrong unit under the right name. The second
+ * SAGE trades against USDG: skipped deliberately rather than recorded as if
+ * those were ETH.
+ */
+export async function discoverPoolKey(
+  tokenAddress: string,
+  provider: ethers.providers.Provider
+): Promise<PoolKey | null> {
+  const key = tokenAddress.toLowerCase();
+  const pinned = V4_POOLS[key];
+  if (pinned) return pinned;
+  if (discovered.has(key)) return discovered.get(key)!;
+
+  try {
+    // the token may be either side of the pair, and v4 sorts by address
+    const [asC1, asC0] = await Promise.all([
+      provider.getLogs({
+        address: V4_POOL_MANAGER,
+        topics: [INITIALIZE_TOPIC, null, null, topicFor(tokenAddress)],
+        fromBlock: 0,
+        toBlock: 'latest',
+      }),
+      provider.getLogs({
+        address: V4_POOL_MANAGER,
+        topics: [INITIALIZE_TOPIC, null, topicFor(tokenAddress)],
+        fromBlock: 0,
+        toBlock: 'latest',
+      }),
+    ]);
+
+    const weth = TRADE_WETH_ADDRESS.toLowerCase();
+    const candidates = [...asC1, ...asC0]
+      .map((l) => INITIALIZE_IFACE.parseLog(l).args)
+      .filter(
+        (a) => a.currency0.toLowerCase() === weth || a.currency1.toLowerCase() === weth
+      );
+    if (!candidates.length) {
+      discovered.set(key, null);
+      return null;
+    }
+
+    let best: { key: PoolKey; swaps: number } | null = null;
+    for (const a of candidates) {
+      const swaps = await provider.getLogs({
+        address: V4_POOL_MANAGER,
+        topics: [SWAP_TOPIC, a.id],
+        fromBlock: 0,
+        toBlock: 'latest',
+      });
+      if (!best || swaps.length > best.swaps) {
+        best = {
+          swaps: swaps.length,
+          key: {
+            currency0: a.currency0,
+            currency1: a.currency1,
+            fee: Number(a.fee),
+            tickSpacing: Number(a.tickSpacing),
+            hooks: a.hooks,
+          },
+        };
+      }
+    }
+    // A pool that exists but has never traded is not a market yet; treat it as
+    // absent so the caller does not sweep it on every page view for nothing.
+    const found = best && best.swaps > 0 ? best.key : null;
+    discovered.set(key, found);
+    return found;
+  } catch (e) {
+    // Do NOT cache a failure as "no pool". An RPC hiccup that becomes a
+    // permanent negative is precisely how the original bug hid: a swallowed
+    // error read as a confident answer.
+    console.error(`v4 pool discovery failed for ${tokenAddress}`, e);
+    return null;
+  }
 }
 
 /** True when the token is currency1, i.e. buying it means zeroForOne. */
