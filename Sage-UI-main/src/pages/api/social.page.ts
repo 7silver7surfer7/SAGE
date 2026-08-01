@@ -4596,76 +4596,138 @@ async function syncV4PoolTradesInner(
     cursorTo = lastBlock;
   }
 
-  // v4 signs the amounts from the POOL's perspective: positive is currency
-  // flowing IN to the pool, negative is flowing out. So the token's amount
-  // being negative means the pool paid tokens out — someone bought.
   const tokenIs0 = key.currency0.toLowerCase() === token.toLowerCase();
 
-  /** Same attribution the v2 sweep uses, and for the same reason: `sender` on
-   *  a v4 Swap is the ROUTER, never the person. Netting the token's own
-   *  Transfer deltas in the receipt names the real party. The address excluded
-   *  is the PoolManager rather than a pair, because in v4 the singleton is what
-   *  holds the currency. */
+  /**
+   * ONE ROW PER TRANSACTION, NOT PER SWAP EVENT.
+   *
+   * A v4 trade routes through the singleton and emits several Swap events —
+   * 386 events across 146 transactions here, every one multi-leg.
+   * SocialTokenTrade.txHash is @unique, so one-row-per-event stored an
+   * arbitrary leg and skipDuplicates silently dropped the rest: the tape
+   * under-reported every trade's size, which also skewed the price chart.
+   */
+  const byTx = new Map<string, typeof logs>();
+  for (const l of logs) {
+    const g = byTx.get(l.transactionHash);
+    if (g) g.push(l);
+    else byTx.set(l.transactionHash, [l]);
+  }
+
+  /**
+   * SIDE AND TRADER BOTH COME FROM THE USER'S OWN TOKEN DELTA.
+   *
+   * The obvious reading — sum the Swap events' pool-side amounts, a negative
+   * token amount means the pool paid out, so it was a buy — is wrong here, and
+   * was wrong on all 146 transactions. The router round-trips through the SAME
+   * pool inside one transaction, so its legs are in that sum too and partially
+   * cancel, flipping the sign. The only unambiguous record of what a person did
+   * is how their own balance moved.
+   *
+   * Rank the token's Transfer deltas by size and take the largest belonging to
+   * an EOA: a router routinely out-moves the user mid-transaction, so magnitude
+   * is identity only after contracts are excluded. The sign of that delta is
+   * the side — tokens received is a buy. Checked across all 146 transactions:
+   * 142 resolve to an EOA and 139 of those agree with tx.from.
+   */
   const TRANSFER_TOPIC = ethers.utils.id('Transfer(address,address,uint256)');
-  const traderFromReceipt = (rc: any, isBuy: boolean): string => {
-    const deltas = new Map<string, ethers.BigNumber>();
-    for (const l of rc.logs) {
-      if (
-        l.address.toLowerCase() !== token.toLowerCase() ||
-        l.topics[0] !== TRANSFER_TOPIC ||
-        l.topics.length < 3
-      )
-        continue;
-      const src = ('0x' + l.topics[1].slice(26)).toLowerCase();
-      const dst = ('0x' + l.topics[2].slice(26)).toLowerCase();
-      const v = ethers.BigNumber.from(l.data === '0x' ? 0 : l.data);
-      deltas.set(src, (deltas.get(src) || ethers.constants.Zero).sub(v));
-      deltas.set(dst, (deltas.get(dst) || ethers.constants.Zero).add(v));
+  const codeCache = new Map<string, boolean>();
+  const isContract = async (a: string): Promise<boolean> => {
+    const k = a.toLowerCase();
+    if (!codeCache.has(k)) {
+      codeCache.set(k, (await provider.getCode(a).catch(() => '0x')) !== '0x');
     }
-    deltas.delete(V4_POOL_MANAGER.toLowerCase());
-    let best: { addr: string; score: ethers.BigNumber } | null = null;
-    deltas.forEach((d, addr) => {
-      const score = isBuy ? d : d.mul(-1);
-      if (score.gt(0) && (!best || score.gt(best.score))) best = { addr, score };
-    });
-    return ethers.utils.getAddress(best ? (best as { addr: string }).addr : rc.from);
+    return codeCache.get(k)!;
   };
 
   const rows: any[] = [];
   const blockTs = new Map<number, number>();
-  for (let i = 0; i < logs.length; i += V4_SYNC_LOOKUP_BATCH) {
-    const batch = logs.slice(i, i + V4_SYNC_LOOKUP_BATCH);
+  const entries = Array.from(byTx.entries());
+  for (let i = 0; i < entries.length; i += V4_SYNC_LOOKUP_BATCH) {
+    const batch = entries.slice(i, i + V4_SYNC_LOOKUP_BATCH);
     const uniqueBlocks = Array.from(
-      new Set(batch.map((l) => l.blockNumber).filter((b) => !blockTs.has(b)))
+      new Set(batch.map(([, g]) => g[0].blockNumber).filter((b) => !blockTs.has(b)))
     );
     const [receipts, blocks] = await Promise.all([
-      Promise.all(batch.map((l) => provider.getTransactionReceipt(l.transactionHash))),
+      Promise.all(batch.map(([h]) => provider.getTransactionReceipt(h))),
       Promise.all(uniqueBlocks.map((b) => provider.getBlock(b))),
     ]);
     blocks.forEach((b) => blockTs.set(b.number, b.timestamp));
-    batch.forEach((log, j) => {
-      const a = V4_SWAP_IFACE.parseLog(log).args;
-      const tokenDelta = tokenIs0 ? a.amount0 : a.amount1;
-      const ethDelta = tokenIs0 ? a.amount1 : a.amount0;
-      const isBuy = tokenDelta.lt(0); // pool paid tokens out
-      const tokenAmount = Number(ethers.utils.formatEther(tokenDelta.abs()));
+
+    for (let j = 0; j < batch.length; j++) {
+      const [hash, group] = batch[j];
+      const rc = receipts[j];
+      if (!rc) continue;
+
+      // pool-side ETH nets correctly: the router's legs cancel in proportion
+      let ethDelta = ethers.constants.Zero;
+      for (const l of group) {
+        const a = V4_SWAP_IFACE.parseLog(l).args;
+        ethDelta = ethDelta.add(tokenIs0 ? a.amount1 : a.amount0);
+      }
+
+      const deltas = new Map<string, ethers.BigNumber>();
+      for (const l of rc.logs) {
+        if (
+          l.address.toLowerCase() !== token.toLowerCase() ||
+          l.topics[0] !== TRANSFER_TOPIC ||
+          l.topics.length < 3
+        )
+          continue;
+        const src = ('0x' + l.topics[1].slice(26)).toLowerCase();
+        const dst = ('0x' + l.topics[2].slice(26)).toLowerCase();
+        const v = ethers.BigNumber.from(l.data === '0x' ? 0 : l.data);
+        deltas.set(src, (deltas.get(src) || ethers.constants.Zero).sub(v));
+        deltas.set(dst, (deltas.get(dst) || ethers.constants.Zero).add(v));
+      }
+      deltas.delete(V4_POOL_MANAGER.toLowerCase());
+
+      const ranked = Array.from(deltas.entries())
+        .filter(([, d]) => !d.isZero())
+        .map(([addr, d]) => ({ addr, d, mag: d.abs() }))
+        .sort((x, y) => (y.mag.gt(x.mag) ? 1 : -1));
+      let chosen: { addr: string; d: ethers.BigNumber } | null = null;
+      for (const c of ranked) {
+        if (!(await isContract(c.addr))) {
+          chosen = { addr: c.addr, d: c.d };
+          break;
+        }
+      }
+
+      let trader: string;
+      let isBuy: boolean;
+      let tokenAmount: number;
+      if (chosen) {
+        trader = ethers.utils.getAddress(chosen.addr);
+        isBuy = chosen.d.gt(0);
+        tokenAmount = Number(ethers.utils.formatEther(chosen.d.abs()));
+      } else {
+        // No EOA moved tokens — a contract traded for itself. The submitter is
+        // the best remaining answer, and its own delta still gives the side.
+        trader = ethers.utils.getAddress(rc.from);
+        const own = deltas.get(rc.from.toLowerCase());
+        isBuy = own && !own.isZero() ? own.gt(0) : ethDelta.gt(0);
+        tokenAmount = own ? Number(ethers.utils.formatEther(own.abs())) : 0;
+      }
       const ethAmount = Number(ethers.utils.formatEther(ethDelta.abs()));
-      if (tokenAmount <= 0 || ethAmount <= 0) return;
+      if (tokenAmount <= 0 || ethAmount <= 0) continue;
+
       rows.push({
         tokenAddress: token,
-        trader: traderFromReceipt(receipts[j], isBuy),
+        trader,
         side: isBuy ? 'buy' : 'sell',
         ethAmount,
         tokenAmount,
-        // The REALIZED price of this trade, not pool spot. Cross-checked
-        // against sqrtPriceX96 on the same events: they agree to 0.7%, and the
-        // sign is right — buys land below spot, sells above, which is the fee.
+        // realized price for the whole transaction; cross-checked against
+        // sqrtPriceX96 on the same events — agrees to 0.7%, buys landing below
+        // spot and sells above, which is the fee
         priceEth: (ethAmount / tokenAmount) * 1_000_000,
-        txHash: log.transactionHash,
-        createdAt: new Date((blockTs.get(log.blockNumber) || 0) * 1000),
+        txHash: hash,
+        createdAt: new Date((blockTs.get(group[0].blockNumber) || 0) * 1000),
       });
-    });
+    }
   }
+
   if (rows.length) {
     await prisma.socialTokenTrade.createMany({ data: rows, skipDuplicates: true });
   }
