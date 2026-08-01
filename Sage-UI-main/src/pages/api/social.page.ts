@@ -4702,12 +4702,32 @@ async function syncV4PoolTradesInner(
         isBuy = chosen.d.gt(0);
         tokenAmount = Number(ethers.utils.formatEther(chosen.d.abs()));
       } else {
-        // No EOA moved tokens — a contract traded for itself. The submitter is
-        // the best remaining answer, and its own delta still gives the side.
-        trader = ethers.utils.getAddress(rc.from);
+        /**
+         * No EOA moved tokens: an aggregator or arbitrage route where the
+         * tokens only ever passed between contracts. 20 of 219 transactions
+         * here are this shape, all with real ETH behind them.
+         *
+         * Prefer the submitter when it actually moved tokens, else the largest
+         * mover even though it is a contract. An earlier version left
+         * tokenAmount at 0 in this case, which the guard below then dropped —
+         * silently losing 9% of real volume to keep the trader column tidy. A
+         * contract really did trade; recording that is accurate, and a missing
+         * trade is not.
+         */
         const own = deltas.get(rc.from.toLowerCase());
-        isBuy = own && !own.isZero() ? own.gt(0) : ethDelta.gt(0);
-        tokenAmount = own ? Number(ethers.utils.formatEther(own.abs())) : 0;
+        if (own && !own.isZero()) {
+          trader = ethers.utils.getAddress(rc.from);
+          isBuy = own.gt(0);
+          tokenAmount = Number(ethers.utils.formatEther(own.abs()));
+        } else if (ranked.length) {
+          trader = ethers.utils.getAddress(ranked[0].addr);
+          isBuy = ranked[0].d.gt(0);
+          tokenAmount = Number(ethers.utils.formatEther(ranked[0].mag));
+        } else {
+          trader = ethers.utils.getAddress(rc.from);
+          isBuy = ethDelta.gt(0);
+          tokenAmount = 0;
+        }
       }
       const ethAmount = Number(ethers.utils.formatEther(ethDelta.abs()));
       if (tokenAmount <= 0 || ethAmount <= 0) continue;
