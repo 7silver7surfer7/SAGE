@@ -6,7 +6,8 @@ import { requireRole, getRequester } from '@/utilities/apiAuth';
 import { isUserWalletCode } from '@/utilities/accountKind';
 import { extractFirstUrl, fetchLinkPreview } from '@/utilities/linkPreview';
 import prisma from '@/prisma/client';
-import { poolKeyFor, quoteV4Buy } from '@/utilities/uniswapV4';
+import { poolKeyFor, poolIdOf, quoteV4Buy, type PoolKey } from '@/utilities/uniswapV4';
+import { V4_POOL_MANAGER } from '@/constants/config';
 import { reconcileEditions, autoReconcileEditions, isTrustedArtUrl } from '@/utilities/editionReconciler';
 import {
   parameters,
@@ -4498,6 +4499,162 @@ const POOL_SYNC_LOOKUP_BATCH = 50; // parallel tx/block lookups at a time
 // in-flight guard: withMemoCache only caches AFTER compute settles, so the
 // 1s-polled page would otherwise stack concurrent sweeps while one is running
 const poolSyncInFlight = new Map<string, Promise<void>>();
+
+/**
+ * Uniswap v4 swap indexing.
+ *
+ * WHY A SECOND SWEEP EXISTS. The v2 path below is gated on
+ * `curve.complete && curve.pair` — a token that rode the bonding curve and
+ * graduated into its own pair contract. A v4-native token satisfies NEITHER:
+ * v4 keeps every pool as state inside one PoolManager singleton addressed by a
+ * PoolKey, so there is no pair contract for `pairOf` to return, and `complete`
+ * was never set by a graduation that never happened. The gate was therefore
+ * false forever and syncPoolTrades was never called once for $SAGE — its cursor
+ * sat frozen while 386 real swaps accumulated on-chain and the page showed a
+ * trades tape and market cap seven days stale. Not a lagging indexer; an
+ * indexer that never ran.
+ *
+ * NO CHUNKING HERE, deliberately. The v2 sweep windows 20k blocks at a time
+ * because an unfiltered pair-log scan times out past that. Filtering
+ * PoolManager logs by poolId is a different query: the pool's ENTIRE history —
+ * 569 swaps over 6.4M blocks — returns in under 400ms, measured. Chunking it
+ * would add a convergence problem this design does not have.
+ */
+const V4_SWAP_TOPIC = ethers.utils.id(
+  'Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)'
+);
+const V4_SWAP_IFACE = new ethers.utils.Interface([
+  'event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)',
+]);
+
+async function syncV4PoolTradesInner(
+  launchId: number,
+  token: string,
+  key: PoolKey,
+  fromBlock: number
+): Promise<void> {
+  const provider = new ethers.providers.StaticJsonRpcProvider(
+    { url: TRADE_RPC_URL, timeout: 20000 },
+    TRADE_CHAIN_ID
+  );
+  const poolId = poolIdOf(key);
+  const head = await provider.getBlockNumber();
+  if (fromBlock > head) return;
+
+  const logs = await provider.getLogs({
+    address: V4_POOL_MANAGER,
+    topics: [V4_SWAP_TOPIC, poolId],
+    fromBlock,
+    toBlock: head,
+  });
+  if (!logs.length) {
+    await prisma.$executeRaw`
+      UPDATE "SocialTokenLaunch"
+      SET "poolSyncedBlock" = GREATEST(COALESCE("poolSyncedBlock", 0), ${head})
+      WHERE id = ${launchId}`;
+    return;
+  }
+
+  // v4 signs the amounts from the POOL's perspective: positive is currency
+  // flowing IN to the pool, negative is flowing out. So the token's amount
+  // being negative means the pool paid tokens out — someone bought.
+  const tokenIs0 = key.currency0.toLowerCase() === token.toLowerCase();
+
+  /** Same attribution the v2 sweep uses, and for the same reason: `sender` on
+   *  a v4 Swap is the ROUTER, never the person. Netting the token's own
+   *  Transfer deltas in the receipt names the real party. The address excluded
+   *  is the PoolManager rather than a pair, because in v4 the singleton is what
+   *  holds the currency. */
+  const TRANSFER_TOPIC = ethers.utils.id('Transfer(address,address,uint256)');
+  const traderFromReceipt = (rc: any, isBuy: boolean): string => {
+    const deltas = new Map<string, ethers.BigNumber>();
+    for (const l of rc.logs) {
+      if (
+        l.address.toLowerCase() !== token.toLowerCase() ||
+        l.topics[0] !== TRANSFER_TOPIC ||
+        l.topics.length < 3
+      )
+        continue;
+      const src = ('0x' + l.topics[1].slice(26)).toLowerCase();
+      const dst = ('0x' + l.topics[2].slice(26)).toLowerCase();
+      const v = ethers.BigNumber.from(l.data === '0x' ? 0 : l.data);
+      deltas.set(src, (deltas.get(src) || ethers.constants.Zero).sub(v));
+      deltas.set(dst, (deltas.get(dst) || ethers.constants.Zero).add(v));
+    }
+    deltas.delete(V4_POOL_MANAGER.toLowerCase());
+    let best: { addr: string; score: ethers.BigNumber } | null = null;
+    deltas.forEach((d, addr) => {
+      const score = isBuy ? d : d.mul(-1);
+      if (score.gt(0) && (!best || score.gt(best.score))) best = { addr, score };
+    });
+    return ethers.utils.getAddress(best ? (best as { addr: string }).addr : rc.from);
+  };
+
+  const rows: any[] = [];
+  const blockTs = new Map<number, number>();
+  for (let i = 0; i < logs.length; i += POOL_SYNC_LOOKUP_BATCH) {
+    const batch = logs.slice(i, i + POOL_SYNC_LOOKUP_BATCH);
+    const uniqueBlocks = Array.from(
+      new Set(batch.map((l) => l.blockNumber).filter((b) => !blockTs.has(b)))
+    );
+    const [receipts, blocks] = await Promise.all([
+      Promise.all(batch.map((l) => provider.getTransactionReceipt(l.transactionHash))),
+      Promise.all(uniqueBlocks.map((b) => provider.getBlock(b))),
+    ]);
+    blocks.forEach((b) => blockTs.set(b.number, b.timestamp));
+    batch.forEach((log, j) => {
+      const a = V4_SWAP_IFACE.parseLog(log).args;
+      const tokenDelta = tokenIs0 ? a.amount0 : a.amount1;
+      const ethDelta = tokenIs0 ? a.amount1 : a.amount0;
+      const isBuy = tokenDelta.lt(0); // pool paid tokens out
+      const tokenAmount = Number(ethers.utils.formatEther(tokenDelta.abs()));
+      const ethAmount = Number(ethers.utils.formatEther(ethDelta.abs()));
+      if (tokenAmount <= 0 || ethAmount <= 0) return;
+      rows.push({
+        tokenAddress: token,
+        trader: traderFromReceipt(receipts[j], isBuy),
+        side: isBuy ? 'buy' : 'sell',
+        ethAmount,
+        tokenAmount,
+        // The REALIZED price of this trade, not pool spot. Cross-checked
+        // against sqrtPriceX96 on the same events: they agree to 0.7%, and the
+        // sign is right — buys land below spot, sells above, which is the fee.
+        priceEth: (ethAmount / tokenAmount) * 1_000_000,
+        txHash: log.transactionHash,
+        createdAt: new Date((blockTs.get(log.blockNumber) || 0) * 1000),
+      });
+    });
+  }
+  if (rows.length) {
+    await prisma.socialTokenTrade.createMany({ data: rows, skipDuplicates: true });
+  }
+  // GREATEST for the same reason as the v2 path: several Cloud Run instances
+  // sweep independently and a slow one must never drag the cursor backward.
+  await prisma.$executeRaw`
+    UPDATE "SocialTokenLaunch"
+    SET "poolSyncedBlock" = GREATEST(COALESCE("poolSyncedBlock", 0), ${head})
+    WHERE id = ${launchId}`;
+}
+
+function syncV4PoolTrades(launchId: number, token: string, key: PoolKey): Promise<void> {
+  const cacheKey = `v4poolsync:${token.toLowerCase()}`;
+  const running = poolSyncInFlight.get(cacheKey);
+  if (running) return running;
+  const sweep = (async () => {
+    try {
+      const launch = await prisma.socialTokenLaunch.findUnique({
+        where: { id: launchId },
+        select: { poolSyncedBlock: true },
+      });
+      await syncV4PoolTradesInner(launchId, token, key, (launch?.poolSyncedBlock || 0) + 1);
+    } catch (e) {
+      console.error(`v4 pool trade sync failed for ${token}`, e);
+    }
+  })().finally(() => poolSyncInFlight.delete(cacheKey));
+  poolSyncInFlight.set(cacheKey, sweep);
+  return sweep;
+}
+
 function syncPoolTrades(launchId: number, token: string, pair: string): Promise<void> {
   const key = `poolsync:${token.toLowerCase()}`;
   const running = poolSyncInFlight.get(key);
@@ -4957,7 +5114,23 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
   // stall — instead the sweep is capped small (see POOL_SYNC_*) and throttled
   // to one per 30s per instance, so at most one poll in thirty pays ~a few
   // seconds and the rest skip straight through on the memo cache.
-  if (curve?.complete && curve.pair) {
+  /**
+   * TWO MARKET SHAPES, and the v2 gate excludes one of them entirely.
+   *
+   * A curve token graduates into its own pair contract, so `complete && pair`
+   * is the right question for it. A v4-native token never had a curve: it has a
+   * PoolKey and nothing else, `pairOf` returns address(0), `complete` is false,
+   * and poolPriceWei reverts "not graduated". Asking the v2 question about it
+   * answers no forever — which is exactly what happened, silently, while its
+   * page showed a week-old tape.
+   *
+   * The v4 branch is keyed on the pool registry, not on curve state, because
+   * curve state is precisely what a v4-native token does not have.
+   */
+  const v4Key = poolKeyFor(token);
+  if (v4Key) {
+    await syncV4PoolTrades(launch.id, token, v4Key);
+  } else if (curve?.complete && curve.pair) {
     await syncPoolTrades(launch.id, token, curve.pair);
   }
 
