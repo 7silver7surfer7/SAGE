@@ -4514,12 +4514,27 @@ const poolSyncInFlight = new Map<string, Promise<void>>();
  * trades tape and market cap seven days stale. Not a lagging indexer; an
  * indexer that never ran.
  *
- * NO CHUNKING HERE, deliberately. The v2 sweep windows 20k blocks at a time
- * because an unfiltered pair-log scan times out past that. Filtering
- * PoolManager logs by poolId is a different query: the pool's ENTIRE history —
- * 569 swaps over 6.4M blocks — returns in under 400ms, measured. Chunking it
- * would add a convergence problem this design does not have.
+ * NO BLOCK CHUNKING, but a HARD CAP ON SWAPS PER SWEEP.
+ *
+ * Those are different bounds and I conflated them once already. The v2 sweep
+ * windows 20k blocks because an unfiltered pair-log scan times out past that;
+ * filtering PoolManager logs by poolId has no such limit — the pool's entire
+ * history, 569 swaps over 6.4M blocks, returns in under 400ms. So the block
+ * window is genuinely unnecessary.
+ *
+ * The RECEIPT lookups are the expensive part and always were. Each swap costs a
+ * getTransactionReceipt (to attribute the trader) plus a getBlock (timestamp).
+ * Reading 386 logs is free; fetching 386 receipts is not — the first version of
+ * this shipped uncapped and every sweep died on an RPC timeout, wrote nothing,
+ * and left the cursor exactly where it found it. Same silent failure as the
+ * bug it was meant to fix.
+ *
+ * So: take all the logs in one call, then process a bounded number of SWAPS,
+ * and leave the cursor at the last block fully consumed. Consecutive sweeps
+ * converge, which for a 386-swap backlog is a handful of page views.
  */
+const V4_SYNC_MAX_SWAPS = 60; // receipts+blocks per sweep, not blocks scanned
+const V4_SYNC_LOOKUP_BATCH = 12; // parallel RPC calls; 50 timed out on this node
 const V4_SWAP_TOPIC = ethers.utils.id(
   'Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)'
 );
@@ -4541,18 +4556,44 @@ async function syncV4PoolTradesInner(
   const head = await provider.getBlockNumber();
   if (fromBlock > head) return;
 
-  const logs = await provider.getLogs({
+  const allLogs = await provider.getLogs({
     address: V4_POOL_MANAGER,
     topics: [V4_SWAP_TOPIC, poolId],
     fromBlock,
     toBlock: head,
   });
-  if (!logs.length) {
-    await prisma.$executeRaw`
-      UPDATE "SocialTokenLaunch"
-      SET "poolSyncedBlock" = GREATEST(COALESCE("poolSyncedBlock", 0), ${head})
-      WHERE id = ${launchId}`;
+  if (!allLogs.length) {
+    /**
+     * Nothing new. Do NOT write the cursor on every quiet sweep — this runs on
+     * each token-detail request, so that would be a steady database write per
+     * page view to record that nothing happened. Let the unscanned gap grow and
+     * only bank it once re-reading it starts to cost something; the log query
+     * is filtered by poolId and cheap either way. Same reasoning the v2 sweep
+     * arrived at, and worth copying rather than rediscovering.
+     */
+    if (head - fromBlock > 100_000) {
+      await prisma.$executeRaw`
+        UPDATE "SocialTokenLaunch"
+        SET "poolSyncedBlock" = GREATEST(COALESCE("poolSyncedBlock", 0), ${head})
+        WHERE id = ${launchId}`;
+    }
     return;
+  }
+
+  /**
+   * Take at most V4_SYNC_MAX_SWAPS, then extend to the END of that block.
+   *
+   * Cutting mid-block would strand the rest of that block's swaps: the cursor
+   * advances past the block, and the next sweep starts after it, so those
+   * trades are never seen again. Several swaps sharing one block is the normal
+   * case here, not an edge case — the samples show three in a single block.
+   */
+  let logs = allLogs;
+  let cursorTo = head;
+  if (allLogs.length > V4_SYNC_MAX_SWAPS) {
+    const lastBlock = allLogs[V4_SYNC_MAX_SWAPS - 1].blockNumber;
+    logs = allLogs.filter((l) => l.blockNumber <= lastBlock);
+    cursorTo = lastBlock;
   }
 
   // v4 signs the amounts from the POOL's perspective: positive is currency
@@ -4592,8 +4633,8 @@ async function syncV4PoolTradesInner(
 
   const rows: any[] = [];
   const blockTs = new Map<number, number>();
-  for (let i = 0; i < logs.length; i += POOL_SYNC_LOOKUP_BATCH) {
-    const batch = logs.slice(i, i + POOL_SYNC_LOOKUP_BATCH);
+  for (let i = 0; i < logs.length; i += V4_SYNC_LOOKUP_BATCH) {
+    const batch = logs.slice(i, i + V4_SYNC_LOOKUP_BATCH);
     const uniqueBlocks = Array.from(
       new Set(batch.map((l) => l.blockNumber).filter((b) => !blockTs.has(b)))
     );
@@ -4628,11 +4669,15 @@ async function syncV4PoolTradesInner(
   if (rows.length) {
     await prisma.socialTokenTrade.createMany({ data: rows, skipDuplicates: true });
   }
+  // cursorTo, not head: when the sweep was capped this is the last block fully
+  // consumed, so the next sweep resumes exactly there rather than skipping the
+  // backlog it did not reach.
+  //
   // GREATEST for the same reason as the v2 path: several Cloud Run instances
   // sweep independently and a slow one must never drag the cursor backward.
   await prisma.$executeRaw`
     UPDATE "SocialTokenLaunch"
-    SET "poolSyncedBlock" = GREATEST(COALESCE("poolSyncedBlock", 0), ${head})
+    SET "poolSyncedBlock" = GREATEST(COALESCE("poolSyncedBlock", 0), ${cursorTo})
     WHERE id = ${launchId}`;
 }
 
