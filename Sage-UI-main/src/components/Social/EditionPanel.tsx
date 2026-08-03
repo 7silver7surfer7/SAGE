@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { useSigner, useProvider } from 'wagmi';
 import { createEdition, mintEdition, editionMinted } from '@/utilities/socialToken';
@@ -50,11 +50,22 @@ const editionApi = baseApi.injectEndpoints({
 const { useGetProfileEditionsQuery, useRecordEditionLaunchMutation, useHaltEditionMutation } = editionApi;
 
 /** Post-launch share sheet — Twitter intent + copy link. */
-function ShareLaunch({ symbol, name, artist, onClose }: { symbol: string; name: string; artist: string; onClose: () => void }) {
+function ShareLaunch({ symbol, name, edition, onClose }: { symbol: string; name: string; edition: string; onClose: () => void }) {
   const [createPost] = useCreatePostMutation();
-  // link to the ARTIST's profile — that's where the mint panel renders (the
-  // edition contract address is not a routable page)
-  const url = typeof window !== 'undefined' ? `${window.location.origin}/social/${artist}` : '';
+  /**
+   * Link to the EDITION, not the artist.
+   *
+   * This used to point at the artist's profile, justified by a comment saying
+   * "that's where the mint panel renders (the edition contract address is not a
+   * routable page)". Both halves were wrong: the panel was never mounted on a
+   * profile, and the page simply had not been built. The result was live on X —
+   * followers got a profile with no mint and a preview card reading "SAGE is a
+   * portal into Web3".
+   *
+   * /social/edition/<address> is server-rendered with the artwork's own
+   * OpenGraph tags, so the card shows the piece and the page opens on its mint.
+   */
+  const url = typeof window !== 'undefined' ? `${window.location.origin}/social/edition/${edition}` : '';
   const line = `I just launched ${name} ($${symbol}) on SAGE Social 🎨 mint it:`;
   const toFeed = async () => {
     try { await createPost({ text: `${line}\n${url}` }).unwrap(); toast.success('Shared to your feed 🎉'); onClose(); }
@@ -91,7 +102,7 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
   const [imageUrl, setImageUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [needVerify, setNeedVerify] = useState(false);
-  const [live, setLive] = useState<{ symbol: string; name: string; artist: string } | null>(null);
+  const [live, setLive] = useState<{ symbol: string; name: string; edition: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const onFile = async (file?: File) => {
@@ -133,7 +144,7 @@ function LaunchEditionModal({ onClose }: { onClose: () => void }) {
         record({ editionAddress: deployed!.edition, name: name.trim(), symbol: symbol.trim().toUpperCase(), imageUrl, priceEth: p, maxSupply: max, launchTxHash: deployed!.txHash }).unwrap()
       );
       toast.update(t, { render: `${name} is live 🎨`, type: 'success', isLoading: false, autoClose: 3000 });
-      setLive({ symbol: symbol.trim().toUpperCase(), name: name.trim(), artist: artistAddress });
+      setLive({ symbol: symbol.trim().toUpperCase(), name: name.trim(), edition: deployed!.edition });
     } catch (err: any) {
       if (err?.data?.needsVerification) { setNeedVerify(true); toast.dismiss(t); }
       else if (deployed) {
@@ -194,10 +205,21 @@ interface EditionPanelProps {
   // page wants it. Embedded on a regular profile it's redundant promotion:
   // launching happens from the launcher, and posts already carry the reach.
   showLaunchCta?: boolean;
+  /**
+   * Show ONE edition instead of the artist's whole shelf. The share link for a
+   * launch is about that artwork, so the page it opens should be too — landing
+   * on a list and hunting for the thing you were sent is the same failure as
+   * landing on a profile with no mint at all.
+   */
+  only?: string;
 }
 
-export default function EditionPanel({ address, isSelf, showLaunchCta }: EditionPanelProps) {
-  const { data } = useGetProfileEditionsQuery(address, { skip: !address });
+export default function EditionPanel({ address, isSelf, showLaunchCta, only }: EditionPanelProps) {
+  const { data: raw } = useGetProfileEditionsQuery(address, { skip: !address });
+  const data = React.useMemo(() => {
+    if (!raw || !only) return raw;
+    return { ...raw, editions: raw.editions.filter((e) => e.editionAddress.toLowerCase() === only.toLowerCase()) };
+  }, [raw, only]);
   const [haltEdition] = useHaltEditionMutation();
   const { data: signer } = useSigner();
   const provider = useProvider();

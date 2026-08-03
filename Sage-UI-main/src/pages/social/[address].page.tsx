@@ -26,6 +26,7 @@ import {
   useToggleHideItemMutation,
 } from '@/store/socialReducer';
 import useSAGEAccount from '@/hooks/useSAGEAccount';
+import EditionPanel from '@/components/Social/EditionPanel';
 
 /** Grid of the viewer's own NFTs — pick one to become the NFT avatar. */
 function NftPfpPicker({ onClose }: { onClose: () => void }) {
