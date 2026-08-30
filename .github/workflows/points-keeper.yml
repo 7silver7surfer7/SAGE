@@ -17,13 +17,29 @@ jobs:
   poke:
     runs-on: ubuntu-latest
     steps:
-      # freshest trade ledger first (same nudge as before) so the bank sweep
-      # sees just-graduated pool trades
-      - name: Nudge trade indexer
+      # Freshest trade ledger first, so the bank sweep sees pool trades.
+      #
+      # HOURLY, NOT EVERY TEN MINUTES. This loops every token and each
+      # GetTokenDetail costs ~1.4s of billed CPU, so at 10-minute cadence it was
+      # ~48,000 CPU-seconds a month spent refreshing tokens nobody was looking
+      # at — a token page runs its own sweep when someone actually opens it.
+      #
+      # An hour is safe because of what CONSUMES this: the pixel sweep's
+      # discovery arm selects SocialTokenTrade rows from the last TWO HOURS
+      # (pixelsLedger.ts, `twoHoursAgo`). A trade indexed within an hour is
+      # still inside that window with an hour to spare. Stretching this past
+      # ~90 minutes would start dropping new holders out of discovery entirely,
+      # and a holder who is never discovered never accrues — do not.
+      - name: Nudge trade indexer (hourly)
         run: |
-          for a in $(curl -sL "https://sageart.xyz/api/social/?action=GetTokens" | jq -r '.tokens[].tokenAddress' 2>/dev/null); do
-            curl -sL -o /dev/null --max-time 60 "https://sageart.xyz/api/social/?action=GetTokenDetail&address=$a" || true
-          done
+          m=$(date -u +%M)
+          if [ "$m" -lt 10 ]; then
+            for a in $(curl -sL "https://sageart.xyz/api/social/?action=GetTokens" | jq -r '.tokens[].tokenAddress' 2>/dev/null); do
+              curl -sL -o /dev/null --max-time 60 "https://sageart.xyz/api/social/?action=GetTokenDetail&address=$a" || true
+            done
+          else
+            echo "skipped — nudge runs in the first 10 minutes of each hour"
+          fi
       - name: Flush pending allowlist entries (batched — zero per-follow gas)
         run: |
           curl -sL --max-time 120 "https://sageart.xyz/api/drops/?action=SyncAllowlists" || true
