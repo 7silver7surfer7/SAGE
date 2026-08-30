@@ -5266,8 +5266,24 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
 
   // last 500 trades, chronological — served from the in-memory ledger cache
   // (id > maxSeen deltas only); the newest trades are the chart.
-  const ledger = await tokenLedger(token);
-  const trades = ledger.slice(-500);
+  /**
+   * ONLY THE LAST 500, FETCHED AS 500.
+   *
+   * This pulled the token's ENTIRE trade history and then discarded 94% of it
+   * with slice(-500) — 8,401 rows, ~685 kB, to render a 500-row tape. The
+   * in-memory ledger cache hid that locally but not on the wire: Cloud Run
+   * scales to zero, so every cold instance re-pulled the whole history, and the
+   * keeper was touching every token on a schedule. That is Supabase egress,
+   * billed against a 5 GB allowance, spent on rows nothing reads.
+   */
+  const trades = (
+    await prisma.socialTokenTrade.findMany({
+      where: { tokenAddress: token },
+      select: LEDGER_SELECT,
+      orderBy: { id: 'desc' },
+      take: 500,
+    })
+  ).reverse();
 
   // live-verified against chain balanceOf (SWR-cached) — ledger-derived nets
   // kept a fully-exited wallet in the top 5 (aggregator-split sell recorded
@@ -5288,8 +5304,20 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
   // not the last-500 chart window (which quietly turned "ATH" into "recent
   // high": SAGE displayed $111k while its real peak was ~$579k). Max'd with
   // the live spot so a fresh peak shows before its trade row lands.
-  const athPriceEth = ledger.reduce(
-    (m, t) => Math.max(m, t.priceEth),
+  /**
+   * ATH still spans ALL history — it just no longer ships all history to get
+   * there. This was a reduce over the full ledger, and the comment above records
+   * why it must never shrink to the last-500 window: that quietly turned "ATH"
+   * into "recent high" and showed $111k against a real peak near $579k. A SQL
+   * MAX returns the identical number from one row instead of 8,401.
+   */
+  const athAgg = await prisma.socialTokenTrade.aggregate({
+    where: { tokenAddress: token },
+    _max: { priceEth: true },
+    _count: true,
+  });
+  const athPriceEth = Math.max(
+    athAgg._max.priceEth || 0,
     v4PriceEth > 0 ? v4PriceEth : curve?.priceEth || 0
   );
   const dayAgo = Date.now() - 24 * 3600 * 1000;
@@ -5359,8 +5387,10 @@ async function computeTokenDetail(token: string): Promise<unknown | null> {
     uniswapPair: curve?.pair ?? null,
     bondingProgressPct: Math.round(soldPct * 10) / 10,
     holderCount,
-    // real total — the ledger cache holds every row, so its length IS the count
-    tradeCount: ledger.length,
+    // Real total, counted in SQL. This read the in-memory ledger's length,
+    // which is only correct if the whole history has been pulled — the other
+    // reason this endpoint shipped 8,401 rows to render 500.
+    tradeCount: athAgg._count,
     series: trades.map((t) => ({ t: t.createdAt, price: t.priceEth })),
     trades: await (async () => {
       const recent = trades.slice(-30).reverse();
