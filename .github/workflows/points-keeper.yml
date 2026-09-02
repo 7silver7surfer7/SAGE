@@ -55,4 +55,3 @@ jobs:
       - name: Sweep chain-wide dex index
         run: |
           curl -sL --max-time 180 "https://sageart.xyz/api/dex-index/?action=Sweep" || true
-          curl -sL --max-time 180 "https://testnet.sageart.xyz/api/dex-index/?action=Sweep" || true
